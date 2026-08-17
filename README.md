@@ -161,7 +161,6 @@ graph TD
 - [业务流](docs/zh/业务流.md) - SPN 跨城诊断业务流程
 - [调用过程](docs/zh/调用过程.md) - 端到端报文交互示例
 - [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台 Spring Boot 集成完整指南
-- [工作台 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - AgentScope 框架结合方案
 
 ## Modules
 
