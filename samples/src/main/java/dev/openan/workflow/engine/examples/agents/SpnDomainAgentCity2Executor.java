@@ -19,7 +19,7 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
-import dev.openan.workflow.engine.examples.LlmHelper;
+import dev.openan.workflow.engine.examples.util.LlmHelper;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
 import org.slf4j.Logger;
@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 /**
  * SPN Domain Agent for City2 (City2 OMC).
  *
