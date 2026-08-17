@@ -49,8 +49,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <ul>
  *   <li>Transport Workbench Agent (port 26337) - orchestrator + merge
- *   <li>SPN Domain Agent City1 (port 26335) - Yuedong OMC, has fault
- *   <li>SPN Domain Agent City2 (port 26336) - Yuexi OMC, normal
+ *   <li>SPN Domain Agent City1 (port 26335) - City1 OMC, has fault
+ *   <li>SPN Domain Agent City2 (port 26336) - City2 OMC, normal
  * </ul>
  */
 public class SpnCrossCityDiagnosisDemo {
@@ -74,7 +74,7 @@ public class SpnCrossCityDiagnosisDemo {
         TimeUnit.SECONDS.sleep(AGENT_STARTUP_WAIT_SECONDS);
 
         log.info("=== Step 2: Send Task-T to Workbench Agent ===");
-        String taskText = "SPN跨城专线故障诊断：" + "客户A粤东-粤西间SPN专线中断，" + "请协同两地市OMC并行诊断，" + "汇总分析确定故障在哪个地市";
+        String taskText = "SPN跨城专线故障诊断：" + "客户A城市1-城市2间SPN专线中断，" + "请协同两地市OMC并行诊断，" + "汇总分析确定故障在哪个地市";
         log.info("Sending task: {}", taskText);
         String response = sendTaskToWorkbench(taskText);
         log.info("=== Workbench Agent Response ===");

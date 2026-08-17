@@ -2,7 +2,7 @@
   "name": "Transport Workbench Agent",
   "description": "负责向不同地市的SPN故障处理Agent下发专线故障诊断指令，并汇总分析诊断结果，生成报告。",
   "provider": {
-    "organization": "Huawei",
+    "organization": "OpenAN",
     "url": ""
   },
   "version": "1.0.0",

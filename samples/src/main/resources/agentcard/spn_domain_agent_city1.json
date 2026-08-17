@@ -1,8 +1,8 @@
 {
   "name": "SPN Domain Agent City1",
-  "description": "SPN Domain Agent City1 - Yuedong OMC, private-line fault diagnosis with Bearer auth",
+  "description": "SPN Domain Agent City1 - OMC, private-line fault diagnosis with Bearer auth",
   "provider": {
-    "organization": "Huawei",
+    "organization": "OpenAN",
     "url": "https://www.huawei.com"
   },
   "version": "1.0.0",

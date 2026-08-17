@@ -1,6 +1,6 @@
 ﻿# A2A-T 执行引擎 SDK 与 AgentScope 结合方案
 
-> 面向中国移动凯通工作台团队。说明 A2A-T 执行引擎 SDK（a2at-engine-java）与阿里开源 AgentScope 框架如何在凯通工作台 Agent 化改造中协同定位、划分职责、落地结合，发挥各自最大作用。本文档供双方对方案使用。
+> 面向工作台研发团队。说明 A2A-T 执行引擎 SDK（a2at-engine-java）与 AgentScope 框架如何在工作台 Agent 化改造中协同定位、划分职责、落地结合，发挥各自最大作用。本文档供双方对方案使用。
 
 ---
 
@@ -8,9 +8,9 @@
 
 ### 1.1 现状
 
-凯通工作台当前为传统 Spring Java 微服务，承载广东传输工作台智能体的业务逻辑。业务复杂度高，当前 SDK demo 中的工作台智能体（`WorkbenchControlPoint`）为打桩实现。
+工作台当前为传统 Spring Java 微服务，承载传输工作台智能体的业务逻辑。业务复杂度高，当前 SDK demo 中的工作台智能体（`WorkbenchControlPoint`）为打桩实现。
 
-工作台团队计划从传统 Spring 微服务做 Agent 化改造，跟上行业趋势，拟采用阿里开源的 AgentScope 框架。
+工作台团队计划从传统 Spring 微服务做 Agent 化改造，跟上行业趋势，拟采用 AgentScope 框架。
 
 ### 1.2 目标
 
@@ -180,16 +180,16 @@ CompletableFuture<String> onNegotiation(String agentName, String negotiationText
 
 ```mermaid
 graph TD
-    WAIMO["WAIMO 故障中心<br/>(上层业务系统)"]
+    UPPER["上层故障系统<br/>(上层业务系统)"]
     ORCH["编排中心<br/>(Python/FastAPI)<br/>PSOP 存储 + 搜索 + 智能体注册"]
-    WB["凯通工作台智能体<br/>(Spring Boot + spring-boot-starter)"]
+    WB["工作台智能体<br/>(Spring Boot + spring-boot-starter)"]
     BRIDGE["ReasoningBridge<br/>(Java 薄 HTTP 桥)"]
     AS["AgentScope 推理服务<br/>(Python/FastAPI)<br/>ReActAgent + tools + memory"]
     OMC1["城市 OMC 智能体<br/>(下游)"]
     OMC2["城市 OMC 智能体<br/>(下游)"]
     BIZ["工作台业务系统<br/>(告警/拓扑/工单)"]
 
-    WAIMO -->|"A2A-T Task-T 原始诊断任务"| WB
+    UPPER -->|"A2A-T Task-T 原始诊断任务"| WB
     WB -->|"LoadPsop.search/load"| ORCH
     ORCH -->|"PSOP 工作流"| WB
     WB -->|"onTask/onSelfTask/onRoute/onNeg"| BRIDGE
@@ -205,13 +205,13 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant WAIMO as WAIMO 故障中心
+    participant UPPER as 上层故障系统
     participant WB as 工作台智能体 (Spring+SDK)
     participant ORCH as 编排中心
     participant AS as AgentScope 推理服务
     participant OMC as 城市 OMC 智能体
 
-    WAIMO->>WB: A2A-T Task-T 原始诊断任务
+    UPPER->>WB: A2A-T Task-T 原始诊断任务
     Note over WB: AgentExecutor 接收，委派给 Orchestrator
     WB->>ORCH: LoadPsop.search(intent)
     ORCH-->>WB: PSOP 工作流拓扑
@@ -248,7 +248,7 @@ sequenceDiagram
     end
 
     Note over WB: ExecutePsop 结束，产出汇总
-    WB-->>WAIMO: 诊断结果 + Artifact
+    WB-->>UPPER: 诊断结果 + Artifact
 ```
 
 ### 5.3 职责分配总表
@@ -282,7 +282,7 @@ sequenceDiagram
 ### 6.2 Java 侧接口定义
 
 ```java
-package com.kaitong.workbench.bridge;
+package com.example.workbench.bridge;
 
 import java.util.List;
 import java.util.Map;
@@ -336,7 +336,7 @@ public interface ReasoningBridge {
 ### 6.3 ControlPoint 实现（工作台侧）
 
 ```java
-package com.kaitong.workbench.control;
+package com.example.workbench.control;
 
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.DefaultControlPoint;
@@ -344,7 +344,7 @@ import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.TaskRequest;
 import dev.openan.workflow.engine.model.TaskResponse;
-import com.kaitong.workbench.bridge.ReasoningBridge;
+import com.example.workbench.bridge.ReasoningBridge;
 
 import java.util.List;
 import java.util.Map;
@@ -354,11 +354,11 @@ import java.util.concurrent.CompletableFuture;
  * 工作台 ControlPoint：四个方法各一行调桥，业务逻辑全在 AgentScope 侧。
  * SDK 承担 sendMessage 之后的全部协议机制（Task-T 提示词、协商循环、认证）。
  */
-public class KaitongControlPoint extends DefaultControlPoint {
+public class AgentScopeControlPoint extends DefaultControlPoint {
 
     private final ReasoningBridge bridge;
 
-    public KaitongControlPoint(ReasoningBridge bridge) {
+    public AgentScopeControlPoint(ReasoningBridge bridge) {
         this.bridge = bridge;
     }
 
@@ -423,7 +423,7 @@ public class KaitongControlPoint extends DefaultControlPoint {
 ### 6.4 HTTP 桥实现（工作台侧）
 
 ```java
-package com.kaitong.workbench.bridge;
+package com.example.workbench.bridge;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -528,18 +528,18 @@ public class HttpReasoningBridge implements ReasoningBridge {
 ### 6.5 AgentScope 侧服务骨架（Python）
 
 ```python
-# kaitong_reasoning_service.py
+# reasoning_service.py
 # AgentScope 推理服务：四个端点对应 ControlPoint 四个回调。
 # 每个端点用 ReActAgent 做推理，可调用工作台业务系统工具。
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="Kaitong Workbench Reasoning Service")
+app = FastAPI(title="Workbench Reasoning Service")
 
 # 初始化 LLM + Agent（按 AgentScope 最新文档配置）
 # agent = ReActAgent(
-#     name="kaitong_workbench",
+#     name="workbench_agent",
 #     model=...,
 #     tools=[
 #         Tool(query_alarm),      # 对接工作台告警系统
@@ -674,7 +674,7 @@ graph LR
 | 1. 引入 starter | Maven 依赖 `spring-boot-starter`，写 `@Component AgentExecutor` | 提供 starter + autoconfig |
 | 2. 部署 AgentScope | 起 Python FastAPI 服务，四个端点骨架（可先返回固定文本） | 不涉及 |
 | 3. 实现桥 | 写 `HttpReasoningBridge`，配置 `a2a.reasoning-url` | 不涉及 |
-| 4. 委派 ControlPoint | `KaitongControlPoint` 四方法委派给桥 | 提供 ControlPoint 接口 + DefaultControlPoint |
+| 4. 委派 ControlPoint | `AgentScopeControlPoint` 四方法委派给桥 | 提供 ControlPoint 接口 + DefaultControlPoint |
 | 5. 接业务工具 | AgentScope 工具对接告警/拓扑/工单系统 | 不涉及 |
 | 6. 端到端联调 | 编排中心搜 PSOP -> 工作台执行 -> 下游 OMC 响应 | 提供 ExecutePsop + LoadPsop |
 

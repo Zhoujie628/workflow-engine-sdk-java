@@ -58,11 +58,11 @@ public class NegotiationStrategy implements dev.openan.workflow.engine.control.N
     public CompletableFuture<String> resolve(
             String agentName, String negotiationText, Map<String, Object> receiveResult) {
         log.info("[NegotiationStrategy] agent={}: {}", agentName, negotiationText);
-        String fallback = "根据工作台上下文，客户A粤东-粤西间SPN专线中断，" + "粤东OMC告警端口Down，光功率-28dBm。";
+        String fallback = "根据工作台上下文，客户A城市1-城市2间SPN专线中断，" + "城市1OMC告警端口Down，光功率-28dBm。";
         String sys =
                 "你是SPN跨城专线故障工作台的协商澄清专家。根据协商请求，"
-                        + "补充客户A粤东-粤西间SPN专线中断的上下文"
-                        + "（粤东OMC告警端口Down、光功率-28dBm）。中文。";
+                        + "补充客户A城市1-城市2间SPN专线中断的上下文"
+                        + "（城市1OMC告警端口Down、光功率-28dBm）。中文。";
         String clarification = LlmHelper.text(a2atEnvPath, sys, negotiationText, fallback);
         return CompletableFuture.completedFuture(clarification);
     }
