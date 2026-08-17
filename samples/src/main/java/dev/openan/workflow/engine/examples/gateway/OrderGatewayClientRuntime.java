@@ -17,6 +17,8 @@ import dev.openan.workflow.engine.client.ConversationScopedA2AJavaClientRuntime;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.a2aproject.sdk.grpc.SendMessageRequest;
 import org.a2aproject.sdk.grpc.utils.ProtoUtils;
 import org.a2aproject.sdk.spec.AgentCard;
@@ -52,6 +54,21 @@ public final class OrderGatewayClientRuntime
         implements A2AJavaClientRuntime, ConversationScopedA2AJavaClientRuntime {
     private static final Logger log = LoggerFactory.getLogger(OrderGatewayClientRuntime.class);
     private static final Logger protocolLog = LoggerFactory.getLogger("PROTOCOL");
+
+    private static final ObjectMapper prettyMapper =
+            new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+
+    private static String prettyJson(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        try {
+            Object parsed = prettyMapper.readValue(raw, Object.class);
+            return prettyMapper.writeValueAsString(parsed);
+        } catch (Exception e) {
+            return raw;
+        }
+    }
     private static final String INCLUDE_SENSITIVE_HEADERS =
             "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS";
     private static final String REQUEST_CHANNEL = "request";
@@ -295,7 +312,7 @@ public final class OrderGatewayClientRuntime
                 request.getMethod(),
                 request.getUriPath(),
                 formatProtocolHeaders(request.getHeadersMap()),
-                request.getBody());
+                prettyJson(request.getBody()));
     }
 
     private static void logProtocolResponse(
@@ -316,7 +333,7 @@ public final class OrderGatewayClientRuntime
                 frame,
                 response.getStatus(),
                 formatProtocolHeaders(response.getHeadersMap()),
-                response.getBody());
+                prettyJson(response.getBody()));
     }
 
     private static String formatProtocolHeaders(Map<String, String> headers) {
