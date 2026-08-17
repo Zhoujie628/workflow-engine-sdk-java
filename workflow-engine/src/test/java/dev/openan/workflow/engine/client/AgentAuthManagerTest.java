@@ -32,9 +32,30 @@ class AgentAuthManagerTest {
     }
 
     @Test
+    void loadsCredentialsFromClasspathPrefix() {
+        AgentAuthManager manager =
+                new AgentAuthManager("classpath:test-agent-credentials.json");
+
+        var config = manager.getConfig("Test Agent");
+
+        assertNotNull(config);
+        assertEquals(
+                "https://auth.example.test/token",
+                config.get("bearerAuth").get("login_url"));
+    }
+
+    @Test
     void missingFileDoesNotCreateCredentials() {
         AgentAuthManager manager =
                 new AgentAuthManager("/nonexistent/missing-agent-credentials.json");
+
+        assertNull(manager.getConfig("Test Agent"));
+    }
+
+    @Test
+    void missingClasspathResourceDoesNotCreateCredentials() {
+        AgentAuthManager manager =
+                new AgentAuthManager("classpath:nonexistent-credentials.json");
 
         assertNull(manager.getConfig("Test Agent"));
     }
