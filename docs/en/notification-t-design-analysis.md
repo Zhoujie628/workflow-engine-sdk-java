@@ -18,6 +18,7 @@ The engine currently sends Authorization-T, Notification-T, and Task-T as three 
 calls. Each opens its own HTTP connection (SSE stream), gets a response, and closes.
 
 ```
+
 ```mermaid
 sequenceDiagram
     participant W as Workbench
@@ -36,7 +37,6 @@ sequenceDiagram
     Note right of S: check whitelist -> execute recovery
     S-->>W: artifact (recovery result)
     S-->>W: COMPLETED (stream closes)
-```
 ```
 
 ### Key Code Locations
@@ -105,6 +105,7 @@ stream open. When recovery completes, the SPN Agent pushes the result through th
 disconnecting.
 
 ```
+
 ```mermaid
 sequenceDiagram
     participant W as Workbench
@@ -118,7 +119,6 @@ sequenceDiagram
     S-->>W: COMPLETED (Task-T stream closes)
     S-->>W: SSE event: recovery result (via Notification-T stream)
     W->>S: close connection (cancel subscription)
-```
 ```
 
 ### Authentication
@@ -192,15 +192,14 @@ This pattern is correct and requires no modification.
 - SPN agent city2: samples/src/main/java/dev/openan/workflow/engine/examples/agents/SpnDomainAgentCity2Executor.java
 - Workbench control: samples/src/main/java/dev/openan/workflow/engine/examples/agents/WorkbenchControlPoint.java
 - Demo entry: samples/src/main/java/dev/openan/workflow/engine/examples/SpnCrossCityDiagnosisDemo.java
-- Agent server: samples/src/main/java/dev/openan/workflow/engine/examples/StartAgentsServer.java
+- Agent server: samples/src/main/java/dev/openan/workflow/engine/examples/embedded/StartAgentsServer.java
 - E2E test: samples/src/test/java/dev/openan/workflow/engine/examples/SpnCrossCityE2ETest.java
 - AgentCard city1: samples/src/main/resources/agentcard/spn_domain_agent_city1.json
 - AgentCard city2: samples/src/main/resources/agentcard/spn_domain_agent_city2.json
 - AgentCard workbench: samples/src/main/resources/agentcard/transport_workbench_agent.json
 - Credentials: samples/src/main/resources/spn_agent_credentials.json
-- Workflow JSON: orchestration-center/data/workflow_storage/psop/psop_spn_cross_city_diagnosis.json
-- Protocol examples: workflow-exec-engine-java/protocol data example.txt
-- Protocol data example: workflow-exec-engine-java/调用过程.md
+- Workflow JSON: orchestration-center/data/workflow_storage/psop/psop_spn_cross_city_diagnosis.json (separate repo)
+- Protocol examples: docs/zh/调用过程.md
 
 ## Business Flow Definition (from business-flow.md / yewuliu.md)
 
@@ -223,6 +222,7 @@ This pattern is correct and requires no modification.
 ### Complete Business Flow
 
 ```
+
 ```mermaid
 sequenceDiagram
     participant U as Upper layer
@@ -254,7 +254,6 @@ sequenceDiagram
     S2-->>W: recovery result (or no result)
     Note over W: SelfLoop: merge
     W-->>U: merged result
-```
 ```
 
 ### Key Design Decisions (confirmed)

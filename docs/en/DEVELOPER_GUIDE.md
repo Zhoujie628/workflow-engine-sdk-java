@@ -94,8 +94,10 @@ Events come from three layers: the runner (lifecycle bracket), the executor (ste
 | `step_start`            | executor           | Step begins                                      | `step`                                                  |
 | `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask` | `step`, `agent`, `task`                                 |
 | `task_response`         | executor           | `onTask`/`onSelfTask` returned a `TaskResponse`  | `step`, `agent`, `task`, `output`                       |
+| `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                |
 | `route_decision`        | executor           | Branch chosen                                    | `step`, `next`, `reason`                                |
 | `step_complete`         | executor           | Step finished                                    | `step`, `results`                                       |
+| `workflow_complete`     | executor           | All steps finished                               | `history`, `step_outputs`                               |
 | `agent_request`         | engine client      | Message sent to agent                            | `agent`, `request`, `metadata`                          |
 | `agent_response`        | engine client      | Response from agent                              | `agent`, `response`                                     |
 | `agent_status_update`   | engine client      | Agent SSE status update                          | `agent`, `state`, `is_final`                            |
@@ -205,22 +207,13 @@ Passwords can be AES-GCM encrypted with `enc:<iv>:<ciphertext>` prefix. The decr
 ### 7.2 Custom AuthProvider
 
 For non-standard auth (SSO, API keys, custom headers):
-
 ```java
 WorkflowEngineClientConfig.builder()
-    .
-
-authProvider((agentName, agentCard, headers) ->{
-        headers.
-
-put("Authorization","Bearer "+mySsoToken);
-        headers.
-
-put("X-Custom","value");
+    .authProvider((agentName, agentCard, headers) -> {
+        headers.put("Authorization", "Bearer " + mySsoToken);
+        headers.put("X-Custom", "value");
     })
-            .
-
-build();
+    .build();
 ```
 
 ### 7.3 Credential File Fields
@@ -300,7 +293,7 @@ subscriber and let the future complete.
 ## 11. Checklist
 
 1. Add Maven dependencies
-2. Implement `ControlPoint` (onTask + onSelfTask + onRoute)
+2. Implement `ControlPoint` (at minimum `onTask` + `onRoute`; `onSelfTask` and `onNegotiation` have defaults)
 3. Get AgentCards (from registry or JSON files)
 4. Load Workflow (via `LoadPsop` or build your own)
 5. Configure `.env` and credentials file

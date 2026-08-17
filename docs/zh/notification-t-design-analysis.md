@@ -59,7 +59,6 @@ Notification-T 和 Authorization-T 是 A2A-T 的前置扩展，在工作流启�
 Authorization-T 是一次性操作：下发策略 → 服务端确认 → 完成。不需要长连接。
 
 流程：
-```
 ```mermaid
 graph LR
     ES["ExtensionSender.sendAuthorization"]
@@ -70,7 +69,6 @@ graph LR
 
     ES --> TR --> SR --> ACK --> DONE
 ```
-```
 
 ### 3.2 Notification-T
 
@@ -78,7 +76,6 @@ Notification-T 需要长连接：订阅 → 流保持打开 → 后续结果通�
 
 设计选择：**在独立守护线程上维持长连接 SSE 流**。
 
-```
 ```mermaid
 graph TD
     ES["ExtensionSender.sendNotification"]
@@ -91,7 +88,6 @@ graph TD
     END["客户端断开或服务端关闭时流结束"]
 
     ES --> TR --> DT --> ACK --> FUT --> OPEN --> PUSH --> END
-```
 ```
 
 ---

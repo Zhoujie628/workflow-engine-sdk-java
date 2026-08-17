@@ -6,6 +6,7 @@
 |-----------------------------------|-------------------------------------------------|
 | `dev.openan.workflow.engine.client`   | A2A message transport, auth, extensions, config |
 | `dev.openan.workflow.engine.control`  | User decision points and event system           |
+| `dev.openan.workflow.engine.core`     | DAG traversal engine and context assembly        |
 | `dev.openan.workflow.engine.model`    | Data models (Workflow, Task, results)           |
 | `dev.openan.workflow.engine.registry` | PSOP loading and AgentCard registry             |
 | `dev.openan.workflow.engine.runner`   | Entry point for workflow execution              |
@@ -234,6 +235,55 @@ public interface A2AJavaClientRuntime {
 
 A default implementation is provided. Implement this interface only if you need custom HTTP transport.
 
+### ConversationScopedA2AJavaClientRuntime
+
+Optional lifecycle callback for runtime implementations whose transport session spans multiple A2A requests (e.g. a gateway login that must stay alive across all negotiation rounds).
+
+```java
+public interface ConversationScopedA2AJavaClientRuntime {
+    void closeConversation(AgentCard agentCard, String contextId);
+}
+```
+
+When the runtime also implements this interface, the engine calls `closeConversation` after the full send + negotiation cycle completes — not after each individual HTTP request. This allows gateway sessions to be released only after the logical conversation is done.
+
+Implement alongside `A2AJavaClientRuntime`:
+
+```java
+public class MyGatewayRuntime
+        implements A2AJavaClientRuntime, ConversationScopedA2AJavaClientRuntime {
+    @Override
+    public Iterable<ClientEvent> sendMessage(...) { ... }
+
+    @Override
+    public void closeConversation(AgentCard agentCard, String contextId) {
+        // release gateway session
+    }
+
+    @Override
+    public void close() { ... }
+}
+```
+
+### AgentCardJacksonModule
+
+Jackson module for deserializing AgentCard JSON with security scheme normalization. Handles the OpenAPI-format `securitySchemes` / `securityRequirements` fields that the A2A SDK's strongly-typed `AgentCard` record expects.
+
+```java
+ObjectMapper mapper = new ObjectMapper()
+        .registerModule(new AgentCardJacksonModule());
+AgentCard card = mapper.readValue(
+        new File("agentcard/my_agent.json"), AgentCard.class);
+```
+
+### AgentCardNormalizer
+
+Utility that normalizes a raw `Map<String, Object>` (as returned by the Registry Center API) into the `AgentCard`-compatible format. Used internally by `RegistryClient.fetchAgentCards()`. Also available as a public static method for custom normalization:
+
+```java
+Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
+```
+
 ---
 
 ## dev.openan.workflow.engine.control
@@ -300,6 +350,7 @@ Override to receive real-time execution events. Event types are defined in `Even
 | `STEP_COMPLETE`          | A workflow step completed                          |
 | `TASK_REQUEST`           | A task was dispatched to an agent                  |
 | `TASK_RESPONSE`          | A task response was received                       |
+| `TASK_STATUS_CHANGED`    | A task's status changed (pending → running → success/failed) |
 | `AGENT_REQUEST`          | A message was sent to an agent                     |
 | `AGENT_RESPONSE`         | A response was received from an agent              |
 | `AGENT_STATUS_UPDATE`    | Agent SSE status update (SUBMITTED, WORKING, etc.) |
@@ -312,6 +363,7 @@ Override to receive real-time execution events. Event types are defined in `Even
 | `AUTHORIZATION_RESOLVED` | Authorization decision was made                    |
 | `NOTIFICATION`           | Notification received from agent                   |
 | `ROUTE_DECISION`         | Route decision was made                            |
+| `WORKFLOW_COMPLETE`      | The workflow completed (all steps finished)        |
 | `START`                  | Workflow execution started                         |
 | `COMPLETE`               | Workflow execution completed successfully          |
 | `ERROR`                  | Workflow execution failed                          |
@@ -371,6 +423,27 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 
 ---
 
+## dev.openan.workflow.engine.core
+
+### WorkflowExecutor
+
+Mid-layer DAG traversal engine. Walks the workflow steps, assembles upstream context via `ContextBuilder`, dispatches subtasks in parallel, applies step success policies (`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`), and routes to the next step.
+
+Not typically instantiated directly by SDK users — `ExecutePsop` wraps it internally. Exposed for advanced integrations that need to run the traversal layer without the runner's lifecycle management.
+
+```java
+WorkflowExecutor executor = new WorkflowExecutor(
+        workflow, controlPoint, engineClient,
+        eventCallback, runtimeIntent, lang);
+ExecutionResult result = executor.run().join();
+```
+
+### ContextBuilder
+
+Package-private helper that assembles the context message for each step by folding upstream step outputs according to `contextFrom` rules (`"*"` = all ancestors, specific names = selective inheritance). Not part of the public API surface.
+
+---
+
 ## dev.openan.workflow.engine.model
 
 ### Workflow
@@ -402,6 +475,17 @@ Static factory: `Workflow.fromMap(Map<String, Object>)` parses from orchestratio
 | `ALL_SUCCESS` | All subtasks must succeed                                                                                              |
 | `ANY_SUCCESS` | Any subtask success is sufficient                                                                                      |
 | `SELF_LOOP`   | The workflow agent handles the task locally via `onSelfTask`; no A2A-T message is sent. Success follows `ALL_SUCCESS`. |
+
+### TaskStatus
+
+Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consistency with the Python SDK.
+
+| Value     | String     | Description                          |
+|-----------|------------|--------------------------------------|
+| `PENDING` | `"pending"` | Task created, not yet started        |
+| `RUNNING` | `"running"` | Task in progress                     |
+| `SUCCESS` | `"success"` | Task completed successfully          |
+| `FAILED`  | `"failed"`  | Task failed                          |
 
 ### Task
 
@@ -511,3 +595,69 @@ Static factory: `Workflow.fromMap(Map<String, Object>)` parses from orchestratio
 - Negotiation failures fall through after `maxNegotiationRounds`.
 - Auth failures (401) are logged as `ERROR` and auth headers are not set; the request proceeds without auth.
 - SSE stream errors after terminal events are logged at `DEBUG` level (expected behavior).
+
+---
+
+## spring-boot-starter Module
+
+The `spring-boot-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the client/workflow side). When on the classpath of a Spring Boot web application, it auto-registers all A2A SDK server components as Spring beans.
+
+### A2AProperties
+
+Configuration properties prefixed with `a2at.server`:
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `a2at.server.agent-card` | `classpath:agentcard.json` | Path to the AgentCard JSON file (classpath: or file: prefix supported) |
+| `a2at.server.path-prefix` | `/a2a/json` | URL path prefix for A2A endpoints |
+
+```yaml
+a2at:
+  server:
+    agent-card: classpath:agentcard/my_agent.json
+    path-prefix: /a2a/json
+```
+
+### A2AAutoConfiguration
+
+Auto-configures the following beans (all `@ConditionalOnMissingBean`, so you can override any):
+
+| Bean | Type | Purpose |
+|------|------|---------|
+| `agentCard` | `AgentCard` | Loaded from `a2at.server.agent-card` path via Jackson |
+| `a2aConfigProvider` | `A2AConfigProvider` | SDK configuration values |
+| `taskStore` | `InMemoryTaskStore` | In-memory task storage |
+| `eventBus` | `MainEventBus` | Event bus for SSE streaming |
+| `queueManager` | `InMemoryQueueManager` | Event queue manager |
+| `pushStore` | `PushNotificationConfigStore` | Push notification config storage |
+| `agentExecutorPool` | `ExecutorService` | Thread pool for agent execution (8 threads, daemon) |
+| `eventBusProcessor` | `MainEventBusProcessor` | Event bus processor |
+| `requestHandler` | `RequestHandler` | Default request handler |
+| `restHandler` | `RestHandler` | REST protocol handler |
+| `a2aController` | `A2AController` | Spring MVC controller (`message:send` + `message:stream`) |
+
+### A2AController
+
+Spring MVC controller that exposes A2A REST endpoints:
+
+- `POST {path-prefix}/message:send` — blocking send
+- `POST {path-prefix}/message:stream` — SSE streaming
+
+### Usage
+
+The partner only needs to provide an `AgentExecutor` implementation:
+
+```java
+@Component
+public class MyAgentExecutor implements AgentExecutor {
+    @Override
+    public ExecuteResult execute(ExecuteRequest request) {
+        // business logic
+        return ExecuteResult.builder()
+                .addTextPart("result text")
+                .build();
+    }
+}
+```
+
+All other beans (AgentCard, RequestHandler, RestHandler, A2AController, etc.) are auto-configured.

@@ -80,8 +80,7 @@ concurrently, applies the step's success policy, and determines the next step (s
 
 Step dispatch rules:
 
-- Steps whose predecessors are all satisfied are collected and dispatched in parallel (`asyncio.gather` /
-  `CompletableFuture`), so steps at the same layer run concurrently.
+- Steps whose predecessors are all satisfied are collected and dispatched in parallel (`CompletableFuture`), so steps at the same layer run concurrently.
 - Subtasks within a step also run in parallel.
 - `ALL_SUCCESS` - all subtasks must succeed.
 - `ANY_SUCCESS` - the first successful subtask wins; the rest are cancelled.
@@ -112,11 +111,6 @@ decision:
 | `onNegotiation` | client auto-loop | Supply clarification on INPUT_REQUIRED       |
 
 Authorization-T and Notification-T are pre-positioning concerns handled via `ExtensionSender` before the workflow starts, not in-workflow callbacks.
-
----
-
-## 4. A2A-T Extension Model
-means a host that only cares about routing does not have to implement (or stub) authorization hooks, and vice versa.
 
 ---
 
@@ -269,7 +263,7 @@ sequenceDiagram
 
 ---
 
-## 9. Dependencies
+## 8. Dependencies
 
 
 **Java SDK:** `org.a2aproject.sdk:a2a-java-sdk-client` (A2A protocol),
@@ -279,7 +273,7 @@ The SDK is standalone: it does not depend on the orchestration center.
 
 ---
 
-## 10. Design Decisions Summary
+## 9. Design Decisions Summary
 
 1. **Shared transport, two facades** - wire machinery written once on
    `A2ATransport`; `WorkflowEngineClient` and `ExtensionSender` each own one orchestration concern and delegate wire

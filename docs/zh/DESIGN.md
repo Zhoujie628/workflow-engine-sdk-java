@@ -29,15 +29,15 @@ SDK 负责协议机制（消息发送、流式传输、认证、Task-T 提示词
 
 SDK 分为四层，每层构建在下一层之上，单一职责，入口清晰。
 
-```
-Layer 2 - 编排层       ExecutePsop
-   |     生命周期、事件流、取消、onFinish 持久化
-Layer 1 - 遍历层       WorkflowExecutor
-   |     DAG 遍历、并行下发、上下文组装、路由
-Layer 0 - 通信层       A2ATransport + 两个门面
-   |     WorkflowEngineClient（工作流发送）| ExtensionSender（一次性前置下发）
-基础层 - 决策          ControlPoint
-                          用户实现的业务决策
+```mermaid
+graph TD
+    L2["Layer 2 - 编排层<br/>ExecutePsop<br/>生命周期、事件流、取消、onFinish 持久化"]
+    L1["Layer 1 - 遍历层<br/>WorkflowExecutor<br/>DAG 遍历、并行下发、上下文组装、路由"]
+    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（一次性前置下发）"]
+    F["基础层 - 决策<br/>ControlPoint<br/>用户实现的业务决策"]
+
+    L2 --> L1 --> L0
+    L0 -.-> F
 ```
 
 ### 2.1 Layer 0 - 通信层
@@ -237,7 +237,7 @@ sequenceDiagram
 
 ---
 
-## 9. 依赖
+## 8. 依赖
 
 **本 SDK：** `org.a2aproject.sdk:a2a-java-sdk-client`（A2A 协议）、
 `net.openan.a2at.sdk:a2a-t-client`（A2A-T 扩展）、Jackson、SLF4J、Lombok。
@@ -246,7 +246,7 @@ SDK 是独立的：不依赖编排中心。
 
 ---
 
-## 10. 设计决策总结
+## 9. 设计决策总结
 
 1. **共享 transport，两个门面** — 通信层机制在 `A2ATransport` 上写一次；
    `WorkflowEngineClient` 和 `ExtensionSender` 各自拥有一个编排职责，委托通信工作。

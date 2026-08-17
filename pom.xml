@@ -36,9 +36,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git@github.com:Zhoujie628/a2at-engine-java.git</connection>
-        <developerConnection>scm:git:git@github.com:Zhoujie628/a2at-engine-java.git</developerConnection>
-        <url>https://github.com/Zhoujie628/a2at-engine-java</url>
+        <connection>scm:git:git@github.com:project-openan/workflow-engine-sdk-java.git</connection>
+        <developerConnection>scm:git:git@github.com:project-openan/workflow-engine-sdk-java.git</developerConnection>
+        <url>https://github.com/project-openan/workflow-engine-sdk-java</url>
     </scm>
 
     <modules>

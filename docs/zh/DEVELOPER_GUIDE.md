@@ -91,8 +91,10 @@ ExecutionResult result = ExecutePsop.builder()
 | `step_start`            | 执行器        | 步骤开始                                         | `step`                                                |
 | `task_request`          | 执行器        | 子任务下发到 `onTask`/`onSelfTask`               | `step`、`agent`、`task`                               |
 | `task_response`         | 执行器        | `onTask`/`onSelfTask` 返回 `TaskResponse`        | `step`、`agent`、`task`、`output`                     |
+| `task_status_changed`   | 执行器        | 任务状态变更（pending → running → success/failed） | `step`、`agent`、`task`、`status`                |
 | `route_decision`        | 执行器        | 分支选择                                         | `step`、`next`、`reason`                              |
 | `step_complete`         | 执行器        | 步骤完成                                         | `step`、`results`                                     |
+| `workflow_complete`     | 执行器        | 所有步骤完成                                      | `history`、`step_outputs`                              |
 | `agent_request`         | 引擎客户端    | 消息发送到智能体                                  | `agent`、`request`、`metadata`                       |
 | `agent_response`        | 引擎客户端    | 收到智能体响应                                    | `agent`、`response`                                   |
 | `agent_status_update`   | 引擎客户端    | 智能体 SSE 状态更新                               | `agent`、`state`、`is_final`                         |
@@ -200,11 +202,11 @@ AgentCard card = mapper.readValue(json, AgentCard.class);
 
 ```java
 WorkflowEngineClientConfig.builder()
-        .authProvider((agentName, agentCard, headers) -> {
-            headers.put("Authorization", "Bearer " + mySsoToken);
-            headers.put("X-Custom", "value");
-        })
-        .build();
+    .authProvider((agentName, agentCard, headers) -> {
+        headers.put("Authorization", "Bearer " + mySsoToken);
+        headers.put("X-Custom", "value");
+    })
+    .build();
 ```
 
 ### 7.3 凭证文件字段
@@ -282,7 +284,7 @@ public Flux<String> execute(@PathVariable String psopId) {
 ## 11. 检查清单
 
 1. 添加 Maven 依赖
-2. 实现 `ControlPoint`（onTask + onSelfTask + onRoute）
+2. 实现 `ControlPoint`（至少 onTask + onRoute；onSelfTask 和 onNegotiation 有默认实现）
 3. 获取 AgentCards（从注册中心或 JSON 文件）
 4. 加载 Workflow（通过 `LoadPsop` 或自行构建）
 5. 配置 `.env` 和凭证文件

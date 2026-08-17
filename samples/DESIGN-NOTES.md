@@ -15,23 +15,28 @@
 
 ### 文件结构
 
-```
-samples/src/main/java/.../examples/
-  server/EmbeddedA2AServer.java       # 可复用 A2A server（a2a-java SDK RestHandler）
-  agents/BaseAgentExecutor.java         # 基类：extractText / buildStatusMessage
-  agents/SpnDomainAgentExecutor.java    # 上海 OMC Agent
-  agents/SpnDomainAgentCity2Executor.java  # 广州 OMC Agent
-  agents/TransportWorkbenchAgentExecutor.java  # 工作台 Agent（编排者）
-  agents/WorkbenchControlPoint.java     # ControlPoint 决策逻辑（SRP 拆分）
-  StartAgentsServer.java               # 从 agentcard JSON 启动所有 Agent
-  SpnCrossCityDiagnosisDemo.java        # Demo 入口
+```mermaid
+graph TD
+    root["samples/src/main/java/.../examples/"]
+    srv["server/EmbeddedA2AServer.java<br/>可复用 A2A server（a2a-java SDK RestHandler）"]
+    base["agents/BaseAgentExecutor.java<br/>基类：extractText / buildStatusMessage"]
+    spn1["agents/SpnDomainAgentExecutor.java<br/>上海 OMC Agent"]
+    spn2["agents/SpnDomainAgentCity2Executor.java<br/>广州 OMC Agent"]
+    wb["agents/TransportWorkbenchAgentExecutor.java<br/>工作台 Agent（编排者）"]
+    cp["agents/WorkbenchControlPoint.java<br/>ControlPoint 决策逻辑（SRP 拆分）"]
+    start["StartAgentsServer.java<br/>从 agentcard JSON 启动所有 Agent"]
+    demo["SpnCrossCityDiagnosisDemo.java<br/>Demo 入口"]
 
-samples/src/main/resources/
-  agentcard/spn_domain_agent.json       # AgentCard 配置（标准格式，URL 带 /a2a/json 前缀）
-  agentcard/spn_domain_agent_city2.json
-  agentcard/transport_workbench_agent.json
-  spn_agent_credentials.json            # Bearer 认证配置
+    root --> srv & base & start & demo
+    base --> spn1 & spn2 & wb & cp
 ```
+
+**资源文件：**
+
+- `samples/src/main/resources/agentcard/spn_domain_agent.json` — AgentCard 配置（标准格式，URL 带 /a2a/json 前缀）
+- `samples/src/main/resources/agentcard/spn_domain_agent_city2.json`
+- `samples/src/main/resources/agentcard/transport_workbench_agent.json`
+- `samples/src/main/resources/spn_agent_credentials.json` — Bearer 认证配置
 
 ## 三、AgentCard URL 必须用标准格式
 
