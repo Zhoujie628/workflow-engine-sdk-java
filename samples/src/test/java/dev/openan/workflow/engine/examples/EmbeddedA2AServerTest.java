@@ -176,7 +176,7 @@ class EmbeddedA2AServerTest {
         String taskMeta = extractExtensionValue(result, "Task-T");
         assertNotNull(taskMeta, "Task-T metadata should be present in response");
         assertTrue(
-                taskMeta.contains("粤东"),
-                "Diagnosis metadata should mention Yuedong, got: " + taskMeta);
+                taskMeta.contains("城市1"),
+                "Diagnosis metadata should mention City1, got: " + taskMeta);
     }
 }

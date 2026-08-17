@@ -67,17 +67,17 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
     }
 
     private static String analyzeFaultLocation(String messageText) {
-        boolean hasYuedongFault =
-                messageText.contains("粤东")
+        boolean hasCity1Fault =
+                messageText.contains("城市1")
                         && (messageText.contains("故障") || messageText.contains("Down"));
-        boolean hasYuexiFault =
-                messageText.contains("粤西")
+        boolean hasCity2Fault =
+                messageText.contains("城市2")
                         && (messageText.contains("故障") || messageText.contains("Down"));
-        if (hasYuedongFault) {
-            return "汇总分析完成。故障定位：粤东地市OMC，端口Down，光功率-28dBm低于阈值。";
+        if (hasCity1Fault) {
+            return "汇总分析完成。故障定位：城市1地市OMC，端口Down，光功率-28dBm低于阈值。";
         }
-        if (hasYuexiFault) {
-            return "汇总分析完成。故障定位：粤西地市OMC，需排查。";
+        if (hasCity2Fault) {
+            return "汇总分析完成。故障定位：城市2地市OMC，需排查。";
         }
         return "汇总分析完成。两地市均未见异常。";
     }
@@ -99,7 +99,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
         return
 """
 ## 任务
-SPN专线故障诊断 - 粤东OMC侧
+SPN专线故障诊断 - 城市1OMC侧
 
 ## 故障参数
 - 端口状态：port-7 = DOWN
@@ -107,7 +107,7 @@ SPN专线故障诊断 - 粤东OMC侧
 - 所属单板：line-card-03
 - 端口号：port-7
 
-请针对粤东OMC侧端口故障进行诊断。请用中文回复。"""
+请针对城市1OMC侧端口故障进行诊断。请用中文回复。"""
                 .stripIndent();
     }
 
@@ -115,14 +115,14 @@ SPN专线故障诊断 - 粤东OMC侧
         return
 """
 ## 任务
-SPN专线故障诊断 - 粤西OMC侧
+SPN专线故障诊断 - 城市2OMC侧
 
 ## 排查要求
-- 排查粤西OMC端口状态是否正常
+- 排查城市2OMC端口状态是否正常
 - 确认光功率是否在正常范围
 - 确认是否存在异常告警
 
-请针对粤西OMC侧进行排查。请用中文回复。"""
+请针对城市2OMC侧进行排查。请用中文回复。"""
                 .stripIndent();
     }
 

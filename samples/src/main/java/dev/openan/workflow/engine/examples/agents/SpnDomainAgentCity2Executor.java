@@ -29,9 +29,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * SPN Domain Agent for City2 (Western Guangdong / Yuexi OMC).
+ * SPN Domain Agent for City2 (City2 OMC).
  *
- * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}). Yuexi side is
+ * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}). City2 side is
  * NORMAL. Diagnosis/recovery text is LLM-generated when the A2A-T .env is configured, else
  * deterministic. Authorization-T and Notification-T are pre-positioned before the workflow starts.
  */
@@ -39,17 +39,17 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity2Executor.class);
 
     private static final String NORMAL_DIAGNOSIS_RESULT =
-            "诊断结果：粤西城市OMC诊断结果 - 端口状态正常，光功率-17dBm(正常范围)，无异常告警。\n"
-                    + "修复建议：粤西城市无需修复，故障不在此地市。\n"
+            "诊断结果：城市2城市OMC诊断结果 - 端口状态正常，光功率-17dBm(正常范围)，无异常告警。\n"
+                    + "修复建议：城市2城市无需修复，故障不在此地市。\n"
                     + "故障根因：无根因(此地市正常)。";
 
-    private static final String RECOVERY_RESULT = "粤西侧OMC抢通完成，业务恢复正常。";
+    private static final String RECOVERY_RESULT = "城市2侧OMC抢通完成，业务恢复正常。";
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
         String sys =
-                "你是SPN领域粤西OMC故障诊断专家。根据输入诊断信息，粤西侧端口正常、光功率-17dBm(正常范围)、无异常告警。输出诊断结果：粤西无需修复、故障不在此地市。简洁专业，中文。";
-        String user = "输入：\n" + input + "\n\n粤西OMC端口port-3=UP，光功率-17dBm，无告警。请输出诊断结论。";
+                "你是SPN领域城市2OMC故障诊断专家。根据输入诊断信息，城市2侧端口正常、光功率-17dBm(正常范围)、无异常告警。输出诊断结果：城市2无需修复、故障不在此地市。简洁专业，中文。";
+        String user = "输入：\n" + input + "\n\n城市2OMC端口port-3=UP，光功率-17dBm，无告警。请输出诊断结论。";
         return LlmHelper.text(env, sys, user, fallback);
     }
 
@@ -70,13 +70,13 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, String input) {
         String result = llmDiagnosisResult(input, NORMAL_DIAGNOSIS_RESULT);
         log.info(
-                "[SPN-Domain-Agent-City2] Diagnosis complete (Yuexi), no fault, no recovery needed");
+                "[SPN-Domain-Agent-City2] Diagnosis complete (City2), no fault, no recovery needed");
         return result;
     }
 
     @Override
     protected String defaultNegotiationText() {
-        return "粤西OMC诊断需要确认客户专线故障是否涉及粤西侧端口，请补充。";
+        return "城市2OMC诊断需要确认客户专线故障是否涉及城市2侧端口，请补充。";
     }
 
     @Override
