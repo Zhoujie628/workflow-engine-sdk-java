@@ -18,8 +18,7 @@ and full A2A-T extension support. Full A2A-T extension support and multi-protoco
   extraction
 - `ExtensionSender` / `DefaultExtensionSender`: one-shot pre-positioning facade for Authorization-T and Notification-T
   (long-lived SSE subscription)
-- `ControlPoint` / `ExtensionCallback` split: flow decisions (`onTask` / `onSelfTask` / `onRoute` / `onNegotiation`) and
-  reactive hooks (`onAuthorization` / `onNotification`) on separate interfaces
+- `ControlPoint` / `ExtensionSender` split: flow decisions (`onTask` / `onSelfTask` / `onRoute` / `onNegotiation`) on `ControlPoint`; Authorization-T / Notification-T pre-positioning on `ExtensionSender`
 - `NegotiationStrategy`: pluggable clarification strategy injected into
   `DefaultControlPoint`
 - `SELF_LOOP` step type for local task handling without an A2A-T message
