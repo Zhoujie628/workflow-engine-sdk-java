@@ -19,7 +19,7 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
-import dev.openan.workflow.engine.client.LlmHelper;
+import dev.openan.workflow.engine.examples.LlmHelper;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
 import org.slf4j.Logger;
