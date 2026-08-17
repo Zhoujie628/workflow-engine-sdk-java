@@ -75,15 +75,33 @@ class AgentAuthManager {
         if (path == null) {
             return new HashMap<>();
         }
-        File file = new File(path);
-        if (!file.exists()) {
-            return new HashMap<>();
-        }
         try {
-            Map<String, Map<String, Map<String, Object>>> loaded =
-                    mapper.readValue(
-                            file,
-                            new TypeReference<Map<String, Map<String, Map<String, Object>>>>() {});
+            Map<String, Map<String, Map<String, Object>>> loaded;
+            if (path.startsWith("classpath:")) {
+                String resource = path.substring("classpath:".length());
+                java.io.InputStream is =
+                        AgentAuthManager.class.getClassLoader().getResourceAsStream(resource);
+                if (is == null) {
+                    log.warn("[Auth] Classpath resource not found: {}", resource);
+                    return new HashMap<>();
+                }
+                loaded =
+                        mapper.readValue(
+                                is,
+                                new TypeReference<
+                                        Map<String, Map<String, Map<String, Object>>>>() {});
+            } else {
+                File file = new File(path);
+                if (!file.exists()) {
+                    log.warn("[Auth] Credentials file not found: {}", path);
+                    return new HashMap<>();
+                }
+                loaded =
+                        mapper.readValue(
+                                file,
+                                new TypeReference<
+                                        Map<String, Map<String, Map<String, Object>>>>() {});
+            }
             log.info("[Auth] Loaded credentials for {} agent(s) from {}", loaded.size(), path);
             return loaded;
         } catch (Exception e) {
