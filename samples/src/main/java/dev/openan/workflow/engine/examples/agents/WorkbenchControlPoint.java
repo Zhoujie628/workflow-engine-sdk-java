@@ -19,7 +19,7 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
-import dev.openan.workflow.engine.client.LlmHelper;
+import dev.openan.workflow.engine.examples.LlmHelper;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.DefaultControlPoint;
 import dev.openan.workflow.engine.model.JumpCondition;
