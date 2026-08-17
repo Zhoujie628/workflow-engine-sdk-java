@@ -37,6 +37,12 @@
             <artifactId>protobuf-java-util</artifactId>
             <version>3.25.5</version>
         </dependency>
+        <!-- Eastcom Order SDK (instruction center / gateway platform). -->
+        <dependency>
+            <groupId>com.eastcom.apollo</groupId>
+            <artifactId>order-shaded-client</artifactId>
+            <version>1.1.18</version>
+        </dependency>
         <!-- Spring Boot starter: auto-assembles A2A server beans, partner only implements AgentExecutor -->
         <dependency>
             <groupId>dev.openan.workflow.sdk</groupId>

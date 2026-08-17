@@ -20,3 +20,20 @@ a2at:
 a2a:
   orch-url: https://127.0.0.1:5001
   ssl-verify: false
+  # Production default: route A2A messages through the Eastcom Order SDK.
+  # Use mock for the local SpringSpnDemo, or direct to bypass the instruction platform.
+  transport-mode: ${A2A_TRANSPORT_MODE:order}
+  mock-gateway-url: ${A2A_MOCK_GATEWAY_URL:http://127.0.0.1:26400}
+  order:
+    simulator-enabled: ${EASTCOM_ORDER_SIMULATOR_ENABLED:false}
+    host: ${EASTCOM_ORDER_HOST:}
+    port: ${EASTCOM_ORDER_PORT:0}
+    username: ${EASTCOM_ORDER_USERNAME:}
+    password: ${EASTCOM_ORDER_PASSWORD:}
+    client-id: ${EASTCOM_ORDER_CLIENT_ID:}
+    client-secret: ${EASTCOM_ORDER_CLIENT_SECRET:}
+    default-ne: ${EASTCOM_ORDER_DEFAULT_NE:}
+    city1-ne: ${EASTCOM_ORDER_CITY1_NE:}
+    city2-ne: ${EASTCOM_ORDER_CITY2_NE:}
+    login-timeout-seconds: ${EASTCOM_ORDER_LOGIN_TIMEOUT_SECONDS:15}
+    timeout-seconds: ${EASTCOM_ORDER_TIMEOUT_SECONDS:600}
