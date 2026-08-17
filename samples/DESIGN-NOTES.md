@@ -97,7 +97,8 @@ SendMessageResult result = client.sendMessage("Transport Workbench Agent", taskT
 
 ## 七、SSL 主机名验证
 
-`jdk.internal.httpclient.disableHostnameVerification` 是 JVM 级静态缓存属性，必须在任何 HttpClient 创建前设置：
+`jdk.internal.httpclient.disableHostnameVerification` 是 JVM 级、JDK 内部且可能被静态缓存的开关。SDK
+不会修改它；只有使用仓库公开 demo 证书的独立样例进程才在入口类、创建任何 `HttpClient` 之前设置：
 
 ```java
 // StartAgentsServer 入口类的 static 块
@@ -105,6 +106,9 @@ static {
     System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
 }
 ```
+
+该设置会影响同一 JVM 的其他 JDK `HttpClient`，不能用于共享进程或生产环境。生产应使用带正确 SAN
+的服务端证书并保持 `sslVerify=true`；需要私有 CA 时配置 `caCertsPath`。
 
 ## 八、SOLID 原则
 
@@ -125,7 +129,7 @@ static {
 
 ## 十、验证清单
 
-- `mvn compile -pl workflow-engine,samples` 编译通过
-- `mvn test -pl workflow-engine,samples` 71 个测试通过（引擎 69 + samples 2）
+- `mvn verify` 在已合法安装东信 SDK 的环境中通过
+- `mvn -pl workflow-engine,spring-boot-starter -am verify` 在无供应商私有依赖的公共环境中通过
 - `EmbeddedA2AServerTest` 验证：启动 server → sendMessage → 从 SSE 流提取诊断结果
 - `SpnCrossCityDiagnosisDemo` 端到端：3 个 Agent 启动 → 触发工作流 → 5 步全部执行成功

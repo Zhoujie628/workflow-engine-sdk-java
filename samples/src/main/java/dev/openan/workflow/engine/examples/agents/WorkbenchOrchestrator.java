@@ -19,12 +19,9 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.A2ATransport;
-import dev.openan.workflow.engine.client.AgentCardJacksonModule;
-import dev.openan.workflow.engine.client.DefaultExtensionSender;
+import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
-import dev.openan.workflow.engine.client.ExtensionSender;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.control.EventCallback;
@@ -39,21 +36,19 @@ import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Workflow orchestration for the SPN cross-city diagnosis.
  *
  * <p>Single responsibility: coordinate the full orchestration pipeline -- load agent cards,
- * search/load PSOP, create engine client, pre-position extensions, and run the workflow. Each
+ * search/load PSOP, create the task-scoped engine client, and run the workflow. Each
  * sub-step delegates to a dedicated collaborator:
  *
  * <ul>
- *   <li>{@link ExtensionPrePositioner} -- Authorization-T / Notification-T pre-positioning
  *   <li>{@link WorkbenchControlPoint} -- workflow decision callbacks (task dispatch, routing)
  *   <li>{@link NegotiationStrategy} -- negotiation clarification (injected into the control point)
  * </ul>
@@ -64,27 +59,30 @@ import java.util.concurrent.CompletableFuture;
 public class WorkbenchOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(WorkbenchOrchestrator.class);
-    private static final ObjectMapper mapper =
-            new ObjectMapper().registerModule(new AgentCardJacksonModule());
-
     private static final String FALLBACK_PSOP_ID = "psop_spn_cross_city_diagnosis";
-    private static final List<String> AGENT_CARD_RESOURCES =
-            List.of(
-                    "agentcard/spn_domain_agent_city1.json",
-                    "agentcard/spn_domain_agent_city2.json",
-                    "agentcard/transport_workbench_agent.json");
 
     private final String orchUrl;
     private final String credentialsPath;
     private final boolean sslVerify;
     private final String a2atEnvPath;
+    private final A2AJavaClientRuntime clientRuntime;
 
     public WorkbenchOrchestrator(
             String orchUrl, String credentialsPath, boolean sslVerify, String a2atEnvPath) {
+        this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, null);
+    }
+
+    public WorkbenchOrchestrator(
+            String orchUrl,
+            String credentialsPath,
+            boolean sslVerify,
+            String a2atEnvPath,
+            A2AJavaClientRuntime clientRuntime) {
         this.orchUrl = orchUrl;
         this.credentialsPath = credentialsPath;
         this.sslVerify = sslVerify;
         this.a2atEnvPath = a2atEnvPath;
+        this.clientRuntime = clientRuntime;
     }
 
     private static String buildResultText(ExecutionResult result) {
@@ -111,92 +109,121 @@ public class WorkbenchOrchestrator {
 
     /** Run the full orchestration pipeline and return the result text. */
     public String run(String messageText) throws Exception {
-        log.info("[Orchestrator] Step 1: Load agent cards");
-        List<AgentCard> agentCards = loadAgentCards();
-        log.info("[Orchestrator] Loaded {} agent card(s)", agentCards.size());
+        long runStarted = System.nanoTime();
+        String runtimeName =
+                clientRuntime != null ? clientRuntime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime";
+        log.info(
+                "[Orchestrator] START orchUrl={}, runtime={}, sslVerify={}, inputChars={}",
+                orchUrl,
+                runtimeName,
+                sslVerify,
+                messageText != null ? messageText.length() : 0);
 
-        log.info("[Orchestrator] Step 2: Search + load PSOP workflow");
+        long stageStarted = System.nanoTime();
+        log.info("[Orchestrator] STAGE_START stage=load-agent-cards");
+        List<AgentCard> agentCards = loadAgentCards();
+        log.info(
+                "[Orchestrator] STAGE_DONE stage=load-agent-cards, count={}, agents={}, elapsedMs={}",
+                agentCards.size(),
+                agentCards.stream().map(AgentCard::name).toList(),
+                elapsedMillis(stageStarted));
+
+        stageStarted = System.nanoTime();
+        log.info("[Orchestrator] STAGE_START stage=search-load-psop");
         String psopId = searchPsop(messageText);
         Workflow workflow = LoadPsop.load(orchUrl, psopId, null, sslVerify);
         log.info(
-                "[Orchestrator] Workflow: {} ({} steps)",
+                "[Orchestrator] STAGE_DONE stage=search-load-psop, psopId={}, workflow={}, "
+                        + "steps={}, elapsedMs={}",
+                psopId,
                 workflow.getName(),
-                workflow.getSteps().size());
+                workflow.getSteps().size(),
+                elapsedMillis(stageStarted));
 
-        log.info("[Orchestrator] Step 3: Create engine client");
+        stageStarted = System.nanoTime();
+        log.info(
+                "[Orchestrator] STAGE_START stage=create-engine-client, runtime={}",
+                runtimeName);
         A2ATransport transport =
                 new A2ATransport(
                         agentCards,
-                        null,
+                        clientRuntime,
                         WorkflowEngineClientConfig.builder()
                                 .sslVerify(sslVerify)
                                 .a2atEnvPath(a2atEnvPath)
                                 .credentialsConfigPath(credentialsPath)
                                 .build());
+        log.info(
+                "[Orchestrator] STAGE_DONE stage=create-engine-client, contextId={}, elapsedMs={}",
+                transport.getContextId(),
+                elapsedMillis(stageStarted));
         try {
             WorkflowEngineClient engineClient = new DefaultWorkflowEngineClient(transport);
-            ExtensionSender extensionSender = new DefaultExtensionSender(transport);
 
-        log.info("[Orchestrator] Step 4: Pre-position extensions");
-        new ExtensionPrePositioner().prePosition(extensionSender, agentCards, data -> {
-            Object agent = data.get("agent");
-            Object text = data.get("text");
-            Object metadata = data.get("metadata");
-            log.info("[onNotification] agent={}, text={} chars, metadata={}",
-                    agent,
-                    text != null ? String.valueOf(text).length() : 0,
-                    metadata != null ? "yes" : "no");
-            if (text != null) {
-                log.info("[onNotification] Recovery result from {}: {}", agent, text);
-            }
-        });
-
-        log.info("[Orchestrator] Step 5: Execute workflow");
-        WorkbenchControlPoint controlPoint =
-                new WorkbenchControlPoint(a2atEnvPath, new NegotiationStrategy(a2atEnvPath));
-        ExecutionResult result =
-                ExecutePsop.builder()
-                        .psop(workflow)
-                        .agentCards(agentCards)
-                        .controlPoint(controlPoint)
-                        .engineClient(engineClient)
-                        .runtimeIntent(messageText)
-                        .lang("zh")
-                        .sslVerify(sslVerify)
-                        .credentialsConfigPath(credentialsPath)
-                        .a2atEnvPath(a2atEnvPath)
-                        .eventCallback(createLogCallback())
-                        .onFinish(
-                                (r, events) -> {
-                                    log.info(
-                                            "[onFinish] Success={}, Events={}",
-                                            r.isSuccess(),
-                                            events.size());
-                                    return CompletableFuture.completedFuture(null);
-                                })
-                        .execute()
-                        .join();
-        return buildResultText(result);
+            stageStarted = System.nanoTime();
+            log.info(
+                    "[Orchestrator] STAGE_START stage=execute-workflow, contextId={}, "
+                            + "psopId={}, workflow={}",
+                    transport.getContextId(),
+                    psopId,
+                    workflow.getName());
+            WorkbenchControlPoint controlPoint =
+                    new WorkbenchControlPoint(a2atEnvPath, new NegotiationStrategy(a2atEnvPath));
+            ExecutionResult result =
+                    ExecutePsop.builder()
+                            .psop(workflow)
+                            .agentCards(agentCards)
+                            .controlPoint(controlPoint)
+                            .engineClient(engineClient)
+                            .runtimeIntent(messageText)
+                            .lang("zh")
+                            .sslVerify(sslVerify)
+                            .credentialsConfigPath(credentialsPath)
+                            .a2atEnvPath(a2atEnvPath)
+                            .eventCallback(createLogCallback())
+                            .onFinish(
+                                    (r, events) -> {
+                                        log.info(
+                                                "[Orchestrator] WORKFLOW_FINISH success={}, history={}, events={}",
+                                                r.isSuccess(),
+                                                r.getHistory() != null ? r.getHistory().size() : 0,
+                                                events.size());
+                                        return CompletableFuture.completedFuture(null);
+                                    })
+                            .execute()
+                            .join();
+            log.info(
+                    "[Orchestrator] STAGE_DONE stage=execute-workflow, contextId={}, success={}, "
+                            + "history={}, elapsedMs={}",
+                    transport.getContextId(),
+                    result.isSuccess(),
+                    result.getHistory() != null ? result.getHistory().size() : 0,
+                    elapsedMillis(stageStarted));
+            String resultText = buildResultText(result);
+            log.info(
+                    "[Orchestrator] DONE contextId={}, success={}, resultChars={}, elapsedMs={}",
+                    transport.getContextId(),
+                    result.isSuccess(),
+                    resultText.length(),
+                    elapsedMillis(runStarted));
+            return resultText;
+        } catch (Exception e) {
+            log.error(
+                    "[Orchestrator] FAILED contextId={}, elapsedMs={}, errorType={}, message={}",
+                    transport.getContextId(),
+                    elapsedMillis(runStarted),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
+            throw e;
         } finally {
+            log.info("[Orchestrator] TRANSPORT_CLOSE contextId={}", transport.getContextId());
             transport.close();
         }
     }
 
     private List<AgentCard> loadAgentCards() {
-        Map<String, AgentCard> byName = new LinkedHashMap<>();
-        for (String res : AGENT_CARD_RESOURCES) {
-            try {
-                var url = getClass().getClassLoader().getResource(res);
-                if (url != null) {
-                    AgentCard card =
-                            mapper.readValue(new java.io.File(url.getPath()), AgentCard.class);
-                    byName.put(card.name(), card);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to load agent card {}: {}", res, e.getMessage());
-            }
-        }
-        return new ArrayList<>(byName.values());
+        return new WorkbenchAgentCatalog().load();
     }
 
     private String searchPsop(String messageText) {
@@ -214,6 +241,7 @@ public class WorkbenchOrchestrator {
         } catch (Exception e) {
             log.warn("[Orchestrator] PSOP search failed, using fallback: {}", e.getMessage());
         }
+        log.warn("[Orchestrator] PSOP_FALLBACK psopId={}", FALLBACK_PSOP_ID);
         return FALLBACK_PSOP_ID;
     }
 
@@ -257,5 +285,9 @@ public class WorkbenchOrchestrator {
                 }
             }
         };
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }
 }

@@ -25,6 +25,18 @@
             <artifactId>workflow-engine</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!-- A2A Java SDK spec-grpc (for StreamResponse, SendMessageRequest, ProtoUtils, ProtoJsonUtils) -->
+        <dependency>
+            <groupId>org.a2aproject.sdk</groupId>
+            <artifactId>a2a-java-sdk-spec-grpc</artifactId>
+            <version>${a2a.java.sdk.version}</version>
+        </dependency>
+        <!-- Protobuf JSON formatting (for serializing A2A messages to JSON in gateway adapter) -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java-util</artifactId>
+            <version>3.25.5</version>
+        </dependency>
         <!-- Spring Boot starter: auto-assembles A2A server beans, partner only implements AgentExecutor -->
         <dependency>
             <groupId>dev.openan.workflow.sdk</groupId>
@@ -56,6 +68,21 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Tests must never consume a contributor's local LLM key or call the network. -->
+                    <systemPropertyVariables>
+                        <a2at.samples.llm.enabled>false</a2at.samples.llm.enabled>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>

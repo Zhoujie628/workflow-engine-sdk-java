@@ -39,7 +39,7 @@ import java.util.Map;
  * result. This class does NOT contain workflow logic, pre-positioning, or negotiation strategy --
  * those live in dedicated classes.
  */
-public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor {
+public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor implements AutoCloseable {
     private static final Logger log =
             LoggerFactory.getLogger(TransportWorkbenchAgentExecutor.class);
 
@@ -47,6 +47,7 @@ public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor {
     private final String credentialsPath;
     private final boolean sslVerify;
     private final String a2atEnvPath;
+    private final WorkbenchExtensionLifecycle extensionLifecycle;
 
     public TransportWorkbenchAgentExecutor(
             String registryUrl, String orchUrl, String credentialsPath, boolean sslVerify) {
@@ -59,10 +60,30 @@ public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor {
             String credentialsPath,
             boolean sslVerify,
             String a2atEnvPath) {
+        // registryUrl is retained for source compatibility; orchUrl is the unified registry API.
         this.orchUrl = orchUrl;
         this.credentialsPath = credentialsPath;
         this.sslVerify = sslVerify;
         this.a2atEnvPath = a2atEnvPath;
+        this.extensionLifecycle =
+                new WorkbenchExtensionLifecycle(
+                        credentialsPath,
+                        sslVerify,
+                        a2atEnvPath,
+                        () -> null,
+                        data ->
+                                log.info(
+                                        "[Notification] EVENT scope=workbench, agent={}, state={}, textChars={}",
+                                        data.get("agent"),
+                                        data.get("state"),
+                                        data.get("text") != null
+                                                ? String.valueOf(data.get("text")).length()
+                                                : 0));
+    }
+
+    /** Establish persistent workbench-level pre-positioning after all agent servers are ready. */
+    public void startExtensions() {
+        extensionLifecycle.start();
     }
 
     @Override
@@ -74,6 +95,7 @@ public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor {
         emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
         emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
         try {
+            startExtensions();
             String result =
                     new WorkbenchOrchestrator(orchUrl, credentialsPath, sslVerify, a2atEnvPath)
                             .run(input);
@@ -93,5 +115,10 @@ public class TransportWorkbenchAgentExecutor extends BaseAgentExecutor {
     @Override
     public void cancel(RequestContext ctx, AgentEmitter emitter) throws A2AError {
         emitter.cancel();
+    }
+
+    @Override
+    public void close() {
+        extensionLifecycle.close();
     }
 }
