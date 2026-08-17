@@ -19,10 +19,15 @@
 
 package dev.openan.workflow.engine.examples.spring;
 
+import dev.openan.workflow.engine.client.EnvFileLoader;
+import dev.openan.workflow.engine.examples.agents.EnvResolver;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import java.nio.file.Path;
 
 /**
  * Spring Boot Workbench Agent -- northbound A2A server.
@@ -43,7 +48,16 @@ public class SpringWorkbenchApplication {
 
     public static void main(String[] args) {
         System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
+        loadDotEnv();
         SpringApplication.run(SpringWorkbenchApplication.class, args);
         log.info("[SpringWorkbench] A2A server started -- ready to receive A2A-T messages");
+    }
+
+    /** Loads local demo configuration before Spring resolves application properties. */
+    static void loadDotEnv() {
+        String envPath = EnvResolver.resolveEnvPath();
+        if (envPath != null) {
+            EnvFileLoader.loadToSystemProperties(Path.of(envPath));
+        }
     }
 }

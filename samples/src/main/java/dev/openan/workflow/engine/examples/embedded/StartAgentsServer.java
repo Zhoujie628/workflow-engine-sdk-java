@@ -66,12 +66,19 @@ public class StartAgentsServer implements Runnable {
     private final List<JdkHttpA2AServer> servers = new ArrayList<>();
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
     private volatile boolean running = true;
+    private TransportWorkbenchAgentExecutor workbenchExecutor;
 
     @SuppressWarnings("unchecked")
     private static AgentEntry loadAgent(String resourcePath, AgentExecutor executor)
             throws Exception {
-        String path = StartAgentsServer.class.getClassLoader().getResource(resourcePath).getPath();
-        Map<String, Object> card = mapper.readValue(new java.io.File(path), Map.class);
+        Map<String, Object> card;
+        try (var input =
+                StartAgentsServer.class.getClassLoader().getResourceAsStream(resourcePath)) {
+            if (input == null) {
+                throw new IllegalArgumentException("Missing classpath resource: " + resourcePath);
+            }
+            card = mapper.readValue(input, Map.class);
+        }
         List<Map<String, Object>> ifaces =
                 (List<Map<String, Object>>) card.getOrDefault("supportedInterfaces", List.of());
         String url =
@@ -129,11 +136,14 @@ public class StartAgentsServer implements Runnable {
 
     public void start() throws Exception {
         boolean sslVerify = false;
-        String credPath = getClass().getClassLoader().getResource(CRED_FILE).getPath();
+        String credPath = "classpath:" + CRED_FILE;
         String envPath = resolveEnvPath();
         log.info(
                 "A2AT env file: {}",
                 envPath != null ? envPath : "(not found, A2A-T extensions disabled)");
+        workbenchExecutor =
+                new TransportWorkbenchAgentExecutor(
+                        REGISTRY_URL, ORCH_URL, credPath, sslVerify, envPath);
         List<AgentEntry> agents =
                 List.of(
                         loadAgent(
@@ -144,8 +154,7 @@ public class StartAgentsServer implements Runnable {
                                 new SpnDomainAgentCity2Executor()),
                         loadAgent(
                                 "agentcard/transport_workbench_agent.json",
-                                new TransportWorkbenchAgentExecutor(
-                                        REGISTRY_URL, ORCH_URL, credPath, sslVerify, envPath)));
+                                workbenchExecutor));
 
         for (AgentEntry entry : agents) {
             try {
@@ -165,6 +174,8 @@ public class StartAgentsServer implements Runnable {
             }
         }
 
+        workbenchExecutor.startExtensions();
+
         log.info("=== All agents started. Press Ctrl+C to stop. ===");
         shutdownLatch.await();
     }
@@ -172,6 +183,9 @@ public class StartAgentsServer implements Runnable {
     public void stop() {
         running = false;
         log.info("Shutting down all agents...");
+        if (workbenchExecutor != null) {
+            workbenchExecutor.close();
+        }
         servers.forEach(
                 s -> {
                     try {

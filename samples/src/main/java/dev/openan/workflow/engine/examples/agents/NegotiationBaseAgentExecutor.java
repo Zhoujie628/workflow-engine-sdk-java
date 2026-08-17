@@ -77,7 +77,9 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     }
 
     protected void pushNotificationResult(String result) {
-        notificationQueue.offer(result);
+        if (!notificationQueue.offer(result)) {
+            log.warn("[{}] Notification queue rejected a result", getClass().getSimpleName());
+        }
     }
 
     /**
@@ -114,6 +116,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
+        long started = System.nanoTime();
         String input = extractText(ctx.getMessage());
         // Read Task-T prompt from message metadata if present (mirrors Python SDK)
         if (ctx.getMessage() != null && ctx.getMessage().metadata() != null) {
@@ -125,12 +128,14 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
             }
         }
         log.info(
-                "[{}] Received task: taskId={}, text={} chars, followUp={}, prePositioned={}",
+                "[{}] TASK_START taskId={}, contextId={}, inputChars={}, followUp={}, "
+                        + "prePositionedExtension={}",
                 getClass().getSimpleName(),
                 taskId,
+                contextId,
                 input.length(),
                 NegotiationUtils.isFollowUpTask(input),
-                PrePositionedExtensionHandler.detect(ctx) != null);
+                PrePositionedExtensionHandler.detect(ctx));
         try {
             String prePositionedExt = PrePositionedExtensionHandler.detect(ctx);
             if (prePositionedExt != null) {
@@ -148,10 +153,21 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.info(
-                    "[{}] Notification-T stream interrupted (shutdown)",
-                    getClass().getSimpleName());
+                    "[{}] TASK_INTERRUPTED taskId={}, contextId={}, elapsedMs={}, reason=shutdown",
+                    getClass().getSimpleName(),
+                    taskId,
+                    contextId,
+                    elapsedMillis(started));
         } catch (Exception e) {
-            log.error("[{}] execute failed: {}", getClass().getSimpleName(), e.getMessage(), e);
+            log.error(
+                    "[{}] TASK_FAILED taskId={}, contextId={}, elapsedMs={}, errorType={}, message={}",
+                    getClass().getSimpleName(),
+                    taskId,
+                    contextId,
+                    elapsedMillis(started),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
             emitter.fail(buildStatusMessage(contextId, taskId, "Failed: " + e.getMessage()));
         }
     }
@@ -169,7 +185,11 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         String agentTag = getClass().getSimpleName();
         String notifUri =
                 "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1";
-        log.info("[{}] Notification-T subscription received, keeping stream open", agentTag);
+        log.info(
+                "[{}] NOTIFICATION_SUBSCRIBED taskId={}, contextId={}, action=keep-stream-open",
+                agentTag,
+                taskId,
+                contextId);
         List<Part<?>> ackParts = List.of(new TextPart("Subscribed to recovery results"));
         emitter.addArtifact(
                 ackParts, "subscription", agentTag + " subscription", Map.of(), false, true);
@@ -185,7 +205,12 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
             if (result == null) {
                 continue;
             }
-            log.info("[{}] Pushing recovery result via Notification-T stream", agentTag);
+            log.info(
+                    "[{}] NOTIFICATION_PUSH taskId={}, contextId={}, resultChars={}",
+                    agentTag,
+                    taskId,
+                    contextId,
+                    result.length());
             Map<String, Object> notifMeta = new LinkedHashMap<>();
             notifMeta.put(notifUri, result);
             List<Part<?>> resultParts = List.of(new TextPart(result));
@@ -207,8 +232,6 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
 
     /** Follow-up: clean markers, run business, complete with extension metadata. */
     private void handleFollowUp(RequestContext ctx, AgentEmitter emitter, String input) {
-        String taskId = ctx.getTaskId();
-        String contextId = ctx.getContextId();
         String cleanInput = NegotiationUtils.cleanupResolutionMarker(input);
         log.info("[{}] Follow-up received, re-executing business", getClass().getSimpleName());
         runBusinessAndComplete(ctx, emitter, cleanInput);
@@ -247,6 +270,13 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     private void runBusinessAndComplete(RequestContext ctx, AgentEmitter emitter, String input) {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
+        long started = System.nanoTime();
+        log.info(
+                "[{}] BUSINESS_START taskId={}, contextId={}, inputChars={}",
+                getClass().getSimpleName(),
+                taskId,
+                contextId,
+                input != null ? input.length() : 0);
         String response = executeBusiness(ctx, emitter, input);
         Map<String, Object> metadata = buildResponseMetadata(ctx, response);
         List<Part<?>> parts = List.of(new TextPart(response));
@@ -254,7 +284,13 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         emitStatus(
                 emitter, TaskState.TASK_STATE_COMPLETED, contextId, taskId, "Completed", metadata);
         emitter.complete(buildStatusMessage(contextId, taskId, "Completed"));
-        log.info("[{}] Task completed", getClass().getSimpleName());
+        log.info(
+                "[{}] BUSINESS_DONE taskId={}, contextId={}, responseChars={}, elapsedMs={}",
+                getClass().getSimpleName(),
+                taskId,
+                contextId,
+                response != null ? response.length() : 0,
+                elapsedMillis(started));
     }
 
     /** Start a fulfillment negotiation via A2ATClient, or return a fallback payload. */
@@ -362,6 +398,10 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     /** Default negotiation concern. */
     protected String defaultNegotiationConcern() {
         return "needs clarification";
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }
 
     @Override
