@@ -261,6 +261,6 @@ class SpnCrossCityE2ETest {
         Map<String, Object> mergeOut = result.getStepOutputs().get("merge_analysis");
         assertNotNull(mergeOut, "merge_analysis output must exist");
         String mergeText = String.valueOf(mergeOut.values().iterator().next());
-        assertTrue(mergeText.contains("粤东"), "Merge must locate fault in Yuedong: " + mergeText);
+        assertTrue(mergeText.contains("城市1"), "Merge must locate fault in City1: " + mergeText);
     }
 }

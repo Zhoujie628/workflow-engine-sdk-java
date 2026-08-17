@@ -19,8 +19,8 @@ graph TD
     A --> C["② [mock模式] MockGatewayServer.start()<br/>// SpringSpnDemo.java:97<br/>new MockGatewayServer('127.0.0.1', 26400,<br/>Set.of('https://127.0.0.1:26335', 'https://127.0.0.1:26336'))<br/>→ JDK HttpServer 监听 :26400，做 HTTP 反向代理<br/>→ 校验 X-Target-URL 必须在 allowedTargets 白名单内"]
     A --> D["③ SpringApplication.run(SpringWorkbenchApplication)<br/>// SpringSpnDemo.java:108<br/>→ Spring Boot 启动 HTTPS :26337 (Workbench Agent)<br/>→ 自动装配:<br/>@Component SpringWorkbenchExecutor // Agent 执行器<br/>@Component ClientRuntimeFactory // 运行时工厂<br/>[simulator-enabled=true] EastcomOrderSimulatorServer :26401"]
     A --> E["④ startOmcAgents()<br/>// SpringSpnDemo.java:114"]
-    E --> F["JdkHttpA2AServer(:26335, SpnDomainAgentCity1Executor)<br/>// 粤东 OMC"]
-    E --> G["JdkHttpA2AServer(:26336, SpnDomainAgentCity2Executor)<br/>// 粤西 OMC"]
+    E --> F["JdkHttpA2AServer(:26335, SpnDomainAgentCity1Executor)<br/>// 城市1 OMC"]
+    E --> G["JdkHttpA2AServer(:26336, SpnDomainAgentCity2Executor)<br/>// 城市2 OMC"]
     A --> H["⑤ sendTaskToWorkbench(taskText)<br/>// SpringSpnDemo.java:130 发送 Task-T"]
 ```
 
@@ -84,10 +84,10 @@ graph TD
     M1 --> M10["GatewayA2AResponseParser.StreamingSession.accept()<br/>// 解析事件"]
     A --> O["如果 clientRuntime == OrderGatewayClientRuntime (ORDER 模式)"]
     O --> O1["OrderGatewayClientRuntime.sendMessage()"]
-    O1 --> O2["routeResolver.resolve(agentCard)<br/>→ agentName 'Spn Domain Agent City1' → NE 'yuedong-omc'<br/>→ agentName 'Spn Domain Agent City2' → NE 'yuexi-omc'"]
-    O1 --> O3["StreamingOrderHttpSessionClient.login()<br/>// RSocket RPC 登录<br/>→ service.login(Flux.just(loginRequest))<br/>→ 东信指令平台验证 username/password/clientId/clientSecret"]
+    O1 --> O2["routeResolver.resolve(agentCard)<br/>→ agentName 'Spn Domain Agent City1' → NE 'city1-omc'<br/>→ agentName 'Spn Domain Agent City2' → NE 'city2-omc'"]
+    O1 --> O3["StreamingOrderHttpSessionClient.login()<br/>// RSocket RPC 登录<br/>→ service.login(Flux.just(loginRequest))<br/>→ 指令平台验证 username/password/clientId/clientSecret"]
     O1 --> O4["StreamingOrderHttpSessionClient.init(ne, https)<br/>// 绑定 NE<br/>→ service.init(Flux.just(initRequest))<br/>→ 指令平台建立 session → NE 映射"]
-    O1 --> O5["StreamingOrderHttpSessionClient.executeStreaming()<br/>// StreamingOrderHttpSessionClient.java:46<br/>→ service.execute(Flux.just(wireRequest))<br/>→ 东信指令平台根据 NE 路由，HTTP 转发到目标 OMC Agent<br/>→ 返回 RSocket 流（SSE chunks）<br/>→ .takeUntil(responseSink) 直到终态事件"]
+    O1 --> O5["StreamingOrderHttpSessionClient.executeStreaming()<br/>// StreamingOrderHttpSessionClient.java:46<br/>→ service.execute(Flux.just(wireRequest))<br/>→ 指令平台根据 NE 路由，HTTP 转发到目标 OMC Agent<br/>→ 返回 RSocket 流（SSE chunks）<br/>→ .takeUntil(responseSink) 直到终态事件"]
     O1 --> O6["GatewayA2AResponseParser.StreamingSession.accept()<br/>→ 逐块解析 SSE → protobuf StreamResponse → ClientEvent"]
     O1 --> O7["StreamingOrderHttpSessionClient.logout()<br/>// 关闭 session"]
 ```
@@ -142,7 +142,7 @@ graph TD
 |------|-------------|
 | DIRECT | Workbench ──HTTPS──→ OMC Agent (直连)<br>clientRuntime = null |
 | MOCK | Workbench → OrderGatewayClientRuntime<br>→ MockOrderHttpSessionClient<br>→ HTTP POST MockGatewayServer(:26400)<br>→ X-Target-URL 校验 + HTTPS 反代 → OMC Agent |
-| ORDER | Workbench → OrderGatewayClientRuntime<br>→ StreamingOrderHttpSessionClient<br>→ RSocket RPC → 东信指令平台<br>→ 平台根据 NE 路由 HTTP 转发 → OMC Agent |
+| ORDER | Workbench → OrderGatewayClientRuntime<br>→ StreamingOrderHttpSessionClient<br>→ RSocket RPC → 指令平台<br>→ 平台根据 NE 路由 HTTP 转发 → OMC Agent |
 
 ## 十、关键类文件索引
 
@@ -157,7 +157,7 @@ graph TD
 | ExtensionPrePositioner | samples/.../agents/ExtensionPrePositioner.java | 扩展预置（Auth/Notif） |
 | WorkbenchControlPoint | samples/.../agents/WorkbenchControlPoint.java | DAG 步骤分发 |
 | NegotiationStrategy | samples/.../agents/NegotiationStrategy.java | 协商策略 |
-| OrderGatewayClientRuntime | samples/.../OrderGatewayClientRuntime.java | 东信指令平台客户端 |
+| OrderGatewayClientRuntime | samples/.../OrderGatewayClientRuntime.java | 指令平台客户端 |
 | MockGatewayClientRuntime | samples/.../MockGatewayClientRuntime.java | Mock 网关客户端 |
 | StreamingOrderHttpSessionClient | samples/.../StreamingOrderHttpSessionClient.java | RSocket 流式会话 |
 | MockOrderHttpSessionClient | samples/.../MockOrderHttpSessionClient.java | Mock HTTP 会话 |
@@ -165,7 +165,7 @@ graph TD
 | AgentGatewayRoute | samples/.../AgentGatewayRoute.java | 路由模型 |
 | ConfiguredAgentGatewayRouteResolver | samples/.../ConfiguredAgentGatewayRouteResolver.java | 配置化路由解析 |
 | MockGatewayServer | samples/.../server/MockGatewayServer.java | Mock 网关 HTTP 反代 |
-| EastcomOrderSimulatorServer | samples/.../server/EastcomOrderSimulatorServer.java | 东信 RSocket 模拟器 |
+| EastcomOrderSimulatorServer | samples/.../server/EastcomOrderSimulatorServer.java | RSocket 模拟器 |
 | JdkHttpA2AServer | samples/.../server/JdkHttpA2AServer.java | OMC Agent HTTPS 服务器 |
 | A2ATransport | workflow-engine/.../client/A2ATransport.java | A2A 传输层 |
 | WorkflowExecutor | workflow-engine/.../core/WorkflowExecutor.java | DAG 执行引擎 |
