@@ -279,11 +279,23 @@ public class A2ATransport implements AutoCloseable {
             String contextId,
             Map<String, Object> metadata,
             Consumer<ClientEvent> eventSink) {
+        return send(agentCard, agentName, message, contextId, null, metadata, eventSink);
+    }
+
+    /** Send a continuation message for an existing A2A task. */
+    public CompletableFuture<SendMessageResult> send(
+            AgentCard agentCard,
+            String agentName,
+            String message,
+            String contextId,
+            String taskId,
+            Map<String, Object> metadata,
+            Consumer<ClientEvent> eventSink) {
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
                         MessageSendParams params =
-                                buildMessageSendParams(message, contextId, metadata);
+                                buildMessageSendParams(message, contextId, taskId, metadata);
                         ClientCallContext callContext =
                                 buildClientCallContext(agentCard, agentName, metadata);
                         String endpoint =
@@ -325,6 +337,22 @@ public class A2ATransport implements AutoCloseable {
                     }
                 },
                 asyncExecutor);
+    }
+
+    /** Release resources retained by a conversation-scoped runtime. */
+    public void closeConversation(AgentCard agentCard, String contextId) {
+        if (a2aClientRuntime instanceof ConversationScopedA2AJavaClientRuntime scopedRuntime) {
+            try {
+                scopedRuntime.closeConversation(agentCard, contextId);
+            } catch (RuntimeException e) {
+                log.warn(
+                        "[Transport] CONVERSATION_CLOSE_FAILED contextId={}, agent={}, message={}",
+                        contextId,
+                        agentCard != null ? agentCard.name() : "?",
+                        e.getMessage(),
+                        e);
+            }
+        }
     }
 
     /**
@@ -428,10 +456,16 @@ public class A2ATransport implements AutoCloseable {
 
     private MessageSendParams buildMessageSendParams(
             String message, String contextId, Map<String, Object> metadata) {
+        return buildMessageSendParams(message, contextId, null, metadata);
+    }
+
+    private MessageSendParams buildMessageSendParams(
+            String message, String contextId, String taskId, Map<String, Object> metadata) {
         Message msg =
                 Message.builder()
                         .messageId(UUID.randomUUID().toString())
                         .contextId(contextId)
+                        .taskId(taskId)
                         .role(Message.Role.ROLE_USER)
                         .parts(new TextPart(message))
                         .metadata(metadata != null ? metadata : Map.of())

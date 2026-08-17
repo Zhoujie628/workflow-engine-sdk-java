@@ -94,7 +94,8 @@ public record DefaultExtensionSender(A2ATransport transport)
                                         metadata,
                                         null);
                             }
-                            return transport
+                            CompletableFuture<SendMessageResult> send =
+                                    transport
                                     .send(
                                             agentCard,
                                             agentName,
@@ -110,6 +111,10 @@ public record DefaultExtensionSender(A2ATransport transport)
                                                         result.getTaskState());
                                                 return result;
                                             });
+                            return send.whenComplete(
+                                    (ignored, error) ->
+                                            transport.closeConversation(
+                                                    agentCard, transport.getContextId()));
                         });
     }
 

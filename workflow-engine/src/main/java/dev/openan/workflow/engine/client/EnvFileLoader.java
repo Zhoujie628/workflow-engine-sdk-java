@@ -35,7 +35,7 @@ import java.util.List;
  * components that use {@link System#getenv} or {@link System#getProperty} to read configuration
  * values like {@code A2AT_CRED_KEY}.
  */
-final class EnvFileLoader {
+public final class EnvFileLoader {
 
     private static final Logger log = LoggerFactory.getLogger(EnvFileLoader.class);
 
@@ -47,7 +47,7 @@ final class EnvFileLoader {
      *
      * @param envFilePath path to the {@code .env} file
      */
-    static void loadToSystemProperties(Path envFilePath) {
+    public static void loadToSystemProperties(Path envFilePath) {
         if (envFilePath == null) {
             return;
         }

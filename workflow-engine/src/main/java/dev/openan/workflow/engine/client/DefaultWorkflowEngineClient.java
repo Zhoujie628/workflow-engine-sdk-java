@@ -124,6 +124,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                     new RuntimeException("Agent not found: " + agentName));
         }
         log.info("[EngineClient] send_message to {}: {} chars", agentName, message.length());
+        String effectiveContextId = contextId != null ? contextId : transport.getContextId();
         return runBeforeSendHandlers(agentCard, message, metadata)
                 .thenCompose(
                         processedMetadata -> {
@@ -136,13 +137,12 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                                                     processedMetadata != null
                                                             ? processedMetadata
                                                             : Map.of()));
-                            String ctx = contextId != null ? contextId : transport.getContextId();
                             return transport
                                     .send(
                                             agentCard,
                                             agentName,
                                             message,
-                                            ctx,
+                                            effectiveContextId,
                                             processedMetadata,
                                             event -> forwardIntermediateEvent(event, agentName))
                                     .thenCompose(
@@ -150,9 +150,15 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                                     .thenCompose(
                                             result ->
                                                     autoNegotiate(
-                                                            agentCard, agentName, message, ctx,
+                                                            agentCard,
+                                                            agentName,
+                                                            message,
+                                                            effectiveContextId,
                                                             result, 1));
-                        });
+                        })
+                .whenComplete(
+                        (ignored, error) ->
+                                transport.closeConversation(agentCard, effectiveContextId));
     }
 
     private CompletableFuture<SendMessageResult> autoNegotiate(
@@ -221,6 +227,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                                     + "\n\n---\nOriginal Task:\n"
                                     + originalMessage
                                     + "\n\nPlease re-execute the task based on the clarification above.";
+                    String taskId = result.getTask() != null ? result.getTask().id() : null;
                     return buildNegotiationFollowUpMeta(agentName, negMeta, clarification)
                             .thenCompose(
                                     followUpMeta ->
@@ -237,6 +244,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                                                                                 agentName,
                                                                                 followUp,
                                                                                 ctx,
+                                                                                taskId,
                                                                                 meta,
                                                                                 event ->
                                                                                         forwardIntermediateEvent(
