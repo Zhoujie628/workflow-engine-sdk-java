@@ -6,6 +6,7 @@
 |-----------------------------------|---------------------------------------|
 | `dev.openan.workflow.engine.client`   | A2A 消息传输、认证、扩展、配置        |
 | `dev.openan.workflow.engine.control`  | 用户决策点和事件系统                  |
+| `dev.openan.workflow.engine.core`     | DAG 遍历引擎和上下文组装              |
 | `dev.openan.workflow.engine.model`    | 数据模型（Workflow、Task、Result 等） |
 | `dev.openan.workflow.engine.registry` | PSOP 加载和 AgentCard 注册            |
 | `dev.openan.workflow.engine.runner`   | 工作流执行入口                        |
@@ -230,6 +231,55 @@ public interface A2AJavaClientRuntime {
 
 引擎提供默认实现。仅在需要自定义 HTTP 传输时实现此接口。
 
+### ConversationScopedA2AJavaClientRuntime
+
+可选的生命周期回调接口，适用于传输会话跨越多个 A2A 请求的运行时实现（例如网关登录需在所有协商轮次期间保持存活）。
+
+```java
+public interface ConversationScopedA2AJavaClientRuntime {
+    void closeConversation(AgentCard agentCard, String contextId);
+}
+```
+
+当运行时同时实现此接口时，引擎会在完整的发送 + 协商周期完成后调用 `closeConversation`——而不是每次 HTTP 请求之后。这样网关会话只会在逻辑会话结束后才释放。
+
+与 `A2AJavaClientRuntime` 一起实现：
+
+```java
+public class MyGatewayRuntime
+        implements A2AJavaClientRuntime, ConversationScopedA2AJavaClientRuntime {
+    @Override
+    public Iterable<ClientEvent> sendMessage(...) { ... }
+
+    @Override
+    public void closeConversation(AgentCard agentCard, String contextId) {
+        // 释放网关会话
+    }
+
+    @Override
+    public void close() { ... }
+}
+```
+
+### AgentCardJacksonModule
+
+用于反序列化 AgentCard JSON 的 Jackson 模块，包含安全方案归一化。处理 A2A SDK 强类型 `AgentCard` record 所需的 OpenAPI 格式 `securitySchemes` / `securityRequirements` 字段。
+
+```java
+ObjectMapper mapper = new ObjectMapper()
+        .registerModule(new AgentCardJacksonModule());
+AgentCard card = mapper.readValue(
+        new File("agentcard/my_agent.json"), AgentCard.class);
+```
+
+### AgentCardNormalizer
+
+将原始 `Map<String, Object>`（注册中心 API 返回）归一化为 `AgentCard` 兼容格式的工具类。`RegistryClient.fetchAgentCards()` 内部使用。也作为公共静态方法供自定义归一化使用：
+
+```java
+Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
+```
+
 ---
 
 ## dev.openan.workflow.engine.control
@@ -296,6 +346,7 @@ public class EventCallback {
 | `STEP_COMPLETE`          | 工作流步骤完成           |
 | `TASK_REQUEST`           | 任务分派给智能体         |
 | `TASK_RESPONSE`          | 收到任务响应             |
+| `TASK_STATUS_CHANGED`    | 任务状态变更（pending → running → success/failed） |
 | `AGENT_REQUEST`          | 消息发送给智能体         |
 | `AGENT_RESPONSE`         | 收到智能体响应           |
 | `AGENT_STATUS_UPDATE`    | 智能体 SSE 状态更新      |
@@ -308,6 +359,7 @@ public class EventCallback {
 | `AUTHORIZATION_RESOLVED` | 授权决策已做出           |
 | `NOTIFICATION`           | 收到智能体通知           |
 | `ROUTE_DECISION`         | 路由决策已做出           |
+| `WORKFLOW_COMPLETE`      | 工作流完成（所有步骤结束） |
 | `START`                  | 工作流执行开始           |
 | `COMPLETE`               | 工作流执行成功完成       |
 | `ERROR`                  | 工作流执行失败           |
@@ -367,6 +419,27 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 
 ---
 
+## dev.openan.workflow.engine.core
+
+### WorkflowExecutor
+
+中层 DAG 遍历引擎。遍历工作流步骤，通过 `ContextBuilder` 组装上游上下文，并行分派子任务，应用步骤成功策略（`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`），并路由到下一步。
+
+SDK 用户通常不直接实例化——`ExecutePsop` 内部封装了它。供需要在不含 runner 生命周期管理的情况下运行遍历层的高级集成使用。
+
+```java
+WorkflowExecutor executor = new WorkflowExecutor(
+        workflow, controlPoint, engineClient,
+        eventCallback, runtimeIntent, lang);
+ExecutionResult result = executor.run().join();
+```
+
+### ContextBuilder
+
+包级私有辅助类，按 `contextFrom` 规则折叠上游步骤输出，为每个步骤组装上下文消息（`"*"` = 所有前驱步骤，指定名称 = 选择性继承）。不属于公共 API 接口。
+
+---
+
 ## dev.openan.workflow.engine.model
 
 ### Workflow
@@ -398,6 +471,17 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 | `ALL_SUCCESS` | 所有子任务必须成功                                                                      |
 | `ANY_SUCCESS` | 任一子任务成功即可                                                                      |
 | `SELF_LOOP`   | 工作流执行智能体通过 `onSelfTask` 本地处理，不发 A2A-T 消息。成功语义同 `ALL_SUCCESS`。 |
+
+### TaskStatus
+
+任务生命周期状态，用于 `TASK_STATUS_CHANGED` 事件，与 Python SDK 保持跨 SDK 一致性。
+
+| 值         | 字符串       | 说明                   |
+|------------|------------|------------------------|
+| `PENDING`  | `"pending"` | 任务已创建，尚未开始   |
+| `RUNNING`  | `"running"` | 任务进行中             |
+| `SUCCESS`  | `"success"` | 任务成功完成           |
+| `FAILED`   | `"failed"`  | 任务失败               |
 
 ### Task
 
@@ -506,3 +590,69 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 - 协商失败在 `maxNegotiationRounds` 轮后终止。
 - 认证失败（401）记为 `ERROR` 日志，认证头不设置，请求继续发出。
 - SSE 流在终态事件后的连接关闭日志为 `DEBUG` 级别（预期行为）。
+
+---
+
+## spring-boot-starter 模块
+
+`spring-boot-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。当位于 Spring Boot Web 应用的 classpath 时，自动将所有 A2A SDK 服务端组件注册为 Spring Bean。
+
+### A2AProperties
+
+以 `a2at.server` 为前缀的配置属性：
+
+| 属性                    | 默认值                        | 说明                                          |
+|-------------------------|-------------------------------|-----------------------------------------------|
+| `a2at.server.agent-card` | `classpath:agentcard.json`   | AgentCard JSON 文件路径（支持 classpath: 或 file: 前缀） |
+| `a2at.server.path-prefix` | `/a2a/json`                  | A2A 端点的 URL 路径前缀                       |
+
+```yaml
+a2at:
+  server:
+    agent-card: classpath:agentcard/my_agent.json
+    path-prefix: /a2a/json
+```
+
+### A2AAutoConfiguration
+
+自动配置以下 Bean（均为 `@ConditionalOnMissingBean`，可覆盖任意一个）：
+
+| Bean                | 类型                          | 用途                                              |
+|---------------------|-------------------------------|---------------------------------------------------|
+| `agentCard`         | `AgentCard`                   | 通过 Jackson 从 `a2at.server.agent-card` 路径加载 |
+| `a2aConfigProvider` | `A2AConfigProvider`           | SDK 配置值                                        |
+| `taskStore`         | `InMemoryTaskStore`           | 内存任务存储                                      |
+| `eventBus`          | `MainEventBus`                | 用于 SSE 流的事件总线                             |
+| `queueManager`      | `InMemoryQueueManager`        | 事件队列管理器                                    |
+| `pushStore`         | `PushNotificationConfigStore` | 推送通知配置存储                                  |
+| `agentExecutorPool` | `ExecutorService`            | 智能体执行线程池（8 线程，守护线程）             |
+| `eventBusProcessor` | `MainEventBusProcessor`      | 事件总线处理器                                    |
+| `requestHandler`    | `RequestHandler`              | 默认请求处理器                                    |
+| `restHandler`       | `RestHandler`                 | REST 协议处理器                                   |
+| `a2aController`     | `A2AController`              | Spring MVC 控制器（`message:send` + `message:stream`） |
+
+### A2AController
+
+暴露 A2A REST 端点的 Spring MVC 控制器：
+
+- `POST {path-prefix}/message:send` — 阻塞式发送
+- `POST {path-prefix}/message:stream` — SSE 流式
+
+### 用法
+
+合作方只需提供 `AgentExecutor` 实现：
+
+```java
+@Component
+public class MyAgentExecutor implements AgentExecutor {
+    @Override
+    public ExecuteResult execute(ExecuteRequest request) {
+        // 业务逻辑
+        return ExecuteResult.builder()
+                .addTextPart("result text")
+                .build();
+    }
+}
+```
+
+其余 Bean（AgentCard、RequestHandler、RestHandler、A2AController 等）均自动配置。

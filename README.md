@@ -92,13 +92,15 @@ System.out.println("Success: " + result.isSuccess());
 
 ## Architecture
 
-```
-Layer 2 - Orchestration    ExecutePsop
-   |     lifecycle, event stream, onFinish hook
-Layer 1 - Traversal        WorkflowExecutor
-   |     DAG walk, parallel dispatch, context assembly, routing
-Layer 0 - Transport        WorkflowEngineClient / A2ATransport
-         A2A send, auth, extensions, SSL, SSE
+```mermaid
+graph TD
+    L2["Layer 2 — Orchestration<br/>ExecutePsop<br/>lifecycle, event stream, onFinish hook"]
+    L1["Layer 1 — Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
+    L0["Layer 0 — Transport<br/>WorkflowEngineClient / A2ATransport<br/>A2A send, auth, extensions, SSL, SSE"]
+    F["Foundation — Decision<br/>ControlPoint<br/>user-implemented business decisions"]
+
+    L2 --> L1 --> L0
+    L0 -.-> F
 ```
 
 | Layer | Entry Point | Responsibility |
@@ -106,29 +108,38 @@ Layer 0 - Transport        WorkflowEngineClient / A2ATransport
 | High | `ExecutePsop.Builder` | Event stream, lifecycle, `onFinish` persistence |
 | Mid | `WorkflowExecutor` | DAG traversal, context assembly, ControlPoint dispatch |
 | Low | `WorkflowEngineClient` / `A2ATransport` | A2A send, auth, extensions, SSL, SSE normalization |
+| Foundation | `ControlPoint` | User-implemented business decisions (onTask, onSelfTask, onRoute, onNegotiation) |
 
 ## Package Structure
 
+```mermaid
+graph TD
+    root["dev.openan.workflow.engine"]
+    client["client<br/>A2A transport, auth, extensions"]
+    control["control<br/>User decision interfaces"]
+    core["core<br/>DAG traversal, context assembly"]
+    model["model<br/>Data models"]
+    registry["registry<br/>LoadPsop, RegistryClient"]
+    runner["runner<br/>ExecutePsop entry point"]
+
+    root --> client
+    root --> control
+    root --> core
+    root --> model
+    root --> registry
+    root --> runner
 ```
-dev.openan.workflow.engine
-├── client          # A2A transport, auth, extensions (package-private internals)
-│   ├── WorkflowEngineClient         # Send facade interface
-│   ├── DefaultWorkflowEngineClient  # Send + Negotiation-T auto-loop
-│   ├── ExtensionSender              # One-shot pre-positioning (Auth-T, Notification-T)
-│   ├── A2ATransport                 # Shared wire layer (runtime, auth, SSE)
-│   ├── AuthProvider                 # Custom auth provider interface
-│   ├── WorkflowEngineClientConfig   # Builder config: SSL, auth, A2A-T
-│   ├── LlmHelper                    # LLM utility (wraps a2a-t-sdk LLMClient)
-│   └── CredentialCrypto             # AES-256-GCM credential encryption
-├── control          # User-facing decision interfaces
-│   ├── ControlPoint                 # onTask, onSelfTask, onRoute, onNegotiation
-│   ├── DefaultControlPoint          # Default routing implementation
-│   ├── EventCallback                # Event stream callback
-│   └── NegotiationStrategy          # Pluggable negotiation clarification
-├── model            # Data models (Workflow, Task, StepType, etc.)
-├── registry         # LoadPsop, RegistryClient
-└── runner           # ExecutePsop (entry point)
-```
+
+| Package | Key Classes | Description |
+|---------|-------------|-------------|
+| `client` | `WorkflowEngineClient`, `DefaultWorkflowEngineClient`, `ExtensionSender`, `A2ATransport`, `AuthProvider`, `AgentAuthManager`, `WorkflowEngineClientConfig`, `CredentialCrypto`, `AgentCardJacksonModule` | A2A transport, auth, extensions (package-private internals) |
+| `control` | `ControlPoint`, `DefaultControlPoint`, `EventCallback`, `EventType`, `NegotiationStrategy` | User-facing decision interfaces |
+| `core` | `WorkflowExecutor`, `ContextBuilder` | DAG traversal, context assembly |
+| `model` | `Workflow`, `WorkflowStep`, `Task`, `TaskRequest`, `TaskResponse`, `StepType`, `JumpCondition`, `RouteDecision`, `ExecutionResult`, `SendMessageResult`, `TaskStatus`, `WorkflowSearchResult` | Data models |
+| `registry` | `LoadPsop`, `RegistryClient` | PSOP loading and AgentCard registry |
+| `runner` | `ExecutePsop` | Entry point for workflow execution |
+
+> **Note:** `LlmHelper` lives in the **samples** module (`dev.openan.workflow.engine.examples`), not in the `client` package. The workflow engine itself does not call an LLM directly.
 
 ## Documentation
 
@@ -149,6 +160,8 @@ dev.openan.workflow.engine
 - [Notification-T 设计分析](docs/zh/notification-t-design-analysis.md) - 长连接 SSE 设计选型
 - [业务流](docs/zh/业务流.md) - SPN 跨城诊断业务流程
 - [调用过程](docs/zh/调用过程.md) - 端到端报文交互示例
+- [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台 Spring Boot 集成完整指南
+- [工作台 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - AgentScope 框架结合方案
 
 ## Modules
 

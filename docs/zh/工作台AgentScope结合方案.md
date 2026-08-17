@@ -53,26 +53,21 @@ A2A-T 执行引擎 SDK 和 AgentScope 解决的是完全不同层次的问题：
 
 ### 3.2 核心 API 表面
 
-```
-编排中心 (Python/FastAPI)
-  |  PSOP 工作流存储 + 搜索 API
-  v
-LoadPsop.search() / load()          <- 从编排中心搜索 + 加载工作流
-  |
-ExecutePsop.builder()               <- 高层工作流执行器（加载->执行->事件->持久化）
-  .psop(workflow)
-  .agentCards(cards)
-  .controlPoint(cp)                 <- 工作台业务决策回调（AgentScope 插入点）
-  .engineClient(client)
-  .execute()
-  |
-  +- WorkflowEngineClient           <- 出站发送门面（Task-T + 协商循环 + 认证）
-  |    +- sendMessage(agent, msg)
-  |
-  +- ExtensionSender                <- 前置预定位门面（Authorization-T / Notification-T）
-  |    +- prePosition()
-  |
-  +- A2ATransport                   <- 底层传输（共享，两门面复用）
+```mermaid
+graph TD
+    ORCH["编排中心 (Python/FastAPI)<br/>PSOP 工作流存储 + 搜索 API"]
+    LOAD["LoadPsop.search() / load()<br/>从编排中心搜索 + 加载工作流"]
+    EXEC["ExecutePsop.builder()<br/>高层工作流执行器（加载->执行->事件->持久化）<br/>.psop(workflow)<br/>.agentCards(cards)<br/>.controlPoint(cp) ← 工作台业务决策回调（AgentScope 插入点）<br/>.engineClient(client)<br/>.execute()"]
+    WEC["WorkflowEngineClient<br/>出站发送门面（Task-T + 协商循环 + 认证）<br/>sendMessage(agent, msg)"]
+    EXT["ExtensionSender<br/>前置预定位门面（Authorization-T / Notification-T）<br/>prePosition()"]
+    TRANSPORT["A2ATransport<br/>底层传输（共享，两门面复用）"]
+
+    ORCH --> LOAD
+    LOAD --> EXEC
+    EXEC --> WEC
+    EXEC --> EXT
+    WEC --> TRANSPORT
+    EXT --> TRANSPORT
 ```
 
 ### 3.3 工作台需要实现的三个组件
