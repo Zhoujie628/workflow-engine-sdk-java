@@ -373,11 +373,16 @@ public class AgentScopeControlPoint extends DefaultControlPoint {
                         request.getParams())
                 .thenCompose(msg -> engineClient.sendMessage(request.getAgentName(), msg))
                 .thenApply(
-                        r ->
-                                TaskResponse.builder()
-                                        .success(r.getText() != null && !r.getText().isEmpty())
-                                        .output(r.getText())
-                                        .build())
+                        r -> {
+                            String state = r.getTaskState();
+                            boolean success = state == null || state.isBlank()
+                                    ? r.getText() != null && !r.getText().isBlank()
+                                    : state.endsWith("COMPLETED");
+                            return TaskResponse.builder()
+                                    .success(success)
+                                    .output(r.getText())
+                                    .build();
+                        })
                 .exceptionally(
                         e ->
                                 TaskResponse.builder()
