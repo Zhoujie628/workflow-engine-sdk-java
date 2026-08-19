@@ -79,8 +79,8 @@ public interface WorkflowEngineClient {
 }
 ```
 
-> One-shot pre-positioning (Authorization-T / Notification-T) lives on
-> `ExtensionSender`, not here. See the `ExtensionSender` section below.
+> Pre-positioning lives on `ExtensionSender`, not here: Authorization-T is a one-shot request and Notification-T is a
+> long-lived subscription. See the `ExtensionSender` section below.
 
 #### sendMessage
 
@@ -108,10 +108,9 @@ After receiving:
 
 ### ExtensionSender
 
-One-shot pre-positioning facade over the same `A2ATransport`. Sends Authorization-T / Notification-T (and any one-shot
-extension) to agents before the workflow starts. Bypasses Task-T prompt generation and the Negotiation-T auto-loop, and
-does not emit events through the global
-`EventCallback` (the returned `CompletableFuture` is the callback).
+Pre-positioning facade over the same `A2ATransport`. Sends one-shot Authorization-T requests, establishes long-lived
+Notification-T subscriptions, and sends other one-shot extensions before a workflow starts. It bypasses Task-T prompt
+generation and the Negotiation-T auto-loop; later Notification-T events are delivered through the subscription callback.
 
 ```java
 public interface ExtensionSender {
@@ -127,7 +126,7 @@ public interface ExtensionSender {
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction, String naturalLanguageInput);
 
-    // Convenience: Notification-T (long-lived SSE + event callback)
+    // Interface contract: Notification-T (long-lived SSE + event callback)
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction,
             String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
@@ -138,11 +137,11 @@ public interface ExtensionSender {
 |------------------------|-----------------|-------------------------------------------------|
 | `agentName`            | `String`        | Target agent name (must match `AgentCard.name`) |
 | `instruction`          | `String`        | Short instruction text; becomes `parts[].text` in the A2A message body |
-| `naturalLanguageInput` | `String`        | Natural language input passed to the A2A-T SDK to generate a structured extension prompt. The generated value is placed in the message `metadata` under the extension URI key (e.g. `https://.../Authorization-T/v1`). Falls back to this text as-is when SDK generation is unavailable |
+| `naturalLanguageInput` | `String`        | Natural-language extension metadata. Task-T is structured by the A2A-T SDK; Authorization-T and Notification-T currently use this value directly |
 | `extension`            | `A2ATExtension` | Extension enum (never hardcode URIs)            |
 | `eventCallback`        | `Consumer<Map<String, Object>>` | Optional SSE event callback (`sendNotification` only). Recovery results pushed by the agent are received here in real time; the Map contains `agent`, `text`, `metadata`, `state`. Null drops subsequent events |
 
-**Wire format**: The resulting A2A message sent to the agent has `parts[].text = instruction` and `metadata = { "<extension-URI>": "<SDK-generated structured prompt>" }`. For example, Authorization-T produces:
+**Wire format**: The resulting A2A message sent to the agent has `parts[].text = instruction` and `metadata = { "<extension-URI>": "<extension value>" }`. For example, Authorization-T produces:
 
 ```json
 {
@@ -157,21 +156,32 @@ public interface ExtensionSender {
 
 Builder-based configuration for the workflow engine client.
 
-| Property                | Type                     | Default | Description                         |
-|-------------------------|--------------------------|---------|-------------------------------------|
-| `sslVerify`             | `boolean`                | `true`  | TLS certificate verification        |
-| `caCertsPath`           | `String`                 | null    | Path to CA certs PEM file           |
-| `sendTimeoutSeconds`    | `long`                   | `600`   | SSE stream timeout (10 min default) |
-| `authProvider`          | `AuthProvider`           | null    | Custom auth provider                |
-| `credentialsConfigPath` | `String`                 | null    | Path to credentials JSON            |
-| `credentialsConfig`     | `Map`                    | null    | Inline credentials config           |
-| `a2atEnvPath`           | `String`                 | null    | Path to `.env` file                 |
-| `maxNegotiationRounds`  | `int`                    | `3`     | Max negotiation auto-loop rounds    |
-| `customHandlers`        | `List<ExtensionHandler>` | null    | Custom extension handlers           |
+| Property                        | Type                     | Default | Description                                  |
+|---------------------------------|--------------------------|---------|----------------------------------------------|
+| `sslVerify`                     | `boolean`                | `true`  | TLS chain verification for HTTP/JSON-RPC; disabling it keeps hostname checks and the mTLS client identity. Disabling it uses plaintext for default gRPC |
+| `caCertsPath`                   | `String`                 | null    | Path to CA certs PEM file                    |
+| `clientCertPath`                | `String`                 | null    | Path to the mTLS client certificate chain; default gRPC requires `sslVerify=true` |
+| `clientKeyPath`                 | `String`                 | null    | Path to a PKCS#8 PEM/DER mTLS private key    |
+| `clientKeyPassword`             | `String`                 | null    | Password for an encrypted PKCS#8 private key |
+| `crlPath`                       | `String`                 | null    | X.509 CRL for HTTP/JSON-RPC; the default gRPC runtime rejects this unsupported combination |
+| `sendTimeoutSeconds`            | `long`                   | `600`   | SSE stream timeout (10 min default)          |
+| `notificationAckTimeoutSeconds` | `long`                   | `5`     | Wait for the first Notification-T ACK/event  |
+| `sendExecutorCoreSize`          | `int`                    | `4`     | Send executor core threads                   |
+| `sendExecutorMaxSize`           | `int`                    | `16`    | Send executor maximum threads                |
+| `sendExecutorQueueCapacity`     | `int`                    | `256`   | Bounded send executor queue capacity         |
+| `authProvider`                  | `AuthProvider`           | null    | Custom auth provider                         |
+| `credentialsConfigPath`         | `String`                 | null    | Path to credentials JSON; explicit missing or malformed files fail startup |
+| `credentialsConfig`             | `Map`                    | null    | Inline credentials config; must match AgentCard security requirements |
+| `a2atEnvPath`                   | `String`                 | null    | Path to `.env` file                          |
+| `maxNegotiationRounds`          | `int`                    | `3`     | Max negotiation auto-loop rounds             |
+| `customHandlers`                | `List<ExtensionHandler>` | null    | Custom extension handlers                    |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
-        .sslVerify(false)
+        .sslVerify(true)
+        .caCertsPath("ca.pem")
+        .clientCertPath("client-cert.pem")
+        .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
         .a2atEnvPath(".env")
         .credentialsConfigPath("creds.json")
@@ -191,8 +201,7 @@ public interface AuthProvider {
 }
 ```
 
-Called for every message send. The `headers` map is mutable; add
-`Authorization`, custom headers, etc. Runs before credentials-based auth.
+Called for every message send. The `headers` map is mutable; add `Authorization`, custom headers, etc. `AuthProvider` can be the sole authentication source, including when `securityRequirements` is non-empty and credentials are not configured. When credentials are also configured, both sets are computed independently and merged; different values for the same header name throw `SecurityException` instead of silently overwriting either value.
 
 ### ExtensionHandler
 
@@ -610,12 +619,23 @@ Configuration properties prefixed with `a2at.server`:
 |----------|---------|-------------|
 | `a2at.server.agent-card` | `classpath:agentcard.json` | Path to the AgentCard JSON file (classpath: or file: prefix supported) |
 | `a2at.server.path-prefix` | `/a2a/json` | URL path prefix for A2A endpoints |
+| `a2at.server.agent-timeout-seconds` | `30` | Agent execution timeout in seconds |
+| `a2at.server.consumption-timeout-seconds` | `5` | Consumption timeout in seconds |
+| `a2at.server.reconciliation-timeout-seconds` | `1` | Reconciliation wait timeout in seconds |
+| `a2at.server.executor-core-size` | `8` | Server executor core threads |
+| `a2at.server.executor-max-size` | `8` | Server executor maximum threads |
+| `a2at.server.executor-queue-capacity` | `100` | Bounded server executor queue capacity |
+| `a2at.server.executor-keep-alive-seconds` | `60` | Non-core thread keep-alive in seconds |
 
 ```yaml
 a2at:
   server:
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
+    agent-timeout-seconds: 30
+    executor-core-size: 8
+    executor-max-size: 16
+    executor-queue-capacity: 200
 ```
 
 ### A2AAutoConfiguration

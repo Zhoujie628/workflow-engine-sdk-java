@@ -141,7 +141,7 @@ public class MyControlPoint extends DefaultControlPoint {
 
 `onNegotiation` defaults to a generic clarification. Override only what you need.
 
-**Pre-positioning (Authorization-T / Notification-T)**: These are one-shot operations sent via `ExtensionSender` before the workflow starts. The send result is returned directly as a `SendMessageResult` -- no separate callback interface is needed.
+**Pre-positioning (Authorization-T / Notification-T)**: Both are established through `ExtensionSender` before a workflow starts, but they have different lifecycles. Authorization-T is a one-shot request that ends after its response. Notification-T is a long-lived subscription on a transport independent of any single workflow; its first event or acknowledgement is returned as `SendMessageResult`, and later events are delivered to the callback until that subscription transport is explicitly closed.
 
 **Self-loop steps (SelfLoop)**: When a step is the workflow-executing agent's own task (e.g. merging multiple agents'
 diagnostic results), set `stepType` to `SELF_LOOP`. The engine calls `onSelfTask` locally instead of sending an A2A-T
@@ -159,7 +159,7 @@ ExecutionResult result = ExecutePsop.builder()
         .lang("zh")
         .a2atEnvPath(".env")
         .credentialsConfigPath("credentials.json")
-        .sslVerify(false)
+        .sslVerify(true)
         .onFinish((r, history) -> {
             System.out.println("Result: " + r.isSuccess());
         })
@@ -267,7 +267,7 @@ Paste the output into the `value` field of the credentials JSON.
 > The `.env` file should not be committed to version control. Add it to `.gitignore`.
 ### 5.3 Custom Authentication (AuthProvider)
 
-When the AgentCard has no `securitySchemes`, or uses a non-standard auth mechanism, implement the `AuthProvider` interface. It has a single method:
+When tokens are obtained by the workbench or an external identity service, or the mechanism is non-standard, implement the `AuthProvider` interface. It has a single method:
 
 ```java
 public interface AuthProvider {
@@ -297,7 +297,7 @@ public class SsoAuthProvider implements AuthProvider {
 // Register
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .authProvider(new SsoAuthProvider(mySsoClient))
-        .sslVerify(false)
+        .sslVerify(true)
         .a2atEnvPath(".env")
         .build();
 ```
@@ -327,7 +327,9 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 **Notes:**
 
 - `applyAuth` is called on every message send; implement token caching/refresh logic inside
-- If both a credentials file and `AuthProvider` are configured, both run: `AuthProvider` first, credentials-based auth second
+- `securitySchemes` lists authentication methods the agent supports; `securityRequirements` marks the methods required by this integration. Empty `securityRequirements` disables built-in credential authentication, but `AuthProvider` is still called
+- `AuthProvider` can be the sole authentication source even when `securityRequirements` is non-empty
+- If both credentials and `AuthProvider` are configured, their headers are generated independently and merged; different values for the same header fail fast
 - On auth failure (e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
 ## 6. AgentCard Definition
 
@@ -454,18 +456,28 @@ notification channel.
 ## 8. HTTPS Configuration
 
 ```java
-// Dev: self-signed certs, skip verification
+// Controlled local diagnostics only: skip chain validation, but still verify the host name
 .sslVerify(false)
 
 // Production: enable verification + custom CA certs
 .sslVerify(true)
 .caCertsPath("/path/to/ca-certs.pem")
+
+// Optional mTLS and CRL. Private keys support PKCS#8 PEM/DER; encrypted keys require a password
+.clientCertPath("/path/to/client-cert.pem")
+.clientKeyPath("/path/to/client-key.pem")
+.clientKeyPassword("change-me")
+.crlPath("/path/to/revocations.crl")
 ```
+
+For HTTP/JSON-RPC, TLS policy is scoped to the current client and never changes JVM-wide hostname verification;
+disabling chain verification still loads the mTLS client identity. Keep `sslVerify(true)` in production and trust
+self-signed certificates through `caCertsPath`. The default gRPC runtime uses plaintext when `sslVerify(false)` is set,
+so mTLS and `crlPath` cannot be combined with that mode and fail fast instead of being ignored.
 
 ## 9. Logging
 
-The engine has a dedicated `PROTOCOL` logger that outputs full protocol-level request/response messages (headers +
-body). Configure in `log4j2.properties`:
+The dedicated `PROTOCOL` logger emits protocol requests and responses. Bodies are enabled by default and truncated to a configurable size. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are redacted by default. Configure the logger in `log4j2.properties`:
 
 ```properties
 logger.PROTOCOL.name=PROTOCOL
@@ -474,7 +486,15 @@ logger.PROTOCOL.additivity=false
 logger.PROTOCOL.appenderRef=console
 ```
 
-Set to `debug` to see full message bodies.
+Control the content with environment variables or same-named JVM system properties:
+
+```properties
+WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
+WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
+WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=false
+```
+
+Enable sensitive headers only for isolated, controlled local diagnostics; the engine emits a security warning when this opt-in is active.
 
 ## 10. Event Callback
 

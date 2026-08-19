@@ -55,7 +55,7 @@ List<AgentCard> agentCards = registry.fetchAgentCards();
 // 3. Create transport + engine client
 A2ATransport transport = new A2ATransport(agentCards, null,
         WorkflowEngineClientConfig.builder()
-                .sslVerify(false)
+                .sslVerify(true)
                 .a2atEnvPath(".env")
                 .credentialsConfigPath("credentials.json")
                 .build());

@@ -80,7 +80,7 @@ public interface WorkflowEngineClient {
 }
 ```
 
-> 一次性预置（Authorization-T / Notification-T）位于 `ExtensionSender`，不在本接口。见下方 `ExtensionSender` 章节。
+> 前置操作位于 `ExtensionSender`，不在本接口：Authorization-T 是一次性请求，Notification-T 是长连接订阅。见下方 `ExtensionSender` 章节。
 
 #### sendMessage
 
@@ -108,8 +108,8 @@ public interface WorkflowEngineClient {
 
 ### ExtensionSender
 
-基于同一 `A2ATransport` 的一次性预置门面。在工作流开始前向 Agent 发送 Authorization-T / Notification-T（及任何一次性扩展）。跳过
-Task-T 提示词生成和 Negotiation-T 自动循环，也不通过全局 `EventCallback` 发送事件（返回的 `CompletableFuture` 即为回调）。
+基于同一 `A2ATransport` 的前置操作门面。在工作流开始前发送一次性 Authorization-T 请求、建立长连接 Notification-T 订阅，或发送其他一次性扩展。跳过
+Task-T 提示词生成和 Negotiation-T 自动循环；Notification-T 后续事件通过订阅回调交付。
 
 ```java
 public interface ExtensionSender {
@@ -125,7 +125,7 @@ public interface ExtensionSender {
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction, String naturalLanguageInput);
 
-    // 便捷方法：Notification-T（长连接 SSE + 事件回调）
+    // 接口契约：Notification-T（长连接 SSE + 事件回调）
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction,
             String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
@@ -136,11 +136,11 @@ public interface ExtensionSender {
 |------------------------|-----------------|-------------------------------------|
 | `agentName`            | `String`        | 目标智能体名称（须匹配 `AgentCard.name`） |
 | `instruction`          | `String`        | 简短指令文本；成为 A2A 消息体的 `parts[].text` |
-| `naturalLanguageInput` | `String`        | 自然语言输入，传给 A2A-T SDK 生成结构化扩展提示词。生成的值放入消息 `metadata` 中对应扩展 URI 键下（如 `https://.../Authorization-T/v1`）。SDK 不可用时回退为此文本 |
+| `naturalLanguageInput` | `String`        | 扩展 metadata 的自然语言输入。Task-T 由 A2A-T SDK 生成结构化提示词；Authorization-T / Notification-T 当前直接使用此值 |
 | `extension`            | `A2ATExtension` | 扩展枚举（勿硬编码 URI）            |
 | `eventCallback`        | `Consumer<Map<String, Object>>` | 可选 SSE 事件回调（`sendNotification` 专用）。OMC 后续推送的抢通结果通过此回调实时接收，回调 Map 含 `agent`、`text`、`metadata`、`state`。不传（null）时后续事件被丢弃 |
 
-**报文格式**：发送给智能体的 A2A 消息结构为 `parts[].text = instruction`，`metadata = { "<扩展URI>": "<SDK生成的结构化提示词>" }`。以 Authorization-T 为例：
+**报文格式**：发送给智能体的 A2A 消息结构为 `parts[].text = instruction`，`metadata = { "<扩展URI>": "<扩展值>" }`。以 Authorization-T 为例：
 
 ```json
 {
@@ -155,21 +155,32 @@ public interface ExtensionSender {
 
 工作流引擎客户端的 Builder 配置。
 
-| 属性                    | 类型                     | 默认值 | 说明                       |
-|-------------------------|--------------------------|--------|----------------------------|
-| `sslVerify`             | `boolean`                | `true` | TLS 证书验证               |
-| `caCertsPath`           | `String`                 | null   | CA 证书 PEM 文件路径       |
-| `sendTimeoutSeconds`    | `long`                   | `600`  | SSE 流超时（默认 10 分钟） |
-| `authProvider`          | `AuthProvider`           | null   | 自定义认证提供器           |
-| `credentialsConfigPath` | `String`                 | null   | 凭证 JSON 文件路径         |
-| `credentialsConfig`     | `Map`                    | null   | 内联凭证配置               |
-| `a2atEnvPath`           | `String`                 | null   | `.env` 文件路径            |
-| `maxNegotiationRounds`  | `int`                    | `3`    | 协商自动循环最大轮数       |
-| `customHandlers`        | `List<ExtensionHandler>` | null   | 自定义扩展处理器           |
+| 属性                            | 类型                     | 默认值 | 说明                                      |
+|---------------------------------|--------------------------|--------|-------------------------------------------|
+| `sslVerify`                     | `boolean`                | `true` | HTTP/JSON-RPC 的 TLS 证书链验证；关闭时仍校验主机名并保留 mTLS 客户端身份。默认 gRPC 关闭时使用 plaintext |
+| `caCertsPath`                   | `String`                 | null   | CA 证书 PEM 文件路径                      |
+| `clientCertPath`                | `String`                 | null   | mTLS 客户端证书链路径；默认 gRPC 需配合 `sslVerify=true` |
+| `clientKeyPath`                 | `String`                 | null   | mTLS PKCS#8 PEM/DER 私钥路径              |
+| `clientKeyPassword`             | `String`                 | null   | 加密 PKCS#8 私钥密码                      |
+| `crlPath`                       | `String`                 | null   | HTTP/JSON-RPC 的 X.509 CRL 路径；默认 gRPC runtime 暂不支持并会拒绝启动 |
+| `sendTimeoutSeconds`            | `long`                   | `600`  | SSE 流超时（默认 10 分钟）                |
+| `notificationAckTimeoutSeconds` | `long`                   | `5`    | Notification-T 首个 ACK/事件等待时间      |
+| `sendExecutorCoreSize`          | `int`                    | `4`    | 发送线程池核心线程数                      |
+| `sendExecutorMaxSize`           | `int`                    | `16`   | 发送线程池最大线程数                      |
+| `sendExecutorQueueCapacity`     | `int`                    | `256`  | 发送线程池有界队列容量                    |
+| `authProvider`                  | `AuthProvider`           | null   | 自定义认证提供器                          |
+| `credentialsConfigPath`         | `String`                 | null   | 凭证 JSON 文件路径；显式配置缺失或损坏时启动失败 |
+| `credentialsConfig`             | `Map`                    | null   | 内联凭证配置；AgentCard 声明安全要求时必须匹配 |
+| `a2atEnvPath`                   | `String`                 | null   | `.env` 文件路径                           |
+| `maxNegotiationRounds`          | `int`                    | `3`    | 协商自动循环最大轮数                      |
+| `customHandlers`                | `List<ExtensionHandler>` | null   | 自定义扩展处理器                          |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
-        .sslVerify(false)
+        .sslVerify(true)
+        .caCertsPath("ca.pem")
+        .clientCertPath("client-cert.pem")
+        .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
         .a2atEnvPath(".env")
         .credentialsConfigPath("creds.json")
@@ -189,7 +200,7 @@ public interface AuthProvider {
 }
 ```
 
-每次消息发送时调用。`headers` 是可变 Map；直接添加 `Authorization`、自定义头等。先于基于凭证的认证执行。
+每次消息发送时调用。`headers` 是可变 Map；直接添加 `Authorization`、自定义头等。`AuthProvider` 可作为唯一认证来源，包括 AgentCard 的 `securityRequirements` 非空但未配置 credentials 的场景。若同时配置 credentials，两者分别计算后合并；若同名 Header 生成不同值，引擎会抛出 `SecurityException`，不会静默覆盖。
 
 ### ExtensionHandler
 
@@ -605,12 +616,23 @@ ExecutionResult result = executor.run().join();
 |-------------------------|-------------------------------|-----------------------------------------------|
 | `a2at.server.agent-card` | `classpath:agentcard.json`   | AgentCard JSON 文件路径（支持 classpath: 或 file: 前缀） |
 | `a2at.server.path-prefix` | `/a2a/json`                  | A2A 端点的 URL 路径前缀                       |
+| `a2at.server.agent-timeout-seconds` | `30` | Agent 执行超时（秒） |
+| `a2at.server.consumption-timeout-seconds` | `5` | 消费超时（秒） |
+| `a2at.server.reconciliation-timeout-seconds` | `1` | 协调等待超时（秒） |
+| `a2at.server.executor-core-size` | `8` | 服务端执行器核心线程数 |
+| `a2at.server.executor-max-size` | `8` | 服务端执行器最大线程数 |
+| `a2at.server.executor-queue-capacity` | `100` | 服务端执行器有界队列容量 |
+| `a2at.server.executor-keep-alive-seconds` | `60` | 非核心线程存活时间（秒） |
 
 ```yaml
 a2at:
   server:
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
+    agent-timeout-seconds: 30
+    executor-core-size: 8
+    executor-max-size: 16
+    executor-queue-capacity: 200
 ```
 
 ### A2AAutoConfiguration
