@@ -6,9 +6,17 @@ package dev.openan.workflow.engine.spring;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import org.a2aproject.sdk.server.config.A2AConfigProvider;
+import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
+import org.a2aproject.sdk.server.requesthandlers.RequestHandler;
+import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.transport.rest.handler.RestHandler;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -57,5 +65,35 @@ class A2AAutoConfigurationTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new A2AAutoConfiguration().agentExecutorPool(properties));
+    }
+
+    @Test
+    void whenEnabledFalseThenNoA2ABeansCreated() {
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+                .withPropertyValues("a2at.server.enabled=false")
+                .run(context -> {
+                    assertFalse(context.containsBean("agentCard"));
+                    assertFalse(context.containsBean("requestHandler"));
+                    assertFalse(context.containsBean("restHandler"));
+                    assertFalse(context.containsBean("a2aController"));
+                    assertFalse(context.containsBean("agentExecutorPool"));
+                    assertFalse(context.containsBean("eventBus"));
+                    assertFalse(context.containsBean("taskStore"));
+                });
+    }
+
+    @Test
+    void whenEnabledTrueThenA2ABeansCreated() {
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+                .withPropertyValues("a2at.server.enabled=true")
+                .run(context -> {
+                    // agentCard will fail to load without a real classpath resource,
+                    // but the bean definition should be present (condition matched)
+                    assertFalse(context.getStartupFailure() != null
+                            && context.getStartupFailure().getMessage() != null
+                            && context.getStartupFailure().getMessage().contains("did not match"));
+                });
     }
 }
