@@ -138,7 +138,7 @@ public class MyControlPoint extends DefaultControlPoint {
 
 `onNegotiation` 默认返回通用文本。只需覆盖你关心的方法。
 
-**前置操作（Authorization-T / Notification-T）**：这两个扩展是工作流开始前通过 `ExtensionSender` 发送的一次性操作。发送结果直接通过返回的 `SendMessageResult` 获取，无需额外的回调接口。
+**前置操作（Authorization-T / Notification-T）**：两者都在工作流开始前通过 `ExtensionSender` 建立，但生命周期不同。Authorization-T 是响应完成即结束的一次性请求；Notification-T 是独立于单次工作流 transport 的长连接订阅，首个事件或 ACK 通过返回的 `SendMessageResult` 获取，后续事件通过回调持续接收，直到显式关闭订阅 transport。
 
 **自环节点（SelfLoop）**：当一个步骤是工作流执行智能体自身的任务（例如汇总多个智能体的诊断结果），把 `stepType` 设为
 `SELF_LOOP`。引擎会调用 `onSelfTask` 本地处理，而不是通过 A2A-T 协议给智能体自己发消息。`onSelfTask` 不接收 `engineClient`
@@ -155,7 +155,7 @@ ExecutionResult result = ExecutePsop.builder()
         .lang("zh")
         .a2atEnvPath(".env")
         .credentialsConfigPath("credentials.json")
-        .sslVerify(false)
+        .sslVerify(true)
         .onFinish((r, history) -> {
             System.out.println("执行结果: " + r.isSuccess());
         })
@@ -263,7 +263,7 @@ enc:uHQcTeKZMVNRM9Ga:o5vm4weRozBXBs04phrLq7j7+/yRVyDsrw==
 > `.env` 文件不应提交到版本库，建议加入 `.gitignore`。
 ### 5.3 自定义认证（AuthProvider）
 
-当 AgentCard 没有声明 `securitySchemes`，或使用非标准认证方式时，实现 `AuthProvider` 接口。接口只有一个方法：
+当令牌由工作台或外部认证服务获取，或使用非标准认证方式时，实现 `AuthProvider` 接口。接口只有一个方法：
 
 ```java
 public interface AuthProvider {
@@ -293,7 +293,7 @@ public class SsoAuthProvider implements AuthProvider {
 // 注册
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .authProvider(new SsoAuthProvider(mySsoClient))
-        .sslVerify(false)
+        .sslVerify(true)
         .a2atEnvPath(".env")
         .build();
 ```
@@ -323,7 +323,9 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 **注意事项：**
 
 - `applyAuth` 每次发消息都会调用，内部可自行实现 token 缓存和刷新逻辑
-- 如果同时配了凭证文件和 `AuthProvider`，两者都生效：`AuthProvider` 先执行，凭证文件的认证后执行
+- `securitySchemes` 表示智能体支持的认证方式；`securityRequirements` 表示当前对接强制要求的认证方式。`securityRequirements` 为空时不启用内置凭证认证，但 `AuthProvider` 仍会被调用
+- 只配置 `AuthProvider` 时，它可以作为唯一认证来源，即使 `securityRequirements` 非空
+- 如果同时配了凭证文件和 `AuthProvider`，两者分别生成 Header 后合并；同名不同值会 fail-fast
 - 认证失败时（如 token 获取异常），抛出的异常会传播到 `send()` 方法，请求会被拦截，不会发出
 ## 6. AgentCard 定义
 
@@ -445,17 +447,27 @@ sender.sendNotification(
 ## 8. HTTPS 配置
 
 ```java
-// 开发环境：自签证书跳过验证
+// 仅用于受控的本地诊断：跳过证书链校验，但仍校验主机名
 .sslVerify(false)
 
 // 生产环境：启用验证 + 自定义 CA 证书
 .sslVerify(true)
 .caCertsPath("/path/to/ca-certs.pem")
+
+// 可选：mTLS 与 CRL。私钥支持 PKCS#8 PEM/DER；加密私钥需提供密码
+.clientCertPath("/path/to/client-cert.pem")
+.clientKeyPath("/path/to/client-key.pem")
+.clientKeyPassword("change-me")
+.crlPath("/path/to/revocations.crl")
 ```
+
+HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局主机名校验设置；关闭证书链校验时仍会加载 mTLS
+客户端身份。生产环境应保持 `sslVerify(true)`；自签证书通过 `caCertsPath` 建立信任。默认 gRPC runtime 在
+`sslVerify(false)` 时使用 plaintext，因此不能同时配置 mTLS 或 `crlPath`，这些组合会 fail-fast。
 
 ## 9. 日志
 
-引擎设有专用 `PROTOCOL` 日志器，输出完整的协议层请求/响应报文（含 Header 和 Body）。在 `log4j2.properties` 中配置：
+引擎设有专用 `PROTOCOL` 日志器输出协议层请求/响应。Body 默认输出并按长度截断；`Authorization`、Cookie、API Key、Token、Secret 等敏感 Header 默认脱敏。在 `log4j2.properties` 中配置：
 
 ```properties
 logger.PROTOCOL.name=PROTOCOL
@@ -464,7 +476,15 @@ logger.PROTOCOL.additivity=false
 logger.PROTOCOL.appenderRef=console
 ```
 
-设为 `debug` 可查看完整报文体。
+以下环境变量或同名 JVM system property 控制内容：
+
+```properties
+WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
+WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
+WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=false
+```
+
+只有在隔离、受控的本地联调中才可临时打开敏感 Header；打开时引擎会打印安全告警。
 
 ## 10. 事件回调
 
@@ -550,7 +570,7 @@ WorkflowEngineClientConfig.builder()
 | `ExecutePsop.Builder`                                  | 工作流执行入口                                                |
 | `ControlPoint` / `DefaultControlPoint`                 | 业务决策实现（onTask、onSelfTask、onRoute、onNegotiation 等） |
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流发送（sendMessage、认证、扩展）                         |
-| `ExtensionSender` / `DefaultExtensionSender`           | 一次性前置（sendAuthorization、sendNotification）             |
+| `ExtensionSender` / `DefaultExtensionSender`           | 前置授权请求与长连接通知订阅                                  |
 | `A2ATransport`                                         | 共享通信层（httpx runtime、认证、SSE 消费）                   |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |
 | `AuthProvider`                                         | 自定义认证                                                    |
