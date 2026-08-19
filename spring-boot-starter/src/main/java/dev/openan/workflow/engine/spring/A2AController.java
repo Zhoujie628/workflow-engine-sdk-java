@@ -121,13 +121,10 @@ public class A2AController {
                         public void onNext(StreamingEventKind item) {
                             try {
                                 StreamResponse sr = ProtoUtils.ToProto.streamResponse(item);
-                                String json = JsonFormat.printer().print(sr);
-                                String compact =
-                                        json.replace("\r\n", "\n")
-                                                .replace('\r', '\n')
-                                                .lines()
-                                                .map(String::trim)
-                                                .reduce("", String::concat);
+                                    String compact =
+                                            JsonFormat.printer()
+                                                    .omittingInsignificantWhitespace()
+                                                    .print(sr);
                                 String sse =
                                         String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
                                                 + "data:"
