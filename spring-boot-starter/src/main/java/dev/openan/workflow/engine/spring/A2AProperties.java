@@ -36,6 +36,27 @@ public class A2AProperties {
     /** URL path prefix for A2A endpoints (extracted from AgentCard by default). */
     private String pathPrefix = "/a2a/json";
 
+    /** Timeout for blocking agent execution. */
+    private int agentTimeoutSeconds = 30;
+
+    /** Timeout for consuming and persisting events in blocking calls. */
+    private int consumptionTimeoutSeconds = 5;
+
+    /** Timeout for TaskStore reconciliation polling in blocking calls. */
+    private int reconciliationTimeoutSeconds = 1;
+
+    /** Core server executor thread count. */
+    private int executorCoreSize = 8;
+
+    /** Maximum server executor thread count. */
+    private int executorMaxSize = 8;
+
+    /** Maximum number of queued server tasks. */
+    private int executorQueueCapacity = 100;
+
+    /** Idle timeout for server executor threads above the core size. */
+    private int executorKeepAliveSeconds = 60;
+
     public String getAgentCard() {
         return agentCard;
     }
@@ -50,5 +71,69 @@ public class A2AProperties {
 
     public void setPathPrefix(String pathPrefix) {
         this.pathPrefix = pathPrefix;
+    }
+
+    public int getAgentTimeoutSeconds() {
+        return agentTimeoutSeconds;
+    }
+
+    public void setAgentTimeoutSeconds(int agentTimeoutSeconds) {
+        this.agentTimeoutSeconds = positive(agentTimeoutSeconds, "agentTimeoutSeconds");
+    }
+
+    public int getConsumptionTimeoutSeconds() {
+        return consumptionTimeoutSeconds;
+    }
+
+    public void setConsumptionTimeoutSeconds(int consumptionTimeoutSeconds) {
+        this.consumptionTimeoutSeconds =
+                positive(consumptionTimeoutSeconds, "consumptionTimeoutSeconds");
+    }
+
+    public int getReconciliationTimeoutSeconds() {
+        return reconciliationTimeoutSeconds;
+    }
+
+    public void setReconciliationTimeoutSeconds(int reconciliationTimeoutSeconds) {
+        this.reconciliationTimeoutSeconds =
+                positive(reconciliationTimeoutSeconds, "reconciliationTimeoutSeconds");
+    }
+
+    public int getExecutorCoreSize() {
+        return executorCoreSize;
+    }
+
+    public void setExecutorCoreSize(int executorCoreSize) {
+        this.executorCoreSize = positive(executorCoreSize, "executorCoreSize");
+    }
+
+    public int getExecutorMaxSize() {
+        return executorMaxSize;
+    }
+
+    public void setExecutorMaxSize(int executorMaxSize) {
+        this.executorMaxSize = positive(executorMaxSize, "executorMaxSize");
+    }
+
+    public int getExecutorQueueCapacity() {
+        return executorQueueCapacity;
+    }
+
+    public void setExecutorQueueCapacity(int executorQueueCapacity) {
+        this.executorQueueCapacity = positive(executorQueueCapacity, "executorQueueCapacity");
+    }
+
+    public int getExecutorKeepAliveSeconds() {
+        return executorKeepAliveSeconds;
+    }
+
+    public void setExecutorKeepAliveSeconds(int executorKeepAliveSeconds) {
+        this.executorKeepAliveSeconds =
+                positive(executorKeepAliveSeconds, "executorKeepAliveSeconds");
+    }
+
+    private static int positive(int value, String name) {
+        if (value <= 0) throw new IllegalArgumentException(name + " must be positive");
+        return value;
     }
 }
