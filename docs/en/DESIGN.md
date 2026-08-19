@@ -63,14 +63,14 @@ state, and metadata.
   Notification-T subscriptions *before* the workflow starts. It bypasses Task-T generation and the negotiation loop;
   Notification-T events use the subscription callback rather than the workflow-global callback.
 
-#### Why a shared transport with two facades?
+#### Why reusable transport machinery with two facades?
 
 Both the workflow send path and the pre-positioning path need the same wire-level machinery: an HTTP client,
 TLS configuration, auth interceptors, agent-card resolution, and SSE parsing. Putting that machinery on either facade
 would either (a) force a caller that only wants to pre-position to hold the full workflow facade, or (b) duplicate the
-wire code across two classes. The shared-transport / two-facade design avoids both:
+wire code across two classes. The reusable transport / two-facade design avoids both:
 the wire layer is written once on `A2ATransport`, and each facade delegates all wire work to it while keeping its own
-orchestration concern isolated.
+orchestration concern isolated. The facades may use task-scoped or workbench-scoped transport lifetimes.
 
 ### 2.2 Layer 1 - Traversal
 
@@ -273,9 +273,9 @@ The SDK is standalone: it does not depend on the orchestration center.
 
 ## 9. Design Decisions Summary
 
-1. **Shared transport, two facades** - wire machinery written once on
+1. **Reusable transport, two facades** - wire machinery written once on
    `A2ATransport`; `WorkflowEngineClient` and `ExtensionSender` each own one orchestration concern and delegate wire
-   work. Avoids both forced-facade coupling and wire-code duplication.
+   work, with task-scoped or workbench-scoped transport lifetimes. Avoids forced-facade coupling and wire-code duplication.
 
 2. **In-workflow vs pre-positioning extensions** - Task-T and Negotiation-T are part of the `sendMessage` chain;
    Authorization-T is a one-shot request sent before the workflow, while Notification-T is a long-lived subscription

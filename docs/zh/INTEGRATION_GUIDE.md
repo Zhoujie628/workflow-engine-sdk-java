@@ -95,10 +95,16 @@ public class MyControlPoint extends DefaultControlPoint {
             TaskRequest request, WorkflowEngineClient engineClient) {
         return engineClient.sendMessage(
                         request.getAgentName(), request.getMessage())
-                .thenApply(r -> TaskResponse.builder()
-                        .success(r.getText() != null && !r.getText().isEmpty())
-                        .output(r.getText())
-                        .build());
+                .thenApply(r -> {
+                    String state = r.getTaskState();
+                    boolean success = state == null || state.isBlank()
+                            ? r.getText() != null && !r.getText().isBlank()
+                            : state.endsWith("COMPLETED");
+                    return TaskResponse.builder()
+                            .success(success)
+                            .output(r.getText())
+                            .build();
+                });
     }
 
     @Override
@@ -383,6 +389,8 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 ```
 
 扩展 URI 必须与 A2A-T 定义完全一致。
+
+`securitySchemes` 与 `securityRequirements` 都是可选字段。前者表示智能体支持的认证方式，后者表示当前对接强制要求的认证方式；`securityRequirements: []` 表示不启用内置凭证认证。
 
 ## 7. A2A-T 扩展能力
 

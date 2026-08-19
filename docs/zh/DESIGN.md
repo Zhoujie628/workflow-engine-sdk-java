@@ -55,12 +55,13 @@ graph TD
 - **`ExtensionSender`** — 前置下发门面。在工作流启动前发送一次性 Authorization-T 请求或建立长连接 Notification-T 订阅。
   绕过 Task-T 生成和协商循环，不通过全局回调发射事件 — 返回的结果就是回调。
 
-#### 为什么共享 transport + 两个门面？
+#### 为什么复用 transport 实现 + 两个门面？
 
 工作流发送路径和前置下发路径都需要相同的通信层机制：HTTP 客户端、TLS 配置、
 认证拦截器、智能体卡片解析、SSE 解析。把这些机制放在任一门面上要么 (a) 强制只想做前置下发的
-调用方持有完整工作流门面，要么 (b) 在两个类中重复通信代码。共享 transport + 两个门面的设计
-避免了这两个问题。
+调用方持有完整工作流门面，要么 (b) 在两个类中重复通信代码。复用 `A2ATransport` 实现 + 两个门面的设计
+避免了这两个问题。两个门面可以持有不同生命周期的 transport 实例：工作流发送使用任务级 transport，
+Notification-T 订阅使用工作台级 transport。
 
 ### 2.2 Layer 1 - 遍历层
 
@@ -247,8 +248,9 @@ SDK 是独立的：不依赖编排中心。
 
 ## 9. 设计决策总结
 
-1. **共享 transport，两个门面** — 通信层机制在 `A2ATransport` 上写一次；
-   `WorkflowEngineClient` 和 `ExtensionSender` 各自拥有一个编排职责，委托通信工作。
+1. **复用 transport 实现，两个门面** — 通信层机制在 `A2ATransport` 上写一次；
+   `WorkflowEngineClient` 和 `ExtensionSender` 各自拥有一个编排职责，委托通信工作，
+   并可使用任务级或工作台级 transport 生命周期。
    避免强制门面耦合和通信代码重复。
 
 2. **工作流内扩展 vs 前置下发扩展** — Task-T 和 Negotiation-T 是 `sendMessage` 链的一部分；
