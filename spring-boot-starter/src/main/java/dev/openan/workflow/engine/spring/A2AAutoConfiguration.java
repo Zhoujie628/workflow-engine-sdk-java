@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -75,6 +76,7 @@ import java.util.concurrent.TimeUnit;
 @AutoConfiguration
 @ConditionalOnWebApplication
 @ConditionalOnClass(AgentExecutor.class)
+@ConditionalOnProperty(name = "a2at.server.enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(A2AProperties.class)
 public class A2AAutoConfiguration {
 
