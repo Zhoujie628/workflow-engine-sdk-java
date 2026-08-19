@@ -28,15 +28,11 @@ import org.a2aproject.sdk.client.MessageEvent;
 import org.a2aproject.sdk.client.TaskEvent;
 import org.a2aproject.sdk.client.TaskUpdateEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
-import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallInterceptor;
-import org.a2aproject.sdk.client.transport.spi.interceptors.PayloadAndHeaders;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.Artifact;
 import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.Part;
-import org.a2aproject.sdk.spec.SecurityRequirement;
-import org.a2aproject.sdk.spec.SecurityScheme;
 import org.a2aproject.sdk.spec.Task;
 import org.a2aproject.sdk.spec.TaskArtifactUpdateEvent;
 import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
@@ -49,11 +45,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -63,8 +64,8 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>{@link DefaultWorkflowEngineClient} -- workflow execution path (Task-T prompt generation,
  *       Negotiation-T auto-loop, extension handlers, event callback, control point).
- *   <li>{@link DefaultExtensionSender} -- one-shot pre-positioning sends (Authorization-T /
- *       Notification-T).
+ *   <li>{@link DefaultExtensionSender} -- Authorization-T requests and Notification-T
+ *       subscriptions.
  * </ul>
  *
  * Neither facade duplicates transport code; both delegate here.
@@ -79,13 +80,10 @@ public class A2ATransport implements AutoCloseable {
     private final AuthProvider authProvider;
     private final A2ATClient a2atClient;
     private final String contextId;
-    private final ExecutorService asyncExecutor =
-            Executors.newCachedThreadPool(
-                    r -> {
-                        Thread t = new Thread(r, "engine-send");
-                        t.setDaemon(true);
-                        return t;
-                    });
+    private final ClientCallContextFactory clientCallContextFactory;
+    private final ExecutorService asyncExecutor;
+    private final long notificationAckTimeoutSeconds;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     public A2ATransport(
             List<AgentCard> agentCards,
@@ -97,21 +95,64 @@ public class A2ATransport implements AutoCloseable {
                         : new DefaultA2AJavaClientRuntime(
                                 config.isSslVerify(),
                                 config.getCaCertsPath(),
+                                config.getClientCertPath(),
+                                config.getClientKeyPath(),
+                                config.getClientKeyPassword(),
+                                config.getCrlPath(),
                                 config.getSendTimeoutSeconds(),
-                                config.getPreferredProtocol());
+                                config.getPreferredProtocol(),
+                                config.getSendExecutorCoreSize(),
+                                config.getSendExecutorMaxSize(),
+                                config.getSendExecutorQueueCapacity());
         this.contextId = UUID.randomUUID().toString();
-        if (config.getCredentialsConfigPath() != null) {
-            this.authManager = new AgentAuthManager(config.getCredentialsConfigPath());
-        } else if (config.getCredentialsConfig() != null) {
-            this.authManager = new AgentAuthManager(config.getCredentialsConfig());
-        } else {
-            this.authManager = new AgentAuthManager();
-        }
+        this.notificationAckTimeoutSeconds = config.getNotificationAckTimeoutSeconds();
+        this.asyncExecutor =
+                new ThreadPoolExecutor(
+                        config.getSendExecutorCoreSize(),
+                        config.getSendExecutorMaxSize(),
+                        60L,
+                        TimeUnit.SECONDS,
+                        new ArrayBlockingQueue<>(config.getSendExecutorQueueCapacity()),
+                        r -> {
+                            Thread t = new Thread(r, "engine-send");
+                            t.setDaemon(true);
+                            return t;
+                        },
+                        new ThreadPoolExecutor.CallerRunsPolicy());
         if (config.getA2atEnvPath() != null) {
             EnvFileLoader.loadToSystemProperties(java.nio.file.Path.of(config.getA2atEnvPath()));
         }
+        java.net.http.HttpClient credentialHttpClient = null;
+        if (config.getCredentialsConfigPath() != null
+                || config.getCredentialsConfig() != null) {
+            credentialHttpClient =
+                    JdkHttpClientFactory.create(
+                            config.isSslVerify(),
+                            config.getCaCertsPath(),
+                            config.getClientCertPath(),
+                            config.getClientKeyPath(),
+                            config.getClientKeyPassword(),
+                            config.getCrlPath(),
+                            Duration.ofSeconds(30),
+                            null);
+        }
+        if (config.getCredentialsConfigPath() != null) {
+            this.authManager =
+                    new AgentAuthManager(
+                            config.getCredentialsConfigPath(), credentialHttpClient);
+        } else if (config.getCredentialsConfig() != null) {
+            this.authManager =
+                    new AgentAuthManager(config.getCredentialsConfig(), credentialHttpClient);
+        } else {
+            this.authManager = new AgentAuthManager();
+        }
         this.a2atClient = initA2atClient(config.getA2atEnvPath());
         this.authProvider = config.getAuthProvider();
+        this.clientCallContextFactory =
+                new ClientCallContextFactory(
+                        new AuthProviderHeaderContributor(authProvider),
+                        new CredentialHeaderContributor(authManager, authProvider),
+                        new ExtensionHeaderContributor(authManager));
         for (AgentCard card : agentCards) {
             if (!card.name().isEmpty()) {
                 cardMap.put(card.name(), card);
@@ -279,6 +320,10 @@ public class A2ATransport implements AutoCloseable {
             String contextId,
             Map<String, Object> metadata,
             Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("A2A transport is closed"));
+        }
         return send(agentCard, agentName, message, contextId, null, metadata, eventSink);
     }
 
@@ -291,6 +336,10 @@ public class A2ATransport implements AutoCloseable {
             String taskId,
             Map<String, Object> metadata,
             Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("A2A transport is closed"));
+        }
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
@@ -333,6 +382,9 @@ public class A2ATransport implements AutoCloseable {
                                 agentName,
                                 e.getMessage(),
                                 e);
+                        if (e instanceof SecurityException securityException) {
+                            throw securityException;
+                        }
                         throw new RuntimeException("Agent call failed: " + e.getMessage(), e);
                     }
                 },
@@ -368,6 +420,10 @@ public class A2ATransport implements AutoCloseable {
             String contextId,
             Map<String, Object> metadata,
             Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("A2A transport is closed"));
+        }
         CompletableFuture<SendMessageResult> future = new CompletableFuture<>();
         Thread streamThread =
                 new Thread(
@@ -442,16 +498,30 @@ public class A2ATransport implements AutoCloseable {
                         "notif-t-" + agentName);
         streamThread.setDaemon(true);
         streamThread.start();
-        return future.orTimeout(5, TimeUnit.SECONDS)
-                .exceptionally(
-                        e -> {
+        return future.orTimeout(notificationAckTimeoutSeconds, TimeUnit.SECONDS)
+                .handle(
+                        (result, error) -> {
+                            if (error == null) return result;
+                            Throwable cause = unwrapCompletionError(error);
+                            if (!(cause instanceof TimeoutException)) {
+                                throw new CompletionException(cause);
+                            }
                             log.warn(
-                                    "[Transport] Notification-T subscription: no event in 5s, assuming active (stream stays open)");
+                                    "[Transport] Notification-T subscription: no event in {}s, assuming active (stream stays open)",
+                                    notificationAckTimeoutSeconds);
                             return SendMessageResult.builder()
                                     .text("Subscribed (no-ack)")
                                     .taskState("TASK_STATE_WORKING")
                                     .build();
                         });
+    }
+
+    private static Throwable unwrapCompletionError(Throwable error) {
+        Throwable current = error;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private MessageSendParams buildMessageSendParams(
@@ -475,69 +545,7 @@ public class A2ATransport implements AutoCloseable {
 
     private ClientCallContext buildClientCallContext(
             AgentCard agentCard, String agentName, Map<String, Object> messageMetadata) {
-        Map<String, String> headers = new HashMap<>();
-        if (authProvider != null) {
-            authProvider.applyAuth(agentName, agentCard, headers);
-        }
-        applyAuthHeaders(agentCard, agentName, headers);
-        List<ClientCallInterceptor> interceptors =
-                authManager.buildInterceptors(agentCard, agentName);
-        for (ClientCallInterceptor interceptor : interceptors) {
-            if (interceptor instanceof ExtensionInterceptor extInterceptor) {
-                try {
-                    ClientCallContext interceptCtx =
-                            new ClientCallContext(new HashMap<>(), headers);
-                    PayloadAndHeaders ph =
-                            extInterceptor.intercept(
-                                    "message/send", messageMetadata, headers, null, interceptCtx);
-                    headers.putAll(ph.getHeaders());
-                } catch (Exception e) {
-                    log.warn("[Transport] Extension interceptor failed: {}", e.getMessage());
-                }
-            }
-        }
-        return new ClientCallContext(new HashMap<>(), headers);
-    }
-
-    // ------------------------------------------------------------------
-    // Auth headers
-    // ------------------------------------------------------------------
-
-    private void applyAuthHeaders(
-            AgentCard agentCard, String agentName, Map<String, String> headerMap) {
-        AgentCredentialService credSvc = authManager.getService(agentName);
-        if (credSvc == null) return;
-        Map<String, Map<String, Object>> schemeConfigs = authManager.getConfig(agentName);
-        if (schemeConfigs == null) schemeConfigs = Map.of();
-        Map<String, SecurityScheme> secSchemes = agentCard.securitySchemes();
-        List<SecurityRequirement> secReqs = agentCard.securityRequirements();
-        if (secSchemes == null || secSchemes.isEmpty() || secReqs == null || secReqs.isEmpty())
-            return;
-        for (SecurityRequirement req : secReqs) {
-            Map<String, List<String>> schemes = req.schemes();
-            for (String schemeName : schemes.keySet()) {
-                Map<String, Object> schemeCfg = schemeConfigs.getOrDefault(schemeName, Map.of());
-                String credential = credSvc.getCredential(schemeName, null);
-                if (credential == null) {
-                    throw new SecurityException(
-                            "Authentication failed for agent " + agentName
-                                    + " (scheme=" + schemeName + "), request blocked");
-                }
-                String authHeader = (String) schemeCfg.get("auth_header");
-                if (authHeader != null && !authHeader.isEmpty()) {
-                    String prefix = (String) schemeCfg.getOrDefault("auth_header_prefix", "");
-                    headerMap.put(authHeader, prefix + credential);
-                    log.info("[Auth] Set header {} for agent {}", authHeader, agentName);
-                } else {
-                    headerMap.put("Authorization", "Bearer " + credential);
-                    log.info("[Auth] Set Bearer header for agent {}", agentName);
-                }
-                String acceptHeader = (String) schemeCfg.get("accept_header");
-                if (acceptHeader != null && !acceptHeader.isEmpty())
-                    headerMap.put("Accept", acceptHeader);
-                break;
-            }
-        }
+        return clientCallContextFactory.create(agentCard, agentName, messageMetadata);
     }
 
     // ------------------------------------------------------------------
@@ -546,16 +554,21 @@ public class A2ATransport implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) return;
         log.info("[Transport] Closing");
+        asyncExecutor.shutdown();
+        try {
+            if (!asyncExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                asyncExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            asyncExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         try {
             a2aClientRuntime.close();
-        } catch (Exception ignored) {
-        }
-        asyncExecutor.shutdownNow();
-        try {
-            asyncExecutor.awaitTermination(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.warn("[Transport] Runtime close failed: {}", e.getMessage(), e);
         }
     }
 }

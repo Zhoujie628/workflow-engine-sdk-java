@@ -19,6 +19,7 @@
 
 package dev.openan.workflow.engine.client;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
@@ -28,9 +29,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -70,14 +73,9 @@ class AgentCredentialService implements CredentialService {
         if (httpClient != null) {
             this.httpClient = httpClient;
         } else {
-            HttpClient.Builder b =
-                    HttpClient.newBuilder()
-                            .connectTimeout(Duration.ofSeconds(30))
-                            .followRedirects(HttpClient.Redirect.ALWAYS);
-
-            // Disable TLS verification (mirrors Python's verify=False for login endpoints)
-            b.sslContext(SslContextFactory.createTrustAll());
-            this.httpClient = b.build();
+            this.httpClient =
+                    JdkHttpClientFactory.create(
+                            true, null, null, null, null, null, Duration.ofSeconds(30), null);
         }
     }
 
@@ -200,7 +198,9 @@ class AgentCredentialService implements CredentialService {
                     if (!form.isEmpty()) {
                         form.append("&");
                     }
-                    form.append(e.getKey()).append("=").append(e.getValue());
+                    form.append(encodeForm(e.getKey()))
+                            .append("=")
+                            .append(encodeForm(String.valueOf(e.getValue())));
                 }
                 bodyPublisher = HttpRequest.BodyPublishers.ofString(form.toString());
             } else {
@@ -220,7 +220,8 @@ class AgentCredentialService implements CredentialService {
                 log.error("[Auth] Login failed: agent={}, status={}", agentName, resp.statusCode());
                 return null;
             }
-            Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
+            Map<String, Object> data =
+                    mapper.readValue(resp.body(), new TypeReference<Map<String, Object>>() {});
             String token = extractNestedValue(data, tokenField);
             if (token == null) {
                 token =
@@ -238,6 +239,10 @@ class AgentCredentialService implements CredentialService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private static String encodeForm(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private record TokenEntry(String token, long expiresAt) {

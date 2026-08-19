@@ -22,14 +22,12 @@ package dev.openan.workflow.engine.client;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallInterceptor;
-import org.a2aproject.sdk.client.transport.spi.interceptors.auth.AuthInterceptor;
 import org.a2aproject.sdk.spec.AgentCard;
-import org.a2aproject.sdk.spec.SecurityScheme;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.net.http.HttpClient;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -48,11 +46,21 @@ class AgentAuthManager {
     private static final ObjectMapper mapper = new ObjectMapper();
 
     private final Map<String, Map<String, Map<String, Object>>> config;
+    private final HttpClient credentialHttpClient;
     private final Map<String, AgentCredentialService> services = new ConcurrentHashMap<>();
 
     /** Create with a config map (agent name -> scheme name -> scheme config). */
     public AgentAuthManager(Map<String, Map<String, Map<String, Object>>> config) {
+        this(config, null);
+    }
+
+    /** Create with a config map and an explicitly configured login HTTP client. */
+    public AgentAuthManager(
+            Map<String, Map<String, Map<String, Object>>> config,
+            HttpClient credentialHttpClient) {
         this.config = config != null ? config : new HashMap<>();
+        this.credentialHttpClient = credentialHttpClient;
+        validateEncryptedCredentials(this.config);
         if (!this.config.isEmpty()) {
             log.info(
                     "[Auth] Loaded credentials for {} agent(s): {}",
@@ -63,7 +71,12 @@ class AgentAuthManager {
 
     /** Create by loading credentials from a JSON file. */
     public AgentAuthManager(String configPath) {
-        this(loadFromFile(configPath));
+        this(loadFromFile(configPath), null);
+    }
+
+    /** Create from a JSON file and use the supplied client for login requests. */
+    public AgentAuthManager(String configPath, HttpClient credentialHttpClient) {
+        this(loadFromFile(configPath), credentialHttpClient);
     }
 
     /** Create with no credentials (auth disabled). */
@@ -82,8 +95,8 @@ class AgentAuthManager {
                 java.io.InputStream is =
                         AgentAuthManager.class.getClassLoader().getResourceAsStream(resource);
                 if (is == null) {
-                    log.warn("[Auth] Classpath resource not found: {}", resource);
-                    return new HashMap<>();
+                    throw new IllegalStateException(
+                            "Credentials classpath resource not found: " + resource);
                 }
                 loaded =
                         mapper.readValue(
@@ -93,8 +106,7 @@ class AgentAuthManager {
             } else {
                 File file = new File(path);
                 if (!file.exists()) {
-                    log.warn("[Auth] Credentials file not found: {}", path);
-                    return new HashMap<>();
+                    throw new IllegalStateException("Credentials file not found: " + path);
                 }
                 loaded =
                         mapper.readValue(
@@ -105,8 +117,8 @@ class AgentAuthManager {
             log.info("[Auth] Loaded credentials for {} agent(s) from {}", loaded.size(), path);
             return loaded;
         } catch (Exception e) {
-            log.warn("[Auth] Failed to load credentials from {}: {}", path, e.getMessage());
-            return new HashMap<>();
+            throw new IllegalStateException(
+                    "Failed to load credentials from " + path + ": " + e.getMessage(), e);
         }
     }
 
@@ -135,7 +147,7 @@ class AgentAuthManager {
                         return null;
                     }
                     log.info("[Auth] Created credential service for agent: {}", name);
-                    return new AgentCredentialService(name, agentCreds);
+                    return new AgentCredentialService(name, agentCreds, credentialHttpClient);
                 });
     }
 
@@ -144,76 +156,19 @@ class AgentAuthManager {
         return config.get(agentName);
     }
 
-    /**
-     * Propagate an HTTP client to all credential services. Mirrors Python SDK's {@code
-     * AgentAuthManager.set_httpx_client()}.
-     */
-    public void setHttpClient(java.net.http.HttpClient httpClient) {
-        for (AgentCredentialService svc : services.values()) {
-            if (svc != null) {
-                // AgentCredentialService stores httpClient internally
-                // New services created after this call will use default client
+    private static void validateEncryptedCredentials(Map<?, ?> values) {
+        for (Object value : values.values()) {
+            if (value instanceof Map<?, ?> nested) {
+                validateEncryptedCredentials(nested);
+            } else if (value instanceof String text && text.startsWith("enc:")) {
+                CredentialCrypto.decryptIfNeeded(text);
             }
         }
-        log.info("[Auth] HTTP client propagated to {} service(s)", services.size());
     }
 
-    /**
-     * Build interceptors for an agent based on its AgentCard and credentials.
-     *
-     * @param agentCard the agent's card (as a map for flexibility)
-     * @param agentName the agent name
-     * @return list of interceptors (auth + extension), or empty if none needed
-     */
-    public List<ClientCallInterceptor> buildInterceptors(AgentCard agentCard, String agentName) {
-        List<ClientCallInterceptor> interceptors = new ArrayList<>();
-        Map<String, SecurityScheme> secSchemes = agentCard.securitySchemes();
-        var secReqs = agentCard.securityRequirements();
-        boolean hasSecurity =
-                secSchemes != null
-                        && !secSchemes.isEmpty()
-                        && secReqs != null
-                        && !secReqs.isEmpty();
-        AgentCredentialService credSvc = null;
-        if (hasSecurity) {
-            credSvc = getService(agentName);
-        } else {
-            log.info("[AuthManager] Agent {}: no security schemes, skipping auth", agentName);
-            if (agentCard.capabilities().extensions() == null
-                    || agentCard.capabilities().extensions().isEmpty()) {
-                return interceptors;
-            }
-        }
-
-        if (credSvc != null) {
-            Map<String, Map<String, Object>> agentCfg = getConfig(agentName);
-            if (agentCfg == null) {
-                agentCfg = new HashMap<>();
-            }
-            // Check for custom header configuration
-            boolean useCustomHeaders =
-                    agentCfg.values().stream()
-                            .anyMatch(
-                                    v ->
-                                            v != null
-                                                    && (v.containsKey("auth_header")
-                                                            || v.containsKey("accept_header")));
-            if (useCustomHeaders) {
-                interceptors.add(new CustomAuthInterceptor(credSvc, agentCfg));
-                log.info(
-                        "[AuthManager] Agent {}: configured with CustomAuthInterceptor", agentName);
-            } else {
-                interceptors.add(new AuthInterceptor(credSvc));
-                log.info("[AuthManager] Agent {}: configured with AuthInterceptor", agentName);
-            }
-        }
-
-        // Extension interceptor
+    /** Build the extension-header contributor for an AgentCard, if it declares extensions. */
+    public ExtensionInterceptor buildExtensionInterceptor(AgentCard agentCard) {
         List<String> extUris = extractExtensionUris(agentCard);
-        if (!extUris.isEmpty()) {
-            interceptors.add(new ExtensionInterceptor(extUris));
-        }
-
-        return interceptors;
+        return extUris.isEmpty() ? null : new ExtensionInterceptor(extUris);
     }
 }

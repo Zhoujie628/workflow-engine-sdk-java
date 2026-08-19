@@ -88,8 +88,7 @@ class AgentCardNormalizerTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void autoPopulatesSecurityRequirementsFromSchemes() {
+    void doesNotInventSecurityRequirementsFromSupportedSchemes() {
         Map<String, Object> card =
                 Map.of(
                         "name",
@@ -99,12 +98,24 @@ class AgentCardNormalizerTest {
                                 "bearerAuth",
                                 Map.of("httpAuthSecurityScheme", Map.of("scheme", "bearer"))));
         Map<String, Object> result = AgentCardNormalizer.normalize(card);
-        Object secReqs = result.get("securityRequirements");
-        assertNotNull(secReqs);
-        List<Map<String, Object>> reqs = (List<Map<String, Object>>) secReqs;
-        assertEquals(1, reqs.size());
-        Map<String, Object> schemesMap = (Map<String, Object>) reqs.get(0).get("schemes");
-        assertNotNull(schemesMap.get("bearerAuth"));
+        assertFalse(result.containsKey("securityRequirements"));
+    }
+
+    @Test
+    void preservesExplicitlyEmptySecurityRequirements() {
+        Map<String, Object> card =
+                Map.of(
+                        "name",
+                        "Agent1",
+                        "securitySchemes",
+                        Map.of(
+                                "bearerAuth",
+                                Map.of("httpAuthSecurityScheme", Map.of("scheme", "bearer"))),
+                        "securityRequirements",
+                        List.of());
+        Map<String, Object> result = AgentCardNormalizer.normalize(card);
+
+        assertEquals(List.of(), result.get("securityRequirements"));
     }
 
     @Test

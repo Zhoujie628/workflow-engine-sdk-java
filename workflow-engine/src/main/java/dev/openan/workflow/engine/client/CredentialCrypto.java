@@ -99,6 +99,7 @@ public final class CredentialCrypto {
      *
      * @param value the raw value from config (may be {@code enc:...} or plaintext)
      * @return decrypted plaintext, or the original value if not encrypted
+     * @throws IllegalStateException when an encrypted value cannot be decrypted
      */
     public static String decryptIfNeeded(String value) {
         if (value == null || !value.startsWith(PREFIX)) {
@@ -106,18 +107,17 @@ public final class CredentialCrypto {
         }
         String keyHex = resolveKey();
         if (keyHex == null || keyHex.isBlank()) {
-            log.warn(
-                    "[CredentialCrypto] Encrypted value found but {} not set (env var or system property), using as-is",
-                    ENV_KEY);
-            return value;
+            throw new IllegalStateException(
+                    "Encrypted credential found but "
+                            + ENV_KEY
+                            + " is not set (environment variable or system property)");
         }
         try {
             String encoded = value.substring(PREFIX.length());
             String[] parts = encoded.split(":", 2);
             if (parts.length != 2) {
-                log.error(
-                        "[CredentialCrypto] Invalid encrypted format, expected enc:<iv>:<ciphertext>");
-                return value;
+                throw new IllegalArgumentException(
+                        "Invalid encrypted credential format; expected enc:<iv>:<ciphertext>");
             }
             byte[] iv = Base64.getDecoder().decode(parts[0]);
             byte[] cipherText = Base64.getDecoder().decode(parts[1]);
@@ -130,8 +130,8 @@ public final class CredentialCrypto {
             byte[] plainBytes = cipher.doFinal(cipherText);
             return new String(plainBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            log.error("[CredentialCrypto] Decryption failed: {}", e.getMessage());
-            return value;
+            throw new IllegalStateException(
+                    "Credential decryption failed; verify " + ENV_KEY + " and encrypted value", e);
         }
     }
 
@@ -183,12 +183,19 @@ public final class CredentialCrypto {
 
     private static byte[] hexToBytes(String hex) {
         int len = hex.length();
+        if (len != 64) {
+            throw new IllegalArgumentException("A2AT_CRED_KEY must contain 64 hexadecimal characters");
+        }
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
+            int high = Character.digit(hex.charAt(i), 16);
+            int low = Character.digit(hex.charAt(i + 1), 16);
+            if (high < 0 || low < 0) {
+                throw new IllegalArgumentException(
+                        "A2AT_CRED_KEY must contain hexadecimal characters only");
+            }
             data[i / 2] =
-                    (byte)
-                            ((Character.digit(hex.charAt(i), 16) << 4)
-                                    + Character.digit(hex.charAt(i + 1), 16));
+                    (byte) ((high << 4) + low);
         }
         return data;
     }

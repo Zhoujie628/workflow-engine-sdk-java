@@ -45,30 +45,33 @@ import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-
-import javax.net.ssl.SSLContext;
 
 /**
  * Default implementation of {@link A2AJavaClientRuntime} that uses the a2a-java SDK's {@link
  * Client} with {@link RestTransport}.
  *
  * <p>This replaces the engine's previous hand-written HTTP fallback ({@code sendViaRawHttp}) with
- * the SDK's built-in transport, SSE parsing, and error handling. The runtime creates a new {@link
- * Client} per message send (matching the pattern in the a2a-t-sdk-java sample).
+ * the SDK's built-in transport, SSE parsing, and error handling. Clients are cached by endpoint,
+ * protocol, AgentCard version, and TLS policy so connections and TLS sessions can be reused.
  *
- * <p>SSL handling: when {@code sslVerify=false}, a trust-all SSL context is created and hostname
- * verification is disabled globally via the {@code
- * jdk.internal.httpclient.disableHostnameVerification} system property (must be set before any
- * {@code HttpClient} is created).
+ * <p>SSL handling: when {@code sslVerify=false}, certificate-chain verification is disabled only
+ * for clients created by this runtime. Hostname verification remains enabled and no JVM-wide TLS
+ * property is changed.
  */
 public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
 
@@ -76,15 +79,15 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
 
     private final boolean sslVerify;
     private final String caCertsPath;
+    private final String clientCertPath;
+    private final String clientKeyPath;
+    private final String clientKeyPassword;
+    private final String crlPath;
     private final long sendTimeoutSeconds;
     private final String preferredProtocol;
-    private final java.util.concurrent.ExecutorService httpClientExecutor =
-            java.util.concurrent.Executors.newCachedThreadPool(
-                    r -> {
-                        Thread t = new Thread(r, "a2a-client");
-                        t.setDaemon(true);
-                        return t;
-                    });
+    private final java.util.concurrent.ExecutorService httpClientExecutor;
+    private final Map<ClientCacheKey, Client> clientCache = new ConcurrentHashMap<>();
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     /**
      * Create a runtime with the given SSL configuration.
@@ -98,14 +101,56 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
             String caCertsPath,
             long sendTimeoutSeconds,
             String preferredProtocol) {
+        this(
+                sslVerify,
+                caCertsPath,
+                null,
+                null,
+                null,
+                null,
+                sendTimeoutSeconds,
+                preferredProtocol,
+                4,
+                16,
+                256);
+    }
+
+    public DefaultA2AJavaClientRuntime(
+            boolean sslVerify,
+            String caCertsPath,
+            String clientCertPath,
+            String clientKeyPath,
+            String clientKeyPassword,
+            String crlPath,
+            long sendTimeoutSeconds,
+            String preferredProtocol,
+            int executorCoreSize,
+            int executorMaxSize,
+            int executorQueueCapacity) {
         this.sslVerify = sslVerify;
         this.caCertsPath = caCertsPath;
+        this.clientCertPath = clientCertPath;
+        this.clientKeyPath = clientKeyPath;
+        this.clientKeyPassword = clientKeyPassword;
+        this.crlPath = crlPath;
         this.sendTimeoutSeconds = sendTimeoutSeconds;
         this.preferredProtocol = preferredProtocol;
+        this.httpClientExecutor =
+                new ThreadPoolExecutor(
+                        executorCoreSize,
+                        executorMaxSize,
+                        60L,
+                        TimeUnit.SECONDS,
+                        new ArrayBlockingQueue<>(executorQueueCapacity),
+                        r -> {
+                            Thread t = new Thread(r, "a2a-client");
+                            t.setDaemon(true);
+                            return t;
+                        },
+                        new ThreadPoolExecutor.CallerRunsPolicy());
         if (!sslVerify) {
-            // Must be set before any HttpClient is created: the JDK caches
-            // this property at class-load time.
-            System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
+            log.warn(
+                    "[A2ARuntime] TLS certificate-chain verification is disabled; hostname verification remains enabled");
         }
         log.info(
                 "[A2ARuntime] Initialized: sslVerify={}, caCerts={}, timeout={}s",
@@ -114,9 +159,9 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                 sendTimeoutSeconds);
     }
 
-    /** Simplified constructor without CA trust store (SSL verify defaults to false). */
+    /** Simplified constructor using strict TLS verification and the JVM default trust store. */
     public DefaultA2AJavaClientRuntime() {
-        this(false, null, 600L, null);
+        this(true, null, 600L, null);
     }
 
     private static String extractAgentUrl(AgentCard agentCard) {
@@ -268,8 +313,9 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
             ClientCallContext callContext,
             Consumer<ClientEvent> eventSink,
             Consumer<String> logSink) {
+        if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
         String agentUrl = extractAgentUrl(agentCard);
-        Client client = createClient(agentCard, agentUrl);
+        Client client = getOrCreateClient(agentCard, agentUrl);
         List<ClientEvent> events = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
@@ -292,13 +338,11 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                     error -> onError(agentCard.name(), error, done, errorRef),
                     callContext);
         } catch (A2AClientException e) {
-            client.close();
             throw new RuntimeException(
                     "A2A message:send failed for " + agentCard.name() + ": " + e.getMessage(), e);
         }
 
-        awaitCompletion(agentCard.name(), done, events, lastEventRef, client);
-        client.close();
+        awaitCompletion(agentCard.name(), done, events, lastEventRef);
 
         if (errorRef.get() != null) {
             throw new RuntimeException(
@@ -312,32 +356,42 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
         return events;
     }
 
-    private Client createClient(AgentCard agentCard, String agentUrl) {
+    private Client getOrCreateClient(AgentCard agentCard, String agentUrl) {
         AgentInterface selected = selectInterface(agentCard);
         String protocolBinding = selected.protocolBinding();
-        A2AHttpClient httpClient = createHttpClient();
-        try {
-            Client client = buildClientWithTransport(agentCard, protocolBinding, httpClient);
-            log.info(
-                    "[A2ARuntime] Transport: {} for '{}' ({})",
-                    protocolBinding,
-                    agentCard.name(),
-                    selected.url());
-            return client;
-        } catch (A2AClientException e) {
-            log.error(
-                    "[A2ARuntime] Failed to create client for '{}' ({}): {}",
-                    agentCard.name(),
-                    agentUrl,
-                    e.getMessage(),
-                    e);
-            throw new RuntimeException(
-                    "Failed to create a2a-java client for "
-                            + agentCard.name()
-                            + ": "
-                            + e.getMessage(),
-                    e);
-        }
+        ClientCacheKey key =
+                new ClientCacheKey(
+                        agentCard.name(),
+                        agentCard.version(),
+                        selected.url(),
+                        protocolBinding,
+                        sslVerify,
+                        caCertsPath,
+                        clientCertPath,
+                        clientKeyPath,
+                        crlPath);
+        return clientCache.computeIfAbsent(
+                key,
+                ignored -> {
+                    A2AHttpClient httpClient = createHttpClient();
+                    try {
+                        Client client =
+                                buildClientWithTransport(agentCard, protocolBinding, httpClient);
+                        log.info(
+                                "[A2ARuntime] Created cached transport: {} for '{}' ({})",
+                                protocolBinding,
+                                agentCard.name(),
+                                selected.url());
+                        return client;
+                    } catch (A2AClientException e) {
+                        throw new IllegalStateException(
+                                "Failed to create a2a-java client for "
+                                        + agentCard.name()
+                                        + " at "
+                                        + agentUrl,
+                                e);
+                    }
+                });
     }
 
     /** Select the best AgentInterface based on preferredProtocol or first available. */
@@ -369,8 +423,8 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
      * Build the client with the transport matching the protocol binding.
      *
      * <p>HTTP+JSON and JSONRPC use A2AHttpClient for SSL configuration. GRPC uses
-     * GrpcTransportConfig with a custom Channel factory. When sslVerify=false, gRPC uses plaintext
-     * (HTTP/2 without TLS). For custom gRPC CA certs, provide a custom A2AJavaClientRuntime.
+     * GrpcTransportConfig with a custom Channel factory. Insecure gRPC is plaintext and cannot
+     * carry mTLS or CRL options; such combinations fail fast instead of being ignored.
      */
     private Client buildClientWithTransport(
             AgentCard agentCard, String protocolBinding, A2AHttpClient httpClient)
@@ -393,8 +447,7 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
             String agentName,
             CountDownLatch done,
             List<ClientEvent> events,
-            AtomicReference<ClientEvent> lastEventRef,
-            Client client) {
+            AtomicReference<ClientEvent> lastEventRef) {
         try {
             if (!done.await(sendTimeoutSeconds, TimeUnit.SECONDS)) {
                 ClientEvent last = lastEventRef.get();
@@ -404,48 +457,103 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                         sendTimeoutSeconds,
                         events.size(),
                         last != null ? last.getClass().getSimpleName() : "none");
-                client.close();
                 throw new RuntimeException("A2A message:send timed out for " + agentName);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            client.close();
             throw new RuntimeException("A2A message:send interrupted for " + agentName, e);
         }
     }
 
     @Override
     public void close() {
-        log.info("[A2ARuntime] Closed");
+        if (!closed.compareAndSet(false, true)) return;
+        clientCache.values().forEach(
+                client -> {
+                    try {
+                        client.close();
+                    } catch (RuntimeException e) {
+                        log.warn("[A2ARuntime] Failed to close cached client: {}", e.getMessage());
+                    }
+                });
+        clientCache.clear();
+        httpClientExecutor.shutdownNow();
+        log.info("[A2ARuntime] Closed cached clients and HTTP executor");
     }
 
     /**
      * Create a gRPC channel with SSL settings matching the engine config.
      *
-     * <p>When sslVerify=false, uses plaintext (HTTP/2 without TLS). When sslVerify=true, uses the
-     * default TLS trust store. For custom CA certs with gRPC, add grpc-netty-shaded to classpath
-     * and override this method via a custom A2AJavaClientRuntime.
+     * <p>When sslVerify=false, uses plaintext (HTTP/2 without TLS). mTLS and CRL configuration
+     * require TLS and therefore cannot be combined with that mode in the default gRPC runtime.
      */
     private io.grpc.Channel createGrpcChannel(String url) {
-        ManagedChannelBuilder<?> builder = ManagedChannelBuilder.forTarget(url);
         if (!sslVerify) {
-            builder.usePlaintext();
+            if ((clientCertPath != null && !clientCertPath.isBlank())
+                    || (clientKeyPath != null && !clientKeyPath.isBlank())) {
+                throw new IllegalArgumentException(
+                        "sslVerify=false uses plaintext gRPC and cannot carry mTLS configuration");
+            }
+            if (crlPath != null && !crlPath.isBlank()) {
+                throw new IllegalArgumentException(
+                        "sslVerify=false uses plaintext gRPC and cannot check a CRL");
+            }
+            return ManagedChannelBuilder.forTarget(url).usePlaintext().build();
         }
-        return builder.build();
+        if (crlPath != null && !crlPath.isBlank()) {
+            throw new IllegalArgumentException(
+                    "CRL configuration is not supported by the default gRPC transport");
+        }
+        try {
+            io.grpc.TlsChannelCredentials.Builder credentials =
+                    io.grpc.TlsChannelCredentials.newBuilder();
+            if (caCertsPath != null && !caCertsPath.isBlank()) {
+                credentials.trustManager(new File(caCertsPath));
+            }
+            boolean hasCert = clientCertPath != null && !clientCertPath.isBlank();
+            boolean hasKey = clientKeyPath != null && !clientKeyPath.isBlank();
+            if (hasCert != hasKey) {
+                throw new IllegalArgumentException(
+                        "Both client certificate and private key are required for gRPC mTLS");
+            }
+            if (hasCert) {
+                if (clientKeyPassword == null || clientKeyPassword.isEmpty()) {
+                    credentials.keyManager(new File(clientCertPath), new File(clientKeyPath));
+                } else {
+                    credentials.keyManager(
+                            new File(clientCertPath),
+                            new File(clientKeyPath),
+                            clientKeyPassword);
+                }
+            }
+            return io.grpc.Grpc.newChannelBuilder(url, credentials.build()).build();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to configure gRPC TLS", e);
+        }
     }
 
     private A2AHttpClient createHttpClient() {
-        if (this.sslVerify) {
-            return new JdkA2AHttpClient();
-        }
-        SSLContext trustAllCtx = SslContextFactory.createTrustAll();
         HttpClient httpClient =
-                HttpClient.newBuilder()
-                        .version(HttpClient.Version.HTTP_1_1)
-                        .connectTimeout(Duration.ofSeconds(60))
-                        .sslContext(trustAllCtx)
-                        .executor(httpClientExecutor)
-                        .build();
+                JdkHttpClientFactory.create(
+                        sslVerify,
+                        caCertsPath,
+                        clientCertPath,
+                        clientKeyPath,
+                        clientKeyPassword,
+                        crlPath,
+                        Duration.ofSeconds(60),
+                        httpClientExecutor);
         return new JdkA2AHttpClient(httpClient);
     }
+
+    private record ClientCacheKey(
+            String agentName,
+            String agentVersion,
+            String endpoint,
+            String protocolBinding,
+            boolean sslVerify,
+            String caCertsPath,
+            String clientCertPath,
+            String clientKeyPath,
+            String crlPath) {}
 }
