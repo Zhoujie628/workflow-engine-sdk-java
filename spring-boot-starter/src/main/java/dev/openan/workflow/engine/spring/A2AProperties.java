@@ -30,6 +30,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "a2at.server")
 public class A2AProperties {
 
+    /** Whether A2A server autoconfiguration is enabled. Set false to disable all A2A beans. */
+    private boolean enabled = true;
+
     /** Path to the AgentCard JSON file (classpath: or file: prefix supported). */
     private String agentCard = "classpath:agentcard.json";
 
@@ -56,6 +59,14 @@ public class A2AProperties {
 
     /** Idle timeout for server executor threads above the core size. */
     private int executorKeepAliveSeconds = 60;
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
 
     public String getAgentCard() {
         return agentCard;
