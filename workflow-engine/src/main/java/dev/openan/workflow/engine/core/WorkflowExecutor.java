@@ -128,17 +128,31 @@ public class WorkflowExecutor {
                 "[Executor] Starting workflow: {} ({} steps)",
                 workflow.getName(),
                 workflow.getSteps().size());
+        try {
+            validateWorkflowGraph();
+        } catch (IllegalArgumentException e) {
+            log.error("[Executor] Invalid workflow graph: {}", e.getMessage());
+            emit(EventType.ERROR, Map.of("error", e.getMessage()));
+            return CompletableFuture.completedFuture(
+                    ExecutionResult.builder()
+                            .success(false)
+                            .history(new ArrayList<>(executionHistory))
+                            .stepOutputs(new HashMap<>(stepOutputs))
+                            .error(e.getMessage())
+                            .build());
+        }
         Deque<Integer> pending = new ConcurrentLinkedDeque<>();
+        Set<Integer> activated = ConcurrentHashMap.newKeySet();
         for (int i = 0; i < workflow.getSteps().size(); i++) {
             var s = workflow.getSteps().get(i);
-            if (s.getLayer() == 0 && contextBuilder.getStepPredecessors(s.getName()).isEmpty()) {
+            if (contextBuilder.getStepPredecessors(s.getName()).isEmpty()) {
                 pending.add(i);
+                activated.add(i);
             }
         }
         Set<Integer> executed = ConcurrentHashMap.newKeySet();
         boolean[] failed = {false};
-        Map<Integer, Integer> deferCount = new ConcurrentHashMap<>();
-        return executeSteps(pending, executed, failed, deferCount)
+        return executeSteps(pending, executed, activated, failed)
                 .thenApply(
                         v -> {
                             emit(EventType.WORKFLOW_COMPLETE, Map.of());
@@ -169,8 +183,8 @@ public class WorkflowExecutor {
     private CompletableFuture<Void> executeSteps(
             Deque<Integer> pending,
             Set<Integer> executed,
-            boolean[] failed,
-            Map<Integer, Integer> deferCount) {
+            Set<Integer> activated,
+            boolean[] failed) {
         if (pending.isEmpty() || failed[0]) {
             return CompletableFuture.completedFuture(null);
         }
@@ -185,17 +199,20 @@ public class WorkflowExecutor {
             }
             var step = workflow.getSteps().get(idx);
             var preds = contextBuilder.getStepPredecessors(step.getName());
-            if (preds.stream().allMatch(stepOutputs::containsKey)) {
+            boolean activePredecessorsComplete =
+                    preds.stream()
+                            .filter(
+                                    predecessor -> {
+                                        Integer predecessorIndex =
+                                                contextBuilder.findStepIndex(predecessor);
+                                        return predecessorIndex != null
+                                                && activated.contains(predecessorIndex);
+                                    })
+                            .allMatch(stepOutputs::containsKey);
+            if (activePredecessorsComplete) {
                 readySteps.add(idx);
             } else {
-                int dc = deferCount.getOrDefault(idx, 0) + 1;
-                if (dc > workflow.getSteps().size()) {
-                    log.warn("Step {} deferred too many times, skipping", step.getName());
-                    executed.add(idx);
-                } else {
-                    deferCount.put(idx, dc);
-                    deferredSteps.add(idx);
-                }
+                deferredSteps.add(idx);
             }
         }
         // Add deferred steps back
@@ -204,16 +221,35 @@ public class WorkflowExecutor {
         }
         if (readySteps.isEmpty()) {
             if (!deferredSteps.isEmpty()) {
-                return CompletableFuture.runAsync(
-                                () -> {
-                                    try {
-                                        Thread.sleep(50);
-                                    } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
-                                    }
-                                })
-                        .thenCompose(
-                                v -> executeSteps(pending, executed, failed, deferCount));
+                String details =
+                        deferredSteps.stream()
+                                .map(
+                                        idx -> {
+                                            WorkflowStep step = workflow.getSteps().get(idx);
+                                            List<String> missing =
+                                                    contextBuilder.getStepPredecessors(step.getName())
+                                                            .stream()
+                                                            .filter(
+                                                                    predecessor -> {
+                                                                        Integer predecessorIndex =
+                                                                                contextBuilder
+                                                                                        .findStepIndex(
+                                                                                                predecessor);
+                                                                        return predecessorIndex
+                                                                                        != null
+                                                                                && activated.contains(
+                                                                                        predecessorIndex)
+                                                                                && !stepOutputs.containsKey(
+                                                                                        predecessor);
+                                                                    })
+                                                            .toList();
+                                            return step.getName() + " <- " + missing;
+                                        })
+                                .collect(Collectors.joining(", "));
+                return CompletableFuture.failedFuture(
+                        new IllegalStateException(
+                                "Workflow dependency deadlock; unresolved active predecessors: "
+                                        + details));
             }
             return CompletableFuture.completedFuture(null);
         }
@@ -222,14 +258,18 @@ public class WorkflowExecutor {
         for (int idx : readySteps) {
             executed.add(idx);
             var step = workflow.getSteps().get(idx);
-            stepFutures.add(executeStep(step, executed, pending, failed));
+            stepFutures.add(executeStep(step, executed, activated, pending, failed));
         }
         return CompletableFuture.allOf(stepFutures.toArray(new CompletableFuture[0]))
-                .thenCompose(v -> executeSteps(pending, executed, failed, deferCount));
+                .thenCompose(v -> executeSteps(pending, executed, activated, failed));
     }
 
     private CompletableFuture<Void> executeStep(
-            WorkflowStep step, Set<Integer> executed, Deque<Integer> pending, boolean[] failed) {
+            WorkflowStep step,
+            Set<Integer> executed,
+            Set<Integer> activated,
+            Deque<Integer> pending,
+            boolean[] failed) {
         emit(EventType.STEP_START, Map.of("step", step.getName()));
         log.info("--- Executing step: {} ---", step.getName());
         return executeSubtasks(step)
@@ -258,11 +298,60 @@ public class WorkflowExecutor {
                                                     int nxt = nextIndices.get(i);
                                                     if (!executed.contains(nxt)
                                                             && !pending.contains(nxt)) {
+                                                        activated.add(nxt);
                                                         pending.addFirst(nxt);
                                                     }
                                                 }
                                             });
                         });
+    }
+
+    private void validateWorkflowGraph() {
+        Map<String, Integer> indices = new HashMap<>();
+        for (int i = 0; i < workflow.getSteps().size(); i++) {
+            String name = workflow.getSteps().get(i).getName();
+            if (name == null || name.isBlank()) {
+                throw new IllegalArgumentException("Workflow step name must not be blank");
+            }
+            if (indices.put(name, i) != null) {
+                throw new IllegalArgumentException("Duplicate workflow step name: " + name);
+            }
+        }
+        List<List<Integer>> graph = new ArrayList<>();
+        for (int i = 0; i < workflow.getSteps().size(); i++) graph.add(new ArrayList<>());
+        for (int i = 0; i < workflow.getSteps().size(); i++) {
+            WorkflowStep step = workflow.getSteps().get(i);
+            if (step.getNext() == null) continue;
+            for (JumpCondition jump : step.getNext()) {
+                if (isTerminalRoute(jump.getStep())) continue;
+                Integer target = indices.get(jump.getStep());
+                if (target == null) {
+                    throw new IllegalArgumentException(
+                            "Step " + step.getName() + " references missing step " + jump.getStep());
+                }
+                graph.get(i).add(target);
+            }
+        }
+        int[] state = new int[workflow.getSteps().size()];
+        for (int i = 0; i < state.length; i++) detectCycle(i, graph, state);
+    }
+
+    private void detectCycle(int node, List<List<Integer>> graph, int[] state) {
+        if (state[node] == 2) return;
+        if (state[node] == 1) {
+            throw new IllegalArgumentException(
+                    "Workflow graph contains a cycle at step "
+                            + workflow.getSteps().get(node).getName());
+        }
+        state[node] = 1;
+        for (int next : graph.get(node)) detectCycle(next, graph, state);
+        state[node] = 2;
+    }
+
+    private static boolean isTerminalRoute(String stepName) {
+        return "end".equals(stepName)
+                || "retry".equals(stepName)
+                || "endNode".equals(stepName);
     }
 
     private record StepResult(
@@ -504,9 +593,7 @@ public class WorkflowExecutor {
                 .allMatch(jc -> jc.getCondition() == null || jc.getCondition().isEmpty())) {
             List<Integer> indices = new ArrayList<>();
             for (var jc : step.getNext()) {
-                if (jc.getStep().equals("end")
-                        || jc.getStep().equals("retry")
-                        || jc.getStep().equals("endNode")) {
+                if (isTerminalRoute(jc.getStep())) {
                     continue;
                 }
                 Integer idx = contextBuilder.findStepIndex(jc.getStep());
@@ -545,19 +632,24 @@ public class WorkflowExecutor {
                                             decision.getNextStep(),
                                             "reason",
                                             decision.getReason()));
-                            Integer idx = contextBuilder.findStepIndex(decision.getNextStep());
-                            if (idx == null) {
-                                List<String> allowed =
-                                        step.getNext().stream()
-                                                .map(JumpCondition::getStep)
-                                                .collect(Collectors.toList());
-                                log.warn(
-                                        "on_route returned '{}' for step '{}', not in allowed next {}; workflow will end.",
-                                        decision.getNextStep(),
-                                        step.getName(),
-                                        allowed);
-                                return List.of();
+                            List<String> allowed =
+                                    step.getNext().stream()
+                                            .map(JumpCondition::getStep)
+                                            .collect(Collectors.toList());
+                            if (!allowed.contains(decision.getNextStep())) {
+                                throw new IllegalStateException(
+                                        "onRoute returned '"
+                                                + decision.getNextStep()
+                                                + "' for step '"
+                                                + step.getName()
+                                                + "', allowed next steps are "
+                                                + allowed);
                             }
+                            if (isTerminalRoute(decision.getNextStep())) return List.of();
+                            Integer idx = contextBuilder.findStepIndex(decision.getNextStep());
+                            if (idx == null)
+                                throw new IllegalStateException(
+                                        "Route target does not exist: " + decision.getNextStep());
                             return List.of(idx);
                         });
     }

@@ -28,10 +28,10 @@ import java.util.function.Consumer;
 /**
  * One-shot pre-positioning facade over a shared {@link A2ATransport}.
  *
- * <p>Single responsibility: send Authorization-T / Notification-T (and any other one-shot
- * extension) messages to agents <b>before</b> the workflow starts. Bypasses Task-T prompt
- * generation and the Negotiation-T auto-loop, and does not emit events through the global
- * EventCallback (the returned {@link CompletableFuture} is the callback).
+ * <p>Single responsibility: send Authorization-T, establish Notification-T subscriptions, or send
+ * another pre-positioning extension before a workflow starts. It bypasses Task-T prompt
+ * generation and the Negotiation-T auto-loop. The returned future carries the first response;
+ * later Notification-T events flow through the subscription callback.
  *
  * <p>Kept separate from {@link WorkflowEngineClient} so a caller that only wants to pre-position is
  * not forced to hold a workflow-machinery facade.
@@ -60,21 +60,17 @@ public interface ExtensionSender {
     }
 
     /**
-     * Convenience for Notification-T pre-positioning.
+     * Establish a Notification-T subscription.
      *
-     * <p>The returned future completes on the first event (subscription confirmed).
-     * Subsequent events pushed by the agent through the long-lived SSE stream are
-     * forwarded to {@code eventCallback} as a map containing extracted text, metadata,
-     * state, and agent name. Pass {@code null} if you do not need later events.
+     * <p>The returned future completes on the first acknowledgement or event. Subsequent events
+     * pushed by the agent must be forwarded to {@code eventCallback}; implementations cannot
+     * silently discard it.
      */
-    default CompletableFuture<SendMessageResult> sendNotification(
+    CompletableFuture<SendMessageResult> sendNotification(
             String agentName,
             String instruction,
             String naturalLanguageInput,
-            Consumer<Map<String, Object>> eventCallback) {
-        return sendExtensionMessage(
-                agentName, instruction, naturalLanguageInput, A2ATExtension.NOTIFICATION_T);
-    }
+            Consumer<Map<String, Object>> eventCallback);
 
     /** Convenience for Notification-T pre-positioning (no event callback). */
     default CompletableFuture<SendMessageResult> sendNotification(

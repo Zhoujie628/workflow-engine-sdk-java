@@ -211,7 +211,7 @@ class WorkflowExecutorTest {
     }
 
     @Test
-    void onRouteInvalidStepEndsWorkflow() {
+    void onRouteInvalidStepFailsWorkflow() {
         WorkflowStep s1 =
                 WorkflowStep.builder()
                         .name("s1")
@@ -256,8 +256,9 @@ class WorkflowExecutorTest {
         WorkflowExecutor exec = new WorkflowExecutor(wf, cp, stub, recordingCallback(), "", "zh");
         ExecutionResult result = exec.run().join();
 
-        // s1 executes, then invalid route ends workflow (s2 never runs)
-        assertTrue(result.isSuccess());
+        // s1 executes, then an invalid route is reported as a workflow error (s2 never runs).
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("allowed next steps"));
         assertEquals(1, stub.getSentCount());
     }
 
@@ -473,6 +474,135 @@ class WorkflowExecutorTest {
         ExecutionResult result = exec.run().join();
         assertTrue(result.isSuccess());
         assertEquals(0, stub.getSentCount());
+    }
+
+    @Test
+    void missingStaticRouteTargetFailsBeforeExecution() {
+        WorkflowStep step =
+                WorkflowStep.builder()
+                        .name("start")
+                        .layer(0)
+                        .subtasks(List.of(task("A", "run")))
+                        .next(List.of(jump("missing", "")))
+                        .build();
+        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A");
+        ExecutionResult result =
+                new WorkflowExecutor(
+                                Workflow.builder().name("invalid").steps(List.of(step)).build(),
+                                autoCp(),
+                                stub,
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("missing step"));
+        assertEquals(0, stub.getSentCount());
+    }
+
+    @Test
+    void cyclicWorkflowFailsBeforeExecution() {
+        WorkflowStep first =
+                WorkflowStep.builder()
+                        .name("first")
+                        .subtasks(List.of(task("A", "run")))
+                        .next(List.of(jump("second", "")))
+                        .build();
+        WorkflowStep second =
+                WorkflowStep.builder()
+                        .name("second")
+                        .subtasks(List.of(task("B", "run")))
+                        .next(List.of(jump("first", "")))
+                        .build();
+        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B");
+        ExecutionResult result =
+                new WorkflowExecutor(
+                                Workflow.builder()
+                                        .name("cycle")
+                                        .steps(List.of(first, second))
+                                        .build(),
+                                autoCp(),
+                                stub,
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("cycle"));
+        assertEquals(0, stub.getSentCount());
+    }
+
+    @Test
+    void mergeDoesNotWaitForUnselectedConditionalBranch() {
+        WorkflowStep start =
+                WorkflowStep.builder()
+                        .name("start")
+                        .layer(0)
+                        .subtasks(List.of(task("A", "start")))
+                        .next(List.of(jump("left", "left"), jump("right", "right")))
+                        .build();
+        WorkflowStep left =
+                WorkflowStep.builder()
+                        .name("left")
+                        .layer(1)
+                        .subtasks(List.of(task("B", "left")))
+                        .next(List.of(jump("merge", "")))
+                        .build();
+        WorkflowStep right =
+                WorkflowStep.builder()
+                        .name("right")
+                        .layer(1)
+                        .subtasks(List.of(task("C", "right")))
+                        .next(List.of(jump("merge", "")))
+                        .build();
+        WorkflowStep merge =
+                WorkflowStep.builder()
+                        .name("merge")
+                        .layer(2)
+                        .subtasks(List.of(task("M", "merge")))
+                        .build();
+        ControlPoint chooseRight =
+                new ControlPoint() {
+                    @Override
+                    public CompletableFuture<TaskResponse> onTask(
+                            TaskRequest request, WorkflowEngineClient engineClient) {
+                        return engineClient.sendMessage(request.getAgentName(), request.getMessage())
+                                .thenApply(
+                                        response ->
+                                                TaskResponse.builder()
+                                                        .success(true)
+                                                        .output(response.getText())
+                                                        .build());
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(
+                            String stepName,
+                            Map<String, Object> results,
+                            List<JumpCondition> conditions) {
+                        return CompletableFuture.completedFuture(
+                                RouteDecision.builder().nextStep("right").reason("test").build());
+                    }
+                };
+        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B", "C", "M");
+        ExecutionResult result =
+                new WorkflowExecutor(
+                                Workflow.builder()
+                                        .name("conditional-merge")
+                                        .steps(List.of(start, left, right, merge))
+                                        .build(),
+                                chooseRight,
+                                stub,
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+        assertTrue(result.isSuccess());
+        assertEquals(List.of("A", "C", "M"),
+                stub.getSentMessages().stream().map(message -> message.agentName).toList());
     }
 
     @Test

@@ -47,8 +47,10 @@ import java.util.Map;
  * }</pre>
  *
  * <p>The provider is called for every message send, regardless of whether the AgentCard declares
- * security schemes. If both a credentials file and a custom AuthProvider are configured, both run
- * and may add headers to the same map (custom provider runs first, credentials-based auth second).
+ * security schemes. If both a credentials file and a custom AuthProvider are configured, their
+ * headers are calculated independently and then merged. Different values for the same header name
+ * are rejected with a {@link SecurityException}; no authentication source silently overwrites the
+ * other.
  */
 public interface AuthProvider {
 
