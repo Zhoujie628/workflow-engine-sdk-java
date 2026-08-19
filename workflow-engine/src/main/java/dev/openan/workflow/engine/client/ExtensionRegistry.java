@@ -22,9 +22,12 @@ package dev.openan.workflow.engine.client;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -66,10 +69,10 @@ class ExtensionRegistry {
             if (uri == null) {
                 continue;
             }
+            java.util.Set<String> pathSegments = extensionPathSegments(uri);
             for (Map.Entry<String, ExtensionHandler> entry : handlers.entrySet()) {
-                // Case-insensitive: URIs commonly use uppercase (NEGOTIATION-T)
-                // while the handler keyword uses mixed case (Negotiation-T).
-                if (uri.toLowerCase().contains(entry.getKey().toLowerCase())
+                String keyword = entry.getKey().toLowerCase(Locale.ROOT);
+                if (pathSegments.contains(keyword)
                         && !seen.contains(entry.getKey())) {
                     matched.add(entry.getValue());
                     seen.add(entry.getKey());
@@ -78,5 +81,20 @@ class ExtensionRegistry {
             }
         }
         return matched;
+    }
+
+    private static java.util.Set<String> extensionPathSegments(String value) {
+        try {
+            String path = new URI(value).getPath();
+            if (path == null || path.isBlank()) return java.util.Set.of();
+            java.util.Set<String> segments = new java.util.HashSet<>();
+            for (String segment : path.split("/")) {
+                if (!segment.isBlank()) segments.add(segment.toLowerCase(Locale.ROOT));
+            }
+            return segments;
+        } catch (URISyntaxException e) {
+            log.warn("Ignoring malformed extension URI: {}", value);
+            return java.util.Set.of();
+        }
     }
 }

@@ -36,15 +36,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Logs complete A2A protocol messages (headers + body) for protocol-level verification against real
  * network captures. Uses a dedicated "PROTOCOL" logger so output can be independently enabled or
  * suppressed via logging configuration.
  *
- * <p>Request side: serializes {@link MessageSendParams} to pretty-printed JSON and logs all headers
- * from {@code ClientCallContext}.
+ * <p>Request side: serializes {@link MessageSendParams} to pretty-printed JSON. Sensitive headers
+ * are redacted unless {@code WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=true} is explicitly
+ * configured.
  *
  * <p>Response side: serializes each {@link ClientEvent} payload (Task, TaskStatusUpdateEvent,
  * TaskArtifactUpdateEvent, Message) to JSON.
@@ -52,6 +56,20 @@ import java.util.Map;
 final class ProtocolLogger {
 
     private static final Logger log = LoggerFactory.getLogger("PROTOCOL");
+    private static final String INCLUDE_SENSITIVE_HEADERS =
+            "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS";
+    private static final String INCLUDE_BODY = "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY";
+    private static final String MAX_BODY_CHARS = "WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS";
+    private static final int DEFAULT_MAX_BODY_CHARS = 100_000;
+    private static final Set<String> SENSITIVE_HEADERS =
+            Set.of(
+                    "authorization",
+                    "proxy-authorization",
+                    "cookie",
+                    "set-cookie",
+                    "x-api-key",
+                    "api-key");
+    private static final AtomicBoolean sensitiveWarningLogged = new AtomicBoolean();
 
     private static final ObjectMapper mapper =
             new ObjectMapper()
@@ -82,7 +100,7 @@ final class ProtocolLogger {
             return;
         }
         try {
-            String bodyJson = mapper.writeValueAsString(params);
+            String bodyJson = formatBody(mapper.writeValueAsString(params));
             log.info(
                     ">>> [{}] REQUEST to {}\n=== Headers ===\n{}\n=== Body ===\n{}",
                     agentName,
@@ -111,7 +129,7 @@ final class ProtocolLogger {
                 log.info("<<< [{}] RESPONSE [{}]: (no serializable payload)", agentName, eventType);
                 return;
             }
-            String json = mapper.writeValueAsString(payload);
+            String json = formatBody(mapper.writeValueAsString(payload));
             log.info("<<< [{}] RESPONSE [{}]\n{}", agentName, eventType, json);
         } catch (Exception e) {
             log.warn("<<< [{}] Failed to serialize response event: {}", agentName, e.getMessage());
@@ -143,12 +161,56 @@ final class ProtocolLogger {
     }
 
     /** Format headers map as "Key: Value" lines for readable logging. */
-    private static String formatHeaders(Map<String, String> headers) {
+    static String formatHeaders(Map<String, String> headers) {
         if (headers == null || headers.isEmpty()) {
             return "(none)";
         }
+        boolean includeSensitive = booleanSetting(INCLUDE_SENSITIVE_HEADERS, false);
+        if (includeSensitive && sensitiveWarningLogged.compareAndSet(false, true)) {
+            log.warn(
+                    "PROTOCOL sensitive-header logging is enabled; protect logs and disable it outside controlled troubleshooting");
+        }
         StringBuilder sb = new StringBuilder();
-        headers.forEach((k, v) -> sb.append(k).append(": ").append(v).append("\n"));
+        headers.forEach(
+                (k, v) -> {
+                    String normalized = k.toLowerCase(Locale.ROOT);
+                    boolean sensitive =
+                            SENSITIVE_HEADERS.contains(normalized)
+                                    || normalized.contains("token")
+                                    || normalized.contains("secret");
+                    sb.append(k)
+                            .append(": ")
+                            .append(sensitive && !includeSensitive ? "***" : v)
+                            .append("\n");
+                });
         return sb.toString().trim();
+    }
+
+    private static String formatBody(String body) {
+        if (!booleanSetting(INCLUDE_BODY, true)) return "(body logging disabled)";
+        int maxChars = intSetting(MAX_BODY_CHARS, DEFAULT_MAX_BODY_CHARS);
+        if (body.length() <= maxChars) return body;
+        return body.substring(0, maxChars)
+                + "\n... (truncated, originalChars="
+                + body.length()
+                + ")";
+    }
+
+    private static boolean booleanSetting(String name, boolean defaultValue) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) value = System.getenv(name);
+        return value == null || value.isBlank() ? defaultValue : Boolean.parseBoolean(value);
+    }
+
+    private static int intSetting(String name, int defaultValue) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) value = System.getenv(name);
+        if (value == null || value.isBlank()) return defaultValue;
+        try {
+            int parsed = Integer.parseInt(value);
+            return parsed > 0 ? parsed : defaultValue;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
     }
 }

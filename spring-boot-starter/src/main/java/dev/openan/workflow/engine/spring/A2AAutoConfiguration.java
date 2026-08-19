@@ -98,13 +98,17 @@ public class A2AAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public A2AConfigProvider a2aConfigProvider() {
+    public A2AConfigProvider a2aConfigProvider(A2AProperties properties) {
         return new A2AConfigProvider() {
             @Override
             public String getValue(String key) {
                 return switch (key) {
-                    case "a2a.blocking.agent.timeout.seconds" -> "30";
-                    case "a2a.blocking.consumption.timeout.seconds" -> "5";
+                    case "a2a.blocking.agent.timeout.seconds" ->
+                            Integer.toString(properties.getAgentTimeoutSeconds());
+                    case "a2a.blocking.consumption.timeout.seconds" ->
+                            Integer.toString(properties.getConsumptionTimeoutSeconds());
+                    case "a2a.blocking.reconciliation.timeout.seconds" ->
+                            Integer.toString(properties.getReconciliationTimeoutSeconds());
                     default -> null;
                 };
             }
@@ -143,18 +147,23 @@ public class A2AAutoConfiguration {
 
     @Bean(destroyMethod = "shutdownNow")
     @ConditionalOnMissingBean
-    public ExecutorService agentExecutorPool() {
+    public ExecutorService agentExecutorPool(A2AProperties properties) {
+        if (properties.getExecutorMaxSize() < properties.getExecutorCoreSize()) {
+            throw new IllegalArgumentException(
+                    "a2at.server.executor-max-size must be >= executor-core-size");
+        }
         return new ThreadPoolExecutor(
-                8,
-                8,
-                0L,
-                TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(),
+                properties.getExecutorCoreSize(),
+                properties.getExecutorMaxSize(),
+                properties.getExecutorKeepAliveSeconds(),
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(properties.getExecutorQueueCapacity()),
                 r -> {
                     Thread t = new Thread(r, "a2a-agent-executor");
                     t.setDaemon(true);
                     return t;
-                });
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     @Bean

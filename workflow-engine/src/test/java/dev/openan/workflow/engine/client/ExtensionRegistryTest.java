@@ -91,6 +91,21 @@ class ExtensionRegistryTest {
     }
 
     @Test
+    void doesNotMatchKeywordThatIsOnlyPartOfAnotherPathSegment() {
+        ExtensionRegistry reg = new ExtensionRegistry();
+        assertTrue(
+                reg.getHandlersForExtensions(
+                                List.of("https://example.com/extensions/Task-T-Extended/v1"))
+                        .isEmpty());
+    }
+
+    @Test
+    void ignoresMalformedUris() {
+        ExtensionRegistry reg = new ExtensionRegistry();
+        assertTrue(reg.getHandlersForExtensions(List.of("https://bad uri/Task-T/v1")).isEmpty());
+    }
+
+    @Test
     void nullUrisHandledGracefully() {
         ExtensionRegistry reg = new ExtensionRegistry();
         List<ExtensionHandler> handlers = reg.getHandlersForExtensions(null);

@@ -9,7 +9,7 @@ package dev.openan.workflow.engine.client;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
@@ -45,18 +45,16 @@ class AgentAuthManagerTest {
     }
 
     @Test
-    void missingFileDoesNotCreateCredentials() {
-        AgentAuthManager manager =
-                new AgentAuthManager("/nonexistent/missing-agent-credentials.json");
-
-        assertNull(manager.getConfig("Test Agent"));
+    void missingFileFailsClosed() {
+        assertThrows(
+                IllegalStateException.class,
+                () -> new AgentAuthManager("/nonexistent/missing-agent-credentials.json"));
     }
 
     @Test
-    void missingClasspathResourceDoesNotCreateCredentials() {
-        AgentAuthManager manager =
-                new AgentAuthManager("classpath:nonexistent-credentials.json");
-
-        assertNull(manager.getConfig("Test Agent"));
+    void missingClasspathResourceFailsClosed() {
+        assertThrows(
+                IllegalStateException.class,
+                () -> new AgentAuthManager("classpath:nonexistent-credentials.json"));
     }
 }

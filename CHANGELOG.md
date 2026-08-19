@@ -7,6 +7,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Client TLS options for custom CA, mTLS client certificate/private key, encrypted PKCS#8 keys, and CRL checking
+- Configurable bounded executors for client sends and Spring Boot server request handling
+- Configurable Notification-T acknowledgement timeout and protocol-log body controls
+
+### Changed
+
+- TLS configuration is now per client; it no longer changes JVM-wide hostname-verification properties
+- Credential login uses the same TLS policy as agent traffic and encrypted credentials now fail closed
+- AgentCards that declare security requirements now fail closed when neither matching credentials nor an `AuthProvider` is configured
+- `securitySchemes` no longer implies non-empty `securityRequirements`; an `AuthProvider` can be the sole authentication source
+- Notification-T distinguishes acknowledgement timeout from real stream failure and keeps its lifecycle independent from
+  workflow request transports
+- Workflow execution validates graph targets and cycles up front and waits only for activated predecessors at joins
+- Protocol headers are redacted by default; sensitive values require an explicit diagnostic opt-in
+- Agent clients and transport executors are reused and closed through their owning runtime
+
+### Fixed
+
+- Task success is derived from the A2A task state instead of non-empty response text alone
+- Conflicting authentication headers from `AuthProvider` and credential configuration now fail fast
+- Extension URI matching now uses exact URI path segments instead of substring matching
+- Notification callback implementations can no longer silently discard the supplied callback
+- Header construction is split into isolated auth, credential, and extension contributors with conflict detection
+
 ## [1.0.0] - 2026-07-28
 
 First public release. The SDK ships a clean transport-facade architecture with single-responsibility decision interfaces
@@ -16,8 +42,8 @@ and full A2A-T extension support. Full A2A-T extension support and multi-protoco
 
 - `A2ATransport`: shared wire layer owning the A2A client runtime, auth manager, agent-card map, and streaming event
   extraction
-- `ExtensionSender` / `DefaultExtensionSender`: one-shot pre-positioning facade for Authorization-T and Notification-T
-  (long-lived SSE subscription)
+- `ExtensionSender` / `DefaultExtensionSender`: pre-positioning facade for one-shot Authorization-T and long-lived
+  Notification-T SSE subscriptions
 - `ControlPoint` / `ExtensionSender` split: flow decisions (`onTask` / `onSelfTask` / `onRoute` / `onNegotiation`) on `ControlPoint`; Authorization-T / Notification-T pre-positioning on `ExtensionSender`
 - `NegotiationStrategy`: pluggable clarification strategy injected into
   `DefaultControlPoint`
@@ -37,7 +63,7 @@ and full A2A-T extension support. Full A2A-T extension support and multi-protoco
   generation, Negotiation-T auto-loop, event callback, ControlPoint/ExtensionCallback wiring)
 - Pre-positioning sends moved from `WorkflowEngineClient` to `ExtensionSender`
 - `ExtensionRegistry` auto-registers only Task-T and Negotiation-T (in-workflow handlers); Authorization-T /
-  Notification-T are one-shot pre-positioning operations
+  Notification-T are pre-positioning operations with request and subscription lifecycles respectively
 
 ## [0.3.0] - 2026-07-25
 

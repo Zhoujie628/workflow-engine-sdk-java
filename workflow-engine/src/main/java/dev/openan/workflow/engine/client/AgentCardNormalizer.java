@@ -78,22 +78,6 @@ public final class AgentCardNormalizer {
                     "securityRequirements",
                     normalizeSecurityRequirements(result.get("securityRequirements")));
         }
-        // Auto-populate securityRequirements from securitySchemes if missing
-        Object secSchemes = result.get("securitySchemes");
-        if (secSchemes instanceof Map
-                && !((Map<?, ?>) secSchemes).isEmpty()
-                && !(result.get("securityRequirements") instanceof List
-                        && !((List<?>) result.get("securityRequirements")).isEmpty())) {
-            List<String> names = new ArrayList<>(((Map<String, Object>) secSchemes).keySet());
-            List<Map<String, Object>> reqs = new ArrayList<>();
-            Map<String, Object> schemesMap = new LinkedHashMap<>();
-            for (String s : names) {
-                schemesMap.put(s, Map.of());
-            }
-            reqs.add(Map.of("schemes", schemesMap));
-            result.put("securityRequirements", reqs);
-            log.info("Auto-populated securityRequirements from securitySchemes: {}", names);
-        }
         return result;
     }
 

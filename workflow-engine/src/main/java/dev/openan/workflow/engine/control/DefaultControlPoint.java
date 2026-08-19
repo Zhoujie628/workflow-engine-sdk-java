@@ -63,11 +63,12 @@ public class DefaultControlPoint implements ControlPoint {
                 .sendMessage(request.getAgentName(), request.getMessage())
                 .thenApply(
                         r -> {
-                            boolean success = r.getText() != null && !r.getText().isEmpty();
+                            boolean success = isSuccessful(r);
                             log.info(
-                                    "[DefaultCP] Response from {}: {} chars, success={}",
+                                    "[DefaultCP] Response from {}: {} chars, state={}, success={}",
                                     request.getAgentName(),
                                     r.getText() != null ? r.getText().length() : 0,
+                                    r.getTaskState(),
                                     success);
                             return TaskResponse.builder()
                                     .success(success)
@@ -84,7 +85,16 @@ public class DefaultControlPoint implements ControlPoint {
                                     .success(false)
                                     .error("Agent call failed: " + e.getMessage())
                                     .build();
-                        });
+                });
+    }
+
+    private static boolean isSuccessful(
+            dev.openan.workflow.engine.model.SendMessageResult result) {
+        String state = result.getTaskState();
+        if (state == null || state.isBlank() || state.endsWith("UNSPECIFIED")) {
+            return result.getText() != null && !result.getText().isBlank();
+        }
+        return state.endsWith("COMPLETED");
     }
 
     @Override

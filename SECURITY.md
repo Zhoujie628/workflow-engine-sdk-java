@@ -38,5 +38,6 @@ within 90 days. Valid reports will be credited in the release notes.
   See [Integration Guide](docs/en/INTEGRATION_GUIDE.md#53-custom-authentication-authprovider).
 
 - **TLS/HTTPS**: All agent communication supports HTTPS with configurable
-  certificate verification. Self-signed certificates are supported for
-  development via `sslVerify(false)`.
+  certificate verification. Self-signed certificates should be trusted through
+  `caCertsPath`; `sslVerify(false)` is limited to controlled local diagnostics and
+  does not disable hostname verification.

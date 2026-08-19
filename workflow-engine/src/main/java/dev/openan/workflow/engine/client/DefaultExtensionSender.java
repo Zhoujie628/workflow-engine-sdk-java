@@ -243,21 +243,21 @@ public record DefaultExtensionSender(A2ATransport transport)
         }
         return null;
     }
-
+    // TODO
     private String generateNegotiationPrompt(String naturalLanguageInput) {
         if (transport.getA2atClient() == null) {
             return null;
         }
         return null;
     }
-
+    // TODO
     private String generateAuthorizationPrompt(String naturalLanguageInput) {
         if (transport.getA2atClient() == null) {
             return null;
         }
         return null;
     }
-
+    // TODO
     private String generateNotificationPrompt(String naturalLanguageInput) {
         if (transport.getA2atClient() == null) {
             return null;
