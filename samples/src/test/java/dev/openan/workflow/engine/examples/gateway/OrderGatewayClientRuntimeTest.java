@@ -31,6 +31,27 @@ import java.util.function.Predicate;
 
 class OrderGatewayClientRuntimeTest {
     @Test
+    void formatSseFramePrettyPrintsDataPayloadAndKeepsControlFields() {
+        String frame = "id:1\ndata:{\"artifactUpdate\": {\"taskId\": \"t-1\"}}";
+
+        String formatted = OrderGatewayClientRuntime.formatSseFrame(frame);
+
+        assertTrue(formatted.startsWith("id:1\ndata: {\n"));
+        assertTrue(formatted.contains("\"artifactUpdate\" : {\n"));
+        assertTrue(formatted.endsWith("\n  }\n}"));
+        assertTrue(formatted.contains("\"artifactUpdate\" : {\n"));
+        assertTrue(formatted.endsWith("\n}}\n}") || formatted.endsWith("\n  }\n}"));
+    }
+
+    @Test
+    void formatSseFramePrettyPrintsPlainJsonWithoutDataPrefix() {
+        String formatted = OrderGatewayClientRuntime.formatSseFrame("{\"result\": \"ok\"}");
+
+        assertTrue(formatted.startsWith("{\n"));
+        assertTrue(formatted.contains("\"result\" : \"ok\""));
+    }
+
+    @Test
     void parallelSendsUseTheirOwnRoutedSessionsAndCloseThem() throws Exception {
         var openedRoutes = new CopyOnWriteArrayList<AgentGatewayRoute>();
         var requests = new CopyOnWriteArrayList<OrderHttpSessionStrRequest>();

@@ -5,10 +5,9 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
-import dev.openan.workflow.engine.examples.gateway.MockGatewayClientRuntime;
-import dev.openan.workflow.engine.examples.gateway.OrderGatewayClientRuntime;
+import dev.openan.workflow.engine.examples.config.OrderGatewayProperties;
+import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -38,25 +37,13 @@ public final class ClientRuntimeFactory {
     private final OrderGatewayClientRuntime.OrderConfig orderConfig;
 
     public ClientRuntimeFactory(
-            @Value("${a2a.transport-mode:order}") String transportMode,
-            @Value("${a2a.mock-gateway-url:http://127.0.0.1:26400}") String mockGatewayUrl,
-            @Value("${a2a.order.simulator-enabled:false}") boolean orderSimulatorEnabled,
-            @Value("${a2a.order.host:}") String orderHost,
-            @Value("${a2a.order.port:0}") int orderPort,
-            @Value("${a2a.order.username:}") String orderUsername,
-            @Value("${a2a.order.password:}") String orderPassword,
-            @Value("${a2a.order.client-id:}") String orderClientId,
-            @Value("${a2a.order.client-secret:}") String orderClientSecret,
-            @Value("${a2a.order.default-ne:}") String defaultNe,
-            @Value("${a2a.order.city1-ne:}") String city1Ne,
-            @Value("${a2a.order.city2-ne:}") String city2Ne,
-            @Value("${a2a.order.login-timeout-seconds:15}") int loginTimeoutSeconds,
-            @Value("${a2a.order.timeout-seconds:600}") int timeoutSeconds) {
-        this.mode = Mode.parse(transportMode);
-        this.mockGatewayUrl = mockGatewayUrl;
+            WorkbenchClientProperties workbench,
+            OrderGatewayProperties order) {
+        this.mode = Mode.parse(workbench.getTransportMode());
+        this.mockGatewayUrl = workbench.getMockGatewayUrl();
         if (mode == Mode.ORDER
-                && !orderSimulatorEnabled
-                && isBundledSimulatorAddress(orderHost, orderPort)) {
+                && !order.isSimulatorEnabled()
+                && isBundledSimulatorAddress(order.getHost(), order.getPort())) {
             throw new IllegalArgumentException(
                     "EASTCOM_ORDER_SIMULATOR_ENABLED must be true when using the bundled "
                             + "simulator at 127.0.0.1:26401; otherwise configure the real "
@@ -65,17 +52,17 @@ public final class ClientRuntimeFactory {
         this.orderConfig =
                 mode == Mode.ORDER
                         ? buildOrderConfig(
-                                orderHost,
-                                orderPort,
-                                orderUsername,
-                                orderPassword,
-                                orderClientId,
-                                orderClientSecret,
-                                defaultNe,
-                                city1Ne,
-                                city2Ne,
-                                loginTimeoutSeconds,
-                                timeoutSeconds)
+                                order.getHost(),
+                                order.getPort(),
+                                order.getUsername(),
+                                order.getPassword(),
+                                order.getClientId(),
+                                order.getClientSecret(),
+                                order.getDefaultNe(),
+                                order.getCity1Ne(),
+                                order.getCity2Ne(),
+                                order.getLoginTimeoutSeconds(),
+                                order.getTimeoutSeconds())
                         : null;
     }
 

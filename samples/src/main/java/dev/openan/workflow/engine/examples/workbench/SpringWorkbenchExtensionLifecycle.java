@@ -5,12 +5,12 @@
 package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.examples.util.EnvResolver;
+import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.workbench.WorkbenchExtensionLifecycle;
 import jakarta.annotation.PreDestroy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -28,23 +28,17 @@ public final class SpringWorkbenchExtensionLifecycle {
 
     private final ClientRuntimeFactory runtimeFactory;
     private final ConfigurableListableBeanFactory beanFactory;
-
-    @Value("${a2a.credentials-path:}")
-    private String credentialsPath;
-
-    @Value("${a2a.ssl-verify:false}")
-    private boolean sslVerify;
-
-    @Value("${a2a.a2at-env-path:}")
-    private String a2atEnvPath;
+    private final WorkbenchClientProperties properties;
 
     private WorkbenchExtensionLifecycle lifecycle;
 
     public SpringWorkbenchExtensionLifecycle(
             ClientRuntimeFactory runtimeFactory,
-            ConfigurableListableBeanFactory beanFactory) {
+            ConfigurableListableBeanFactory beanFactory,
+            WorkbenchClientProperties properties) {
         this.runtimeFactory = runtimeFactory;
         this.beanFactory = beanFactory;
+        this.properties = properties;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -59,7 +53,7 @@ public final class SpringWorkbenchExtensionLifecycle {
         WorkbenchExtensionLifecycle candidate =
                 new WorkbenchExtensionLifecycle(
                         resolveCredentialsPath(),
-                        sslVerify,
+                        properties.isSslVerify(),
                         resolveEnvPath(),
                         runtimeFactory::create,
                         this::onNotification);
@@ -90,14 +84,15 @@ public final class SpringWorkbenchExtensionLifecycle {
     }
 
     private String resolveEnvPath() {
-        return a2atEnvPath != null && !a2atEnvPath.isBlank()
-                ? a2atEnvPath
+        return properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()
+                ? properties.getA2atEnvPath()
                 : EnvResolver.resolveEnvPath();
     }
 
     private String resolveCredentialsPath() {
-        if (credentialsPath != null && !credentialsPath.isBlank()) {
-            return credentialsPath;
+        if (properties.getCredentialsPath() != null
+                && !properties.getCredentialsPath().isBlank()) {
+            return properties.getCredentialsPath();
         }
         var resource = getClass().getClassLoader().getResource("spn_agent_credentials.json");
         return resource != null ? new File(resource.getPath()).getAbsolutePath() : null;

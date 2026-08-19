@@ -68,19 +68,31 @@ public final class GatewayA2AResponseParser {
 
     /** Opens a request-scoped parser that preserves task state across streamed response chunks. */
     public StreamingSession newStreamingSession(Consumer<ClientEvent> eventSink) {
-        return new StreamingSession(eventSink);
+        return new StreamingSession(eventSink, null);
+    }
+
+    /**
+     * Opens a request-scoped parser and notifies {@code completeFrameSink} with each complete SSE
+     * frame (or full non-SSE payload) as soon as it is reassembled from raw network chunks.
+     */
+    public StreamingSession newStreamingSession(
+            Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink) {
+        return new StreamingSession(eventSink, completeFrameSink);
     }
 
     public static final class StreamingSession {
         private final Consumer<ClientEvent> eventSink;
+        private final Consumer<String> completeFrameSink;
         private final ParseContext context = new ParseContext();
         private final List<ClientEvent> events = new ArrayList<>();
         private final StringBuilder pending = new StringBuilder();
         private boolean sse;
         private boolean completed;
 
-        private StreamingSession(Consumer<ClientEvent> eventSink) {
+        private StreamingSession(
+                Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink) {
             this.eventSink = eventSink;
+            this.completeFrameSink = completeFrameSink;
         }
 
         /** Adds one response body chunk and emits every complete event immediately. */
@@ -100,6 +112,7 @@ public final class GatewayA2AResponseParser {
             ClientEvent event = tryParsePayload(candidate);
             if (event != null) {
                 pending.setLength(0);
+                notifyCompleteFrame(candidate);
                 add(event);
             }
             return hasTerminalEvent(previousSize);
@@ -111,16 +124,32 @@ public final class GatewayA2AResponseParser {
             completed = true;
             if (!pending.isEmpty()) {
                 if (sse || looksLikeSse(pending.toString())) {
+                    notifyCompleteFrame(pending.toString());
                     String payload = extractSsePayload(pending.toString());
                     if (!payload.isBlank()) {
                         add(parsePayload(payload, context));
                     }
                 } else {
+                    notifyCompleteFrame(pending.toString());
                     add(parsePayload(pending.toString(), context));
                 }
                 pending.setLength(0);
             }
             return List.copyOf(events);
+        }
+
+        private void notifyCompleteFrame(String frame) {
+            if (completeFrameSink == null || frame == null || frame.isBlank()) {
+                return;
+            }
+            try {
+                completeFrameSink.accept(frame);
+            } catch (RuntimeException e) {
+                log.warn(
+                        "[GatewayParser] completeFrameSink failed: {}",
+                        e.getMessage(),
+                        e);
+            }
         }
 
         private void drainSseFrames() {
@@ -129,6 +158,7 @@ public final class GatewayA2AResponseParser {
             while ((boundary = normalized.indexOf("\n\n")) >= 0) {
                 String frame = normalized.substring(0, boundary);
                 normalized = normalized.substring(boundary + 2);
+                notifyCompleteFrame(frame);
                 String payload = extractSsePayload(frame);
                 if (!payload.isBlank()) {
                     add(parsePayload(payload, context));

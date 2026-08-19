@@ -22,6 +22,7 @@ package dev.openan.workflow.engine.examples.agents;
 import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
+import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.agents.TransportWorkbenchAgentExecutor;
 import dev.openan.workflow.engine.examples.workbench.WorkbenchOrchestrator;
@@ -33,7 +34,6 @@ import org.a2aproject.sdk.spec.Part;
 import org.a2aproject.sdk.spec.TextPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -56,34 +56,26 @@ import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 public class SpringWorkbenchExecutor extends BaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
 
-    @Value("${a2a.orch-url:https://127.0.0.1:5001}")
-    private String orchUrl;
-
-    @Value("${a2a.credentials-path:}")
-    private String credentialsPath;
-
-    @Value("${a2a.ssl-verify:false}")
-    private boolean sslVerify;
-
-    @Value("${a2a.a2at-env-path:}")
-    private String a2atEnvPath;
-
     private final ClientRuntimeFactory runtimeFactory;
+    private final WorkbenchClientProperties properties;
 
-    public SpringWorkbenchExecutor(ClientRuntimeFactory runtimeFactory) {
+    public SpringWorkbenchExecutor(
+            ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
         this.runtimeFactory = runtimeFactory;
+        this.properties = properties;
     }
 
     private String resolveEnvPath() {
-        if (a2atEnvPath != null && !a2atEnvPath.isBlank()) {
-            return a2atEnvPath;
+        if (properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()) {
+            return properties.getA2atEnvPath();
         }
         return EnvResolver.resolveEnvPath();
     }
 
     private String resolveCredentialsPath() {
-        if (credentialsPath != null && !credentialsPath.isBlank()) {
-            return credentialsPath;
+        if (properties.getCredentialsPath() != null
+                && !properties.getCredentialsPath().isBlank()) {
+            return properties.getCredentialsPath();
         }
         return getClass().getClassLoader().getResource("spn_agent_credentials.json") != null
                 ? "classpath:spn_agent_credentials.json"
@@ -111,9 +103,9 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                 taskId,
                 contextId,
                 input.length(),
-                orchUrl,
+                properties.getOrchUrl(),
                 runtimeFactory.mode(),
-                sslVerify);
+                properties.isSslVerify());
 
         emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
         emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
@@ -121,9 +113,9 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
         try {
             String result =
                     new WorkbenchOrchestrator(
-                            orchUrl,
+                            properties.getOrchUrl(),
                             resolveCredentialsPath(),
-                            sslVerify,
+                            properties.isSslVerify(),
                             resolveEnvPath(),
                             createClientRuntime())
                             .run(input);

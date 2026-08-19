@@ -254,29 +254,39 @@ public final class OrderGatewayClientRuntime
             Consumer<ClientEvent> eventSink,
             String requestId,
             String agentName) {
+        AtomicInteger sseFrameCount = new AtomicInteger();
         GatewayA2AResponseParser.StreamingSession parserSession =
-                responseParser.newStreamingSession(eventSink);
-        AtomicInteger frameCount = new AtomicInteger();
+                responseParser.newStreamingSession(
+                        eventSink,
+                        frame ->
+                                logSseFrame(
+                                        requestId,
+                                        agentName,
+                                        sseFrameCount.incrementAndGet(),
+                                        frame));
+        AtomicInteger chunkCount = new AtomicInteger();
         session.executeStreaming(
                 request,
                 config.timeoutMillis,
                 response -> {
-                    int frame = frameCount.incrementAndGet();
-                    logProtocolResponse(requestId, agentName, frame, response);
+                    if (chunkCount.incrementAndGet() == 1) {
+                        logProtocolResponseHead(requestId, agentName, response);
+                    }
                     validateResponse(response);
                     log.debug(
-                            "[OrderGateway] STREAM_FRAME requestId={}, agent={}, frame={}, bodyChars={}",
+                            "[OrderGateway] STREAM_CHUNK requestId={}, agent={}, chunk={}, bodyChars={}",
                             requestId,
                             agentName,
-                            frame,
+                            chunkCount.get(),
                             response.getBody().length());
                     boolean terminal = parserSession.accept(response.getBody());
                     if (terminal) {
                         log.info(
-                                "[OrderGateway] STREAM_TERMINAL requestId={}, agent={}, frame={}",
+                                "[OrderGateway] STREAM_TERMINAL requestId={}, agent={}, chunk={}, sseFrame={}",
                                 requestId,
                                 agentName,
-                                frame);
+                                chunkCount.get(),
+                                sseFrameCount.get());
                     }
                     return terminal;
                 });
@@ -285,12 +295,90 @@ public final class OrderGatewayClientRuntime
             throw new IllegalStateException("Gateway message:stream closed without an A2A event");
         }
         log.info(
-                "[OrderGateway] STREAM_CLOSED requestId={}, agent={}, frames={}, events={}",
+                "[OrderGateway] STREAM_CLOSED requestId={}, agent={}, chunks={}, sseFrames={}, events={}",
                 requestId,
                 agentName,
-                frameCount.get(),
+                chunkCount.get(),
+                sseFrameCount.get(),
                 events.size());
         return events;
+    }
+
+    private static void logSseFrame(
+            String requestId, String agentName, int frame, String sseFrame) {
+        if (!protocolLog.isDebugEnabled()) {
+            return;
+        }
+        protocolLog.debug(
+                "<<< [OrderSDK] SSE_FRAME requestId={}, agent={}, frame={}\n=== Body ===\n{}",
+                requestId,
+                agentName,
+                frame,
+                formatSseFrame(sseFrame));
+    }
+
+    /**
+     * Pretty-prints an SSE frame for protocol logging: control fields ({@code id:}, {@code
+     * event:}, ...) stay as-is, and the {@code data:} payload is indented as JSON. A frame without
+     * {@code data:} lines is treated as one plain JSON payload.
+     */
+    static String formatSseFrame(String sseFrame) {
+        String normalized = sseFrame.replace("\r\n", "\n");
+        StringBuilder control = new StringBuilder();
+        StringBuilder data = new StringBuilder();
+        boolean dataStarted = false;
+        for (String line : normalized.split("\n", -1)) {
+            if (line.startsWith("data:")) {
+                dataStarted = true;
+                appendSseLine(data, line.substring(5).stripLeading());
+            } else if (dataStarted && !isSseControlField(line)) {
+                appendSseLine(data, line);
+            } else {
+                appendSseLine(control, line);
+            }
+        }
+        if (data.isEmpty()) {
+            return normalizeNewlines(prettyJson(normalized));
+        }
+        StringBuilder result = new StringBuilder(control.toString().stripTrailing());
+        if (!result.isEmpty()) {
+            result.append('\n');
+        }
+        result.append("data: ").append(normalizeNewlines(prettyJson(data.toString())));
+        return result.toString();
+    }
+
+    private static String normalizeNewlines(String value) {
+        return value.replace("\r\n", "\n");
+    }
+
+    private static void appendSseLine(StringBuilder target, String value) {
+        if (!target.isEmpty()) {
+            target.append('\n');
+        }
+        target.append(value);
+    }
+
+    private static boolean isSseControlField(String line) {
+        return line.startsWith("event:")
+                || line.startsWith("id:")
+                || line.startsWith("retry:")
+                || line.startsWith(":");
+    }
+
+    private static void logProtocolResponseHead(
+            String requestId, String agentName, OrderHttpSessionStrResponse response) {
+        if (!protocolLog.isDebugEnabled()) {
+            return;
+        }
+        protocolLog.debug(
+                "<<< [OrderSDK] RESPONSE requestId={}, agent={}\n"
+                        + "=== Status ===\n{}\n"
+                        + "=== Headers ===\n{}",
+                requestId,
+                agentName,
+                response.getStatus(),
+                formatProtocolHeaders(response.getHeadersMap()));
     }
 
     private static void logProtocolRequest(

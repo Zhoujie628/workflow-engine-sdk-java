@@ -74,6 +74,23 @@ class GatewayA2AResponseParserTest {
         assertEquals("task-send", ((TaskEvent) events.get(0)).getTask().id());
     }
 
+    @Test
+    void notifiesCompleteFramesOnlyAfterReassembly() throws Exception {
+        String frame = "id:1\ndata: " + taskJson("task-frame", "ctx-frame") + "\n\n";
+        String expectedCompleteFrame = frame.substring(0, frame.length() - 2);
+        int split = 20;
+        var frames = new ArrayList<String>();
+        var session = parser.newStreamingSession(null, frames::add);
+
+        session.accept(frame.substring(0, split));
+        assertEquals(0, frames.size(), "partial chunk must not be notified");
+        session.accept(frame.substring(split));
+
+        assertEquals(1, frames.size());
+        assertEquals(expectedCompleteFrame, frames.get(0));
+        assertEquals(1, session.complete().size());
+    }
+
     static String taskJson(String taskId, String contextId) throws Exception {
         return taskJson(taskId, contextId, TaskState.TASK_STATE_COMPLETED);
     }
