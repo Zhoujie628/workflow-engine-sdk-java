@@ -97,10 +97,16 @@ public class MyControlPoint extends DefaultControlPoint {
             TaskRequest request, WorkflowEngineClient engineClient) {
         return engineClient.sendMessage(
                         request.getAgentName(), request.getMessage())
-                .thenApply(r -> TaskResponse.builder()
-                        .success(r.getText() != null && !r.getText().isEmpty())
-                        .output(r.getText())
-                        .build());
+                .thenApply(r -> {
+                    String state = r.getTaskState();
+                    boolean success = state == null || state.isBlank()
+                            ? r.getText() != null && !r.getText().isBlank()
+                            : state.endsWith("COMPLETED");
+                    return TaskResponse.builder()
+                            .success(success)
+                            .output(r.getText())
+                            .build();
+                });
     }
 
     @Override
@@ -387,6 +393,8 @@ AgentCards declare extensions via `capabilities.extensions`:
 ```
 
 Extension URIs must match the A2A-T definitions exactly.
+
+Both `securitySchemes` and `securityRequirements` are optional. The former lists authentication methods the agent supports; the latter marks methods required by this integration. `securityRequirements: []` disables built-in credential authentication.
 
 ## 7. A2A-T Extensions
 
