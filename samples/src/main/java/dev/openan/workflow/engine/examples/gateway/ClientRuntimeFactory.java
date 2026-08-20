@@ -39,9 +39,9 @@ public final class ClientRuntimeFactory {
     public ClientRuntimeFactory(
             WorkbenchClientProperties workbench,
             OrderGatewayProperties order) {
-        this.mode = Mode.parse(workbench.getTransportMode());
+        Mode parsedMode = Mode.parse(workbench.getTransportMode());
         this.mockGatewayUrl = workbench.getMockGatewayUrl();
-        if (mode == Mode.ORDER
+        if (parsedMode == Mode.ORDER
                 && !order.isSimulatorEnabled()
                 && isBundledSimulatorAddress(order.getHost(), order.getPort())) {
             throw new IllegalArgumentException(
@@ -49,8 +49,11 @@ public final class ClientRuntimeFactory {
                             + "simulator at 127.0.0.1:26401; otherwise configure the real "
                             + "Eastcom platform host and port");
         }
+        // TESTING: use HttpClient API even with simulator enabled
+        Mode effectiveMode = parsedMode;
+        this.mode = effectiveMode;
         this.orderConfig =
-                mode == Mode.ORDER
+                effectiveMode == Mode.ORDER
                         ? buildOrderConfig(
                                 order.getHost(),
                                 order.getPort(),

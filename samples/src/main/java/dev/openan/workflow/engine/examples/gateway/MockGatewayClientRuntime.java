@@ -4,9 +4,6 @@
  */
 package dev.openan.workflow.engine.examples.gateway;
 
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.ConversationScopedA2AJavaClientRuntime;
@@ -21,7 +18,6 @@ import javax.net.ssl.SSLContext;
 import java.net.URI;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 
 /**
  * Local simulation wrapper which keeps {@link OrderGatewayClientRuntime} as the runtime under test.
@@ -100,18 +96,10 @@ public final class MockGatewayClientRuntime
     private static final class MockOrderSessionFactory
             implements OrderGatewayClientRuntime.OrderSessionFactory {
         private final String gatewayUrl;
-        private final ServerInfo serverInfo;
         private final SSLContext sslContext = SslContextFactory.createTrustAll();
 
         private MockOrderSessionFactory(String gatewayUrl) {
             this.gatewayUrl = gatewayUrl;
-            this.serverInfo =
-                    ServerInfo.builder()
-                            .host(gatewayHost(gatewayUrl))
-                            .port(gatewayPort(gatewayUrl))
-                            .username("mock-workbench")
-                            .password("mock-password")
-                            .build();
         }
 
         @Override
@@ -120,38 +108,7 @@ public final class MockGatewayClientRuntime
             if (target == null) {
                 throw new IllegalArgumentException("Unknown mock NE: " + route.ne());
             }
-            MockOrderHttpSessionClient client =
-                    new MockOrderHttpSessionClient(gatewayUrl, sslContext);
-            client.login(serverInfo);
-            client.init(target, route.https());
-            return new MockOrderSession(client);
-        }
-    }
-
-    private static final class MockOrderSession implements OrderGatewayClientRuntime.OrderSession {
-        private final MockOrderHttpSessionClient client;
-
-        private MockOrderSession(MockOrderHttpSessionClient client) {
-            this.client = client;
-        }
-
-        @Override
-        public OrderHttpSessionStrResponse execute(
-                OrderHttpSessionStrRequest request, int timeoutMillis) {
-            return client.execute(request, timeoutMillis);
-        }
-
-        @Override
-        public void executeStreaming(
-                OrderHttpSessionStrRequest request,
-                int timeoutMillis,
-                Predicate<OrderHttpSessionStrResponse> responseSink) {
-            client.executeStreaming(request, timeoutMillis, responseSink);
-        }
-
-        @Override
-        public void close() {
-            client.logout();
+            return new MockOrderHttpSessionClient(gatewayUrl, sslContext, target);
         }
     }
 }

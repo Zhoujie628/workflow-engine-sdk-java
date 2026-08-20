@@ -4,7 +4,8 @@
  */
 package dev.openan.workflow.engine.examples.gateway;
 
-import com.eastcom.apollo.orders.commons.api.HttpSessionService;
+import com.eastcom.apollo.orders.commons.api.HttpService;
+import com.eastcom.apollo.orders.commons.api.base.OrderService;
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.BoolValue;
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.ByteString;
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.StringValue;
@@ -21,10 +22,15 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.AuthResponse;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.Code;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.DisconnectRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionInitRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionInitResponse;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionResponse;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.HttpInfo;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.HttpServerBindRequest;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.HttpServerBindResponse;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.HttpServerUnbindRequest;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.HttpServerUnbindResponse;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.OrderHttpRequest;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.OrderHttpResponse;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.OrderResourceRequest;
+import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.OrderResourceResponse;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.util.ObjectUtil;
 import dev.openan.workflow.engine.client.SslContextFactory;
 import org.slf4j.Logger;
@@ -34,6 +40,7 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -53,8 +60,8 @@ import java.util.regex.Pattern;
  * Local protocol simulator for Eastcom Order SDK 1.1.18.
  *
  * <p>Unlike the adapter-level HTTP mock, this server speaks the vendor's real RSocket RPC
- * protocol. The unmodified {@code OrderHttpSessionClient} performs login, session init,
- * execute and logout against this service. The simulator resolves the requested NE and
+ * protocol. The {@code HttpClient} API performs login, loadNeResource, execute and logout
+ * via the {@code HttpService} RSocket interface. The simulator resolves the requested NE and
  * forwards the embedded A2A HTTP request to a local agent.
  *
  * <p>This class deliberately lives in the samples module: it verifies SDK compatibility but is
@@ -65,6 +72,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     private static final Pattern A2A_TERMINAL_STATE =
             Pattern.compile(
                     "\\\"state\\\"\\s*:\\s*\\\"TASK_STATE_(?:COMPLETED|FAILED|CANCELED|REJECTED|INPUT_REQUIRED|AUTH_REQUIRED)\\\"");
+    private static final Pattern A2A_ANY_STATE =
+            Pattern.compile("\\\"state\\\"\\s*:\\s*\\\"TASK_STATE_");
     private static final Pattern A2A_FINAL_EVENT =
             Pattern.compile("\\\"isFinal\\\"\\s*:\\s*true");
 
@@ -109,7 +118,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                 RpcServer.create(host, port)
                         .transport(Transport.TCP)
                         .addConnectionListener(connectionLogger)
-                        .addService(HttpSessionService.class, service)
+                        .addService(HttpService.class, service)
+                        .addService(OrderService.class, service)
                         .start();
         log.info("[EastcomSimulator] READY host={}:{}, protocol=RSocket-RPC", host, port);
     }
@@ -196,12 +206,13 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         }
     }
 
-    private static final class SimulatorService implements HttpSessionService {
+    private static final class SimulatorService implements HttpService, OrderService {
         private final String username;
         private final String password;
         private final String clientId;
         private final String clientSecret;
         private final Map<String, String> neTargets;
+        private volatile String lastResolvedTarget;
         private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
         private final SSLContext sslContext = SslContextFactory.createTrustAll();
 
@@ -274,77 +285,137 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         }
 
         @Override
-        public Mono<OrderHttpSessionInitResponse> init(OrderHttpSessionInitRequest request) {
-            if (!sessions.containsKey(request.getSessionId())) {
-                return Mono.error(new IllegalStateException("unknown session"));
+        public Mono<OrderResourceResponse> loadNeResource(OrderResourceRequest request) {
+            String neName = request.getNeName();
+            if (!neTargets.containsKey(neName)) {
+                log.warn("[EastcomSimulator] LOAD_NE_REJECTED ne={}", neName);
+                return Mono.just(OrderResourceResponse.getDefaultInstance());
             }
-            if (!neTargets.containsKey(request.getNe())) {
-                log.warn(
-                        "[EastcomSimulator] INIT_REJECTED sessionId={}, ne={}",
-                        request.getSessionId(),
-                        request.getNe());
-                return Mono.just(
-                        OrderHttpSessionInitResponse.newBuilder().setResult(false).build());
-            }
-            sessions.put(
-                    request.getSessionId(),
-                    new SessionState(request.getNe(), request.getSchema()));
+            String targetUrl = neTargets.get(neName);
+            lastResolvedTarget = targetUrl;
             log.info(
-                    "[EastcomSimulator] INIT_ACCEPTED sessionId={}, ne={}, schema={}, target={}",
-                    request.getSessionId(),
-                    request.getNe(),
-                    request.getSchema(),
-                    neTargets.get(request.getNe()));
-            return Mono.just(OrderHttpSessionInitResponse.newBuilder().setResult(true).build());
+                    "[EastcomSimulator] LOAD_NE_ACCEPTED ne={}, target={}",
+                    neName, targetUrl);
+            return Mono.just(
+                    OrderResourceResponse.newBuilder()
+                            .setNeUrl(targetUrl)
+                            .build());
         }
 
         @Override
-        public Flux<OrderHttpSessionResponse> execute(Flux<OrderHttpSessionRequest> requests) {
-            return requests.concatMap(this::forward);
+        public Mono<HttpServerBindResponse> bind(HttpServerBindRequest request) {
+            log.warn("[EastcomSimulator] BIND not supported");
+            return Mono.just(HttpServerBindResponse.getDefaultInstance());
         }
 
-        private Flux<OrderHttpSessionResponse> forward(OrderHttpSessionRequest request) {
-            return Flux.defer(() -> forwardBlocking(request))
-                    .subscribeOn(Schedulers.boundedElastic());
+        @Override
+        public Mono<HttpServerUnbindResponse> unbind(HttpServerUnbindRequest request) {
+            log.warn("[EastcomSimulator] UNBIND not supported");
+            return Mono.just(HttpServerUnbindResponse.getDefaultInstance());
         }
 
-        private Flux<OrderHttpSessionResponse> forwardBlocking(OrderHttpSessionRequest request) {
-            SessionState session = sessions.get(request.getSessionId());
-            if (session == null || session.ne() == null) {
-                return Flux.error(new IllegalStateException("session is not initialized"));
-            }
-            String target = neTargets.get(session.ne());
-            if (target == null) {
-                return Flux.error(new IllegalStateException("NE is not registered: " + session.ne()));
-            }
-            String path = request.getUriPath().startsWith("/")
-                    ? request.getUriPath()
-                    : "/" + request.getUriPath();
-            String forwardUrl = target + path;
-            Object decoded = request.getBody().isEmpty()
-                    ? ""
-                    : ObjectUtil.b2o(request.getBody().toByteArray());
-            String body = decoded == null ? "" : decoded.toString();
-            boolean streaming = path.endsWith("/message:stream");
+        @Override
+        public Flux<OrderHttpResponse> execute(Flux<OrderHttpRequest> requests) {
+            // The SDK sends HTTP request as multiple OrderHttpRequest items via RSocket
+            // requestChannel. The SDK does NOT complete the request Flux after sending,
+            // so we must complete the response Flux independently when the HTTP exchange
+            // is done, otherwise the RSocket channel stays open and blocks subsequent
+            // requestResponse calls (loadNeResource for the next NE).
+            return Flux.create(sink -> {
+                AtomicBoolean headersParsed = new AtomicBoolean(false);
+                AtomicBoolean forwarded = new AtomicBoolean(false);
+                StringBuilder bodyBuf = new StringBuilder();
+                String[] parsedMethod = {"POST"};
+                String[] parsedPath = {"/"};
+                Map<String, String> parsedHeaders = new LinkedHashMap<>();
+
+                requests.subscribe(
+                    req -> {
+                        String data = req.getData().toStringUtf8();
+                        if (!headersParsed.get() && (data.startsWith("POST") || data.startsWith("GET")
+                                || data.startsWith("PUT") || data.startsWith("DELETE"))) {
+                            // Parse HTTP request headers
+                            int headerEnd = data.indexOf("\r\n\r\n");
+                            if (headerEnd < 0) headerEnd = data.indexOf("\n\n");
+                            String headerSection = headerEnd > 0 ? data.substring(0, headerEnd) : data;
+                            String[] headerLines = headerSection.split("\r?\n");
+                            if (headerLines.length > 0) {
+                                String[] reqLine = headerLines[0].split(" ");
+                                if (reqLine.length >= 2) {
+                                    parsedMethod[0] = reqLine[0];
+                                    parsedPath[0] = reqLine[1];
+                                }
+                            }
+                            for (int i = 1; i < headerLines.length; i++) {
+                                int colon = headerLines[i].indexOf(':');
+                                if (colon > 0) {
+                                    parsedHeaders.put(headerLines[i].substring(0, colon).trim(),
+                                            headerLines[i].substring(colon + 1).trim());
+                                }
+                            }
+                            headersParsed.set(true);
+                            if (headerEnd > 0) {
+                                int sepLen = data.charAt(headerEnd + 1) == '\n' ? 2 : 4;
+                                if (headerEnd + sepLen < data.length()) {
+                                    bodyBuf.append(data.substring(headerEnd + sepLen));
+                                }
+                            }
+                        } else {
+                            bodyBuf.append(data);
+                        }
+                        // Forward once we have headers and sufficient body
+                        if (!forwarded.get() && headersParsed.get() && bodyBuf.length() > 10) {
+                            forwarded.set(true);
+                            String httpMethod = parsedMethod[0];
+                            String httpPath = parsedPath[0];
+                            String body = bodyBuf.toString();
+                            String targetBase = lastResolvedTarget != null
+                                    ? lastResolvedTarget : "http://127.0.0.1:26335";
+                            String forwardUrl = targetBase
+                                    + (httpPath.startsWith("/") ? httpPath : "/" + httpPath);
+                            boolean streaming = forwardUrl.endsWith("/message:stream");
+                            log.info("[EastcomSimulator] FORWARD_START method={}, mode={}, target={}, bodyChars={}",
+                                    httpMethod, streaming ? "stream" : "send", forwardUrl, body.length());
+                            forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
+                                    .subscribe(
+                                        sink::next,
+                                        sink::error,
+                                        () -> {
+                                            // Response Flux completed - complete the sink
+                                            // to close the RSocket channel
+                                            sink.complete();
+                                        });
+                        }
+                    },
+                    sink::error,
+                    () -> {
+                        // Request Flux completed - if not forwarded yet, this is an error
+                        if (!forwarded.get()) {
+                            sink.error(new IllegalStateException("request completed without body"));
+                        }
+                        // If already forwarded, the forwardParsed completion will call sink.complete()
+                    });
+            });
+        }
+
+        private Flux<OrderHttpResponse> forwardParsed(
+                String httpMethod, String httpPath,
+                Map<String, String> httpHeaders, String body,
+                String forwardUrl, boolean streaming) {
             long started = System.nanoTime();
-            log.info(
-                    "[EastcomSimulator] FORWARD_START sessionId={}, ne={}, mode={}, method={}, "
-                            + "target={}, bodyChars={}, headers={}",
-                    request.getSessionId(),
-                    session.ne(),
-                    streaming ? "stream" : "send",
-                    request.getMethod(),
-                    forwardUrl,
-                    body.length(),
-                    request.getHeadersMap().keySet());
-
+            final String fMethod = httpMethod;
+            final Map<String, String> fHeaders = httpHeaders;
+            final String fBody = body;
+            final String fForwardUrl = forwardUrl;
+            log.info("[EastcomSimulator] FORWARD_PARSED method={}, bodyChars={}, target={}",
+                    fMethod, fBody.length(), fForwardUrl);
             return Flux.create(
                     sink -> {
                         HttpURLConnection connection = null;
                         int chunks = 0;
                         boolean terminalRound = false;
                         try {
-                            connection = openConnection(forwardUrl);
+                            connection = openConnection(fForwardUrl);
                             HttpURLConnection activeConnection = connection;
                             AtomicBoolean disconnectScheduled = new AtomicBoolean();
                             Runnable disconnect =
@@ -354,113 +425,98 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                                     .schedule(activeConnection::disconnect);
                                         }
                                     };
-                            // A2A streaming ends as soon as a terminal event is observed. Propagate
-                            // the downstream RSocket cancellation to the blocking HTTP read so the
-                            // OMC SSE connection and its event-consumer thread are released promptly.
-                            // HttpURLConnection.disconnect() can itself block in ChunkedInputStream
-                            // close, so never execute it on an RSocket or Spring shutdown thread.
                             sink.onCancel(disconnect::run);
                             sink.onDispose(disconnect::run);
-                            connection.setRequestMethod(
-                                    request.getMethod().isBlank() ? "POST" : request.getMethod());
+                            connection.setRequestMethod(fMethod.isBlank() ? "POST" : fMethod);
                             connection.setDoOutput(true);
                             connection.setConnectTimeout(30_000);
-                            connection.setReadTimeout(600_000);
-                            copyHeaders(request.getHeadersMap(), connection);
+                            // Short read timeout: Notification-T idle streams close after 3s
+                            // of no data, releasing the RSocket channel for subsequent NE requests.
+                            // Task-T/Negotiation-T complete via terminal-event detection; the 5s
+                            // gap between chunks is enough for OMC processing.
+                            connection.setReadTimeout(5_000);
+                            copyHeaders(fHeaders, connection);
                             try (OutputStream output = connection.getOutputStream()) {
-                                output.write(body.getBytes(StandardCharsets.UTF_8));
+                                output.write(fBody.getBytes(StandardCharsets.UTF_8));
                             }
                             int status = connection.getResponseCode();
-                            Map<String, String> responseHeaders = responseHeaders(connection);
                             InputStream input = status >= 400
                                     ? connection.getErrorStream()
                                     : connection.getInputStream();
                             if (input == null) {
-                                sink.next(response(status, responseHeaders, ""));
+                                sink.next(responseWithHeader(""));
+                                sink.next(responseEnd());
                             } else if (streaming && status < 400) {
-                                byte[] buffer = new byte[1024];
+                                InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8);
+                                char[] buffer = new char[4096];
                                 StringBuilder terminalScan = new StringBuilder();
                                 boolean terminal = false;
                                 int length;
                                 while (!sink.isCancelled()
-                                        && (length = input.read(buffer)) != -1) {
+                                        && (length = reader.read(buffer)) != -1) {
                                     chunks++;
-                                    String chunk =
-                                            new String(buffer, 0, length, StandardCharsets.UTF_8);
-                                    log.debug(
-                                            "[EastcomSimulator] FORWARD_CHUNK sessionId={}, "
-                                                    + "index={}, chars={}, elapsedMs={}",
-                                            request.getSessionId(),
-                                            chunks,
-                                            chunk.length(),
-                                            elapsedMillis(started));
-                                    sink.next(response(status, responseHeaders, chunk));
+                                    String chunk = new String(buffer, 0, length);
+                                    log.debug("[EastcomSimulator] FORWARD_CHUNK index={}, chars={}, elapsedMs={}",
+                                            chunks, chunk.length(), elapsedMillis(started));
+                                    sink.next(chunks == 1 ? responseWithHeader(chunk) : responseChunk(chunk));
                                     terminalScan.append(chunk);
                                     if (containsA2ATerminalEvent(terminalScan)) {
                                         terminal = true;
                                         terminalRound = true;
-                                        log.info(
-                                                "[EastcomSimulator] FORWARD_TERMINAL "
-                                                        + "sessionId={}, index={}, action=close-round",
-                                                request.getSessionId(),
-                                                chunks);
-                                        // Complete the RPC response before disconnecting the
-                                        // blocking HttpURLConnection. Both disconnect() and
-                                        // HttpInputStream.close() may block while an interrupted A2A
-                                        // task keeps its SSE response open.
+                                        log.info("[EastcomSimulator] FORWARD_TERMINAL index={}, action=terminal-drain", chunks);
+                                        // Close immediately; do not drain the OMC stream
+                                        // (it may stay open and cause read timeout)
+                                        sink.next(responseEnd());
                                         sink.complete();
-                                        log.info(
-                                                "[EastcomSimulator] FORWARD_DONE sessionId={}, ne={}, "
-                                                        + "mode=stream, status={}, chunks={}, elapsedMs={}",
-                                                request.getSessionId(),
-                                                session.ne(),
-                                                status,
-                                                chunks,
-                                                elapsedMillis(started));
+                                        log.info("[EastcomSimulator] FORWARD_DONE mode=stream-terminal, status={}, chunks={}, elapsedMs={}",
+                                                status, chunks, elapsedMillis(started));
                                         disconnect.run();
                                         return;
                                     }
-                                    if (terminalScan.length() > 32_768) {
+if (terminalScan.length() > 32_768) {
                                         terminalScan.delete(0, terminalScan.length() - 16_384);
                                     }
                                 }
                                 if (!terminal && !sink.isCancelled()) {
                                     input.close();
                                 }
+                                sink.next(responseEnd());
+                                sink.complete();
+                                log.info("[EastcomSimulator] FORWARD_DONE mode=stream, status={}, chunks={}, elapsedMs={}",
+                                        status, chunks, elapsedMillis(started));
                             } else {
                                 try (input) {
-                                    sink.next(
-                                            response(
-                                                    status,
-                                                    responseHeaders,
-                                                    new String(input.readAllBytes(), StandardCharsets.UTF_8)));
+                                    sink.next(responseWithHeader(
+                                            new String(input.readAllBytes(), StandardCharsets.UTF_8)));
                                 }
+                                sink.next(responseEnd());
+                                sink.complete();
+                                log.info("[EastcomSimulator] FORWARD_DONE mode=send, status={}, chunks={}, elapsedMs={}",
+                                        status, chunks, elapsedMillis(started));
                             }
-                            sink.complete();
-                            log.info(
-                                    "[EastcomSimulator] FORWARD_DONE sessionId={}, ne={}, mode={}, "
-                                            + "status={}, chunks={}, elapsedMs={}",
-                                    request.getSessionId(),
-                                    session.ne(),
-                                    streaming ? "stream" : "send",
-                                    status,
-                                    chunks,
-                                    elapsedMillis(started));
                         } catch (Exception e) {
-                            log.error(
-                                    "[EastcomSimulator] FORWARD_FAILED sessionId={}, ne={}, "
-                                            + "elapsedMs={}, message={}",
-                                    request.getSessionId(),
-                                    session.ne(),
-                                    elapsedMillis(started),
-                                    e.getMessage(),
-                                    e);
-                            sink.error(e);
+                            if (e instanceof java.net.SocketTimeoutException && !terminalRound) {
+                                // Notification-T idle read timeout: complete the response
+                                // gracefully so the RSocket channel releases for the next NE.
+                                // If no data was received (chunks=0), send a proper HTTP
+                                // response header before the end chunk to avoid Netty parse errors.
+                                if (chunks == 0) {
+                                    sink.next(responseWithHeader(""));
+                                } else {
+                                    sink.next(responseEnd());
+                                }
+                                sink.complete();
+                                log.info("[EastcomSimulator] FORWARD_IDLE_TIMEOUT chunks={}, elapsedMs={}, action=close-idle",
+                                        chunks, elapsedMillis(started));
+                            } else {
+                                log.error("[EastcomSimulator] FORWARD_FAILED elapsedMs={}, message={}",
+                                        elapsedMillis(started), e.getMessage(), e);
+                                sink.error(e);
+                            }
                         } finally {
                             if (connection != null && !terminalRound) {
                                 HttpURLConnection connectionToClose = connection;
-                                Schedulers.boundedElastic()
-                                        .schedule(connectionToClose::disconnect);
+                                Schedulers.boundedElastic().schedule(connectionToClose::disconnect);
                             }
                         }
                     });
@@ -489,24 +545,41 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             }
         }
 
-        private static Map<String, String> responseHeaders(HttpURLConnection connection) {
-            Map<String, String> result = new LinkedHashMap<>();
-            connection.getHeaderFields()
-                    .forEach(
-                            (name, values) -> {
-                                if (name != null && values != null && !values.isEmpty()) {
-                                    result.put(name, String.join(",", values));
-                                }
-                            });
-            return result;
+        private static OrderHttpResponse responseWithHeader(String body) {
+            // The SDK feeds OrderHttpResponse.data through Netty's HttpResponseDecoder.
+            // The first chunk must include HTTP status line + headers.
+            // Use UTF-8 byte length for chunk size, not String char length.
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+            String withHeader = "HTTP/1.1 200 OK\r\n"
+                    + "Content-Type: text/event-stream\r\n"
+                    + "Transfer-Encoding: chunked\r\n"
+                    + "\r\n"
+                    + Integer.toHexString(bodyBytes.length) + "\r\n"
+                    + body + "\r\n";
+            return OrderHttpResponse.newBuilder()
+                    .setData(ByteString.copyFromUtf8(withHeader))
+                    .build();
         }
 
-        private static OrderHttpSessionResponse response(
-                int status, Map<String, String> headers, String body) {
-            return OrderHttpSessionResponse.newBuilder()
-                    .setStatus(status)
-                    .putAllHeaders(headers)
-                    .setBody(ByteString.copyFrom(ObjectUtil.o2b(body)))
+        private static OrderHttpResponse responseChunk(String body) {
+            // Subsequent chunks: use UTF-8 byte length for chunk size
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+            String chunk = Integer.toHexString(bodyBytes.length) + "\r\n" + body + "\r\n";
+            return OrderHttpResponse.newBuilder()
+                    .setData(ByteString.copyFromUtf8(chunk))
+                    .build();
+        }
+
+        private static OrderHttpResponse responseEnd() {
+            // Final chunk: zero-length chunk to signal end
+            return OrderHttpResponse.newBuilder()
+                    .setData(ByteString.copyFromUtf8("0\r\n\r\n"))
+                    .build();
+        }
+
+        private static OrderHttpResponse response(String body) {
+            return OrderHttpResponse.newBuilder()
+                    .setData(ByteString.copyFromUtf8(body))
                     .build();
         }
 
@@ -518,6 +591,40 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                 String completeFrame = normalized.substring(frameStart, frameEnd);
                 if (A2A_TERMINAL_STATE.matcher(completeFrame).find()
                         || A2A_FINAL_EVENT.matcher(completeFrame).find()) {
+                    return true;
+                }
+                frameStart = frameEnd + 2;
+            }
+            return false;
+        }
+
+        private static boolean containsA2AAnyState(CharSequence payload) {
+            String normalized = payload.toString().replace("\r\n", "\n");
+            return A2A_ANY_STATE.matcher(normalized).find()
+                    || A2A_FINAL_EVENT.matcher(normalized).find();
+        }
+
+        /**
+         * Detects any A2A state event within a COMPLETE SSE frame (delimited by \n\n).
+         * Unlike containsA2AAnyState which may match partial data, this method only
+         * returns true when a full SSE frame containing a state field has been received.
+         * This prevents JSON truncation when the state appears mid-frame.
+         *
+         * For Notification-T, the initial TASK_STATE_WORKING frame triggers completion,
+         * allowing the RSocket channel to close and unblock subsequent NE requests.
+         * For Task-T, terminal states (COMPLETED, INPUT_REQUIRED, etc.) trigger completion.
+         * Intermediate WORKING frames for Task-T also trigger completion, but the engine
+         * re-opens a new stream for follow-up requests (Negotiation-T).
+         */
+        private static boolean containsA2AStateInCompleteFrame(CharSequence payload) {
+            String normalized = payload.toString().replace("\r\n", "\n");
+            int frameStart = 0;
+            int frameEnd;
+            while ((frameEnd = normalized.indexOf("\n\n", frameStart)) >= 0) {
+                String completeFrame = normalized.substring(frameStart, frameEnd);
+                if (A2A_ANY_STATE.matcher(completeFrame).find()
+                        || A2A_FINAL_EVENT.matcher(completeFrame).find()
+                        || A2A_TERMINAL_STATE.matcher(completeFrame).find()) {
                     return true;
                 }
                 frameStart = frameEnd + 2;

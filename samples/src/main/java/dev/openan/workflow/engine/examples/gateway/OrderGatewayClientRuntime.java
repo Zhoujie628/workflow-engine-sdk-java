@@ -5,8 +5,6 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.config.ConfigOption;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.httpsession.OrderHttpSessionClient;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
@@ -724,98 +722,41 @@ public final class OrderGatewayClientRuntime
 
         @Override
         public OrderSession open(AgentGatewayRoute route) {
-            StreamingOrderHttpSessionClient client = new StreamingOrderHttpSessionClient();
-            String stage = "configure";
             long started = System.nanoTime();
             try {
-                client.configuration(
-                        ConfigOption.LOGIN_TIMEOUT,
-                        Integer.toString(config.loginTimeoutSeconds));
-                stage = "login";
                 log.info(
-                        "[OrderGateway] LOGIN_START ne={}, host={}:{}, timeoutSeconds={}",
+                        "[OrderGateway] SESSION_CREATE ne={}, host={}:{}, https={}",
                         route.ne(),
                         config.host,
                         config.port,
-                        config.loginTimeoutSeconds);
-                client.login(
-                        ServerInfo.builder()
-                                .host(config.host)
-                                .port(config.port)
-                                .username(config.username)
-                                .password(config.password)
-                                .clientId(config.clientId)
-                                .clientSecret(config.clientSecret)
-                                .build());
+                        route.https());
+                ServerInfo serverInfo = ServerInfo.builder()
+                        .host(config.host)
+                        .port(config.port)
+                        .username(config.username)
+                        .password(config.password)
+                        .clientId(config.clientId)
+                        .clientSecret(config.clientSecret)
+                        .build();
+                OrderHttpClientAdapter adapter =
+                        new OrderHttpClientAdapter(serverInfo, route.ne(), route.https());
                 log.info(
-                        "[OrderGateway] LOGIN_DONE ne={}, host={}:{}, elapsedMs={}",
+                        "[OrderGateway] SESSION_READY ne={}, elapsedMs={}",
                         route.ne(),
-                        config.host,
-                        config.port,
                         elapsedMillis(started));
-                stage = "init";
-                long initStarted = System.nanoTime();
-                log.info(
-                        "[OrderGateway] INIT_START ne={}, https={}", route.ne(), route.https());
-                client.init(route.ne(), route.https());
-                log.info(
-                        "[OrderGateway] INIT_DONE ne={}, https={}, elapsedMs={}",
-                        route.ne(),
-                        route.https(),
-                        elapsedMillis(initStarted));
-                return new DefaultOrderSession(client);
+                return adapter;
             } catch (RuntimeException e) {
                 log.error(
-                        "[OrderGateway] SESSION_SETUP_FAILED stage={}, ne={}, host={}:{}, "
+                        "[OrderGateway] SESSION_SETUP_FAILED ne={}, host={}:{}, "
                                 + "elapsedMs={}, errorType={}, message={}",
-                        stage,
                         route.ne(),
                         config.host,
                         config.port,
                         elapsedMillis(started),
                         e.getClass().getSimpleName(),
                         e.getMessage());
-                safeLogout(client);
                 throw e;
             }
-        }
-    }
-
-    private static final class DefaultOrderSession implements OrderSession {
-        private final StreamingOrderHttpSessionClient client;
-
-        private DefaultOrderSession(StreamingOrderHttpSessionClient client) {
-            this.client = client;
-        }
-
-        @Override
-        public OrderHttpSessionStrResponse execute(
-                OrderHttpSessionStrRequest request, int timeoutMillis) {
-            return client.execute(request, timeoutMillis);
-        }
-
-        @Override
-        public void executeStreaming(
-                OrderHttpSessionStrRequest request,
-                int timeoutMillis,
-                Predicate<OrderHttpSessionStrResponse> responseSink) {
-            client.executeStreaming(request, timeoutMillis, responseSink);
-        }
-
-        @Override
-        public void close() {
-            safeLogout(client);
-        }
-    }
-
-    private static void safeLogout(OrderHttpSessionClient client) {
-        if (client.getSessionId() == null || client.getSessionId().isBlank()) {
-            return;
-        }
-        try {
-            client.logout();
-        } catch (RuntimeException e) {
-            log.warn("[OrderGateway] Logout failed: {}", e.getMessage());
         }
     }
 

@@ -40,7 +40,7 @@ public final class NegotiationUtils {
     static final String NEGOTIATION_REQUEST_MARKER = "[NEGOTIATION_REQUEST]";
     static final String NEGOTIATION_CONTEXT_MARKER = "[NEGOTIATION_CONTEXT]";
     public static final String NEGOTIATION_CONCERN_KEY = "negotiationConcern";
-    public static final String NEGOTIATION_CONTEXT_KEY = NegotiationHandler.NEGOTIATION_CONTEXT_KEY;
+    public static final String NEGOTIATION_CONTEXT_KEY = NegotiationHandler.NEGOTIATION_TEXT_KEY;
     public static final String NEGOTIATION_TEXT_KEY = A2ATExtension.NEGOTIATION_T.uri();
     public static final String TASK_PROMPT_KEY = A2ATExtension.TASK_T.uri();
 

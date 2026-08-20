@@ -312,7 +312,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
             // negotiation context retains the original task context.
             facts.put("input", input);
             return client.startNegotiation(
-                    NegotiationType.FULFILLMENT, defaultNegotiationText(), facts);
+                    NegotiationType.TARGET, defaultNegotiationText(), facts);
         } catch (Exception e) {
             log.warn(
                     "[{}] startNegotiation failed, using fallback: {}",

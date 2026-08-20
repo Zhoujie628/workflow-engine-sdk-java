@@ -19,8 +19,6 @@
 
 package dev.openan.workflow.engine.examples.gateway;
 
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.httpsession.OrderHttpSessionClient;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
@@ -42,70 +40,44 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
 /**
- * Mock subclass of the Eastcom Order SDK's {@code OrderHttpSessionClient}.
+ * Mock {@link OrderGatewayClientRuntime.OrderSession} that bypasses the Eastcom SDK entirely
+ * and does plain HTTP forwarding to the mock gateway server.
  *
-* <p>The real {@code OrderHttpSessionClient} uses RSocket (via {@code ServiceReference.refer()})
-* to connect to the gateway platform. This mock overrides {@code login()}, {@code init()},
-* and {@code execute()} to bypass RSocket entirely and do plain HTTP forwarding to the
- * mock gateway server ({@code dev.openan.workflow.engine.examples.server.MockGatewayServer}).
- *
- * <p>This approach uses the real SDK jar for its class hierarchy and protobuf types
- * (ServerInfo, OrderHttpSessionStrRequest, OrderHttpSessionStrResponse), so the integration
- * code path mirrors production -- only the transport layer is mocked.
+ * <p>Previously this class extended {@code OrderHttpSessionClient} and overrode
+ * {@code login/init/execute}. After migrating to the officially documented
+ * {@code HttpClient} API, the production adapter no longer uses
+ * {@code OrderHttpSessionClient}, so this mock now implements {@link
+ * OrderGatewayClientRuntime.OrderSession} directly.
  *
  * <h2>Flow</h2>
  * <pre>
- *   MockGatewayClientRuntime  --&gt;  MockOrderHttpSessionClient  --&gt;  MockGatewayServer  --&gt;  OMC
- *        (A2A-T)                    (extends OrderHttpSessionClient)    (HTTP proxy)         (A2A server)
+ *   MockGatewayClientRuntime  ->  MockOrderHttpSessionClient  ->  MockGatewayServer  ->  OMC
+ *        (A2A-T)                   (implements OrderSession)       (HTTP proxy)         (A2A server)
  * </pre>
  *
- * <p>The {@code init(ne, isHttps)} call stores the target OMC URL (the {@code ne} parameter
- * doubles as the OMC base URL in this mock). The {@code execute()} call forwards the HTTP
- * request to the mock gateway with an {@code X-Target-URL} header, and the gateway pipes it
- * to the OMC.
+ * <p>The {@code targetUrl} (set via constructor) stores the target OMC URL.
+ * The {@code execute()} call forwards the HTTP request to the mock gateway with an
+ * {@code X-Target-URL} header, and the gateway pipes it to the OMC.
  */
-public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
+public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.OrderSession {
 
     private static final Logger log = LoggerFactory.getLogger(MockOrderHttpSessionClient.class);
 
     private final String gatewayUrl;
     private final SSLContext sslContext;
-    private String targetUrl;
+    private final String targetUrl;
 
-    public MockOrderHttpSessionClient(String gatewayUrl, SSLContext sslContext) {
+    public MockOrderHttpSessionClient(String gatewayUrl, SSLContext sslContext, String targetUrl) {
         this.gatewayUrl = gatewayUrl.endsWith("/")
                 ? gatewayUrl.substring(0, gatewayUrl.length() - 1)
                 : gatewayUrl;
         this.sslContext = sslContext;
-    }
-
-    @Override
-    public void login(ServerInfo info) {
-        this.sessionId = "mock-" + System.currentTimeMillis();
-        this.host = info.getHost();
-        this.port = info.getPort();
-        this.isConnected = true;
-        log.info("[MockOrderClient] Mock login: host={}:{}, session={}",
-                this.host, this.port, this.sessionId);
-    }
-
-    @Override
-    public void logout() {
-        log.info("[MockOrderClient] Mock logout: session={}", sessionId);
-        this.isConnected = false;
-        this.sessionId = null;
-        this.targetUrl = null;
-    }
-
-    @Override
-    public void init(String ne, Boolean isHttps) {
-        this.targetUrl = ne;
-        log.info("[MockOrderClient] Mock init: targetUrl={}", this.targetUrl);
+        this.targetUrl = targetUrl;
     }
 
     @Override
     public OrderHttpSessionStrResponse execute(
-            OrderHttpSessionStrRequest request, Integer timeout) {
+            OrderHttpSessionStrRequest request, int timeoutMillis) {
         long started = System.nanoTime();
         String uriPath = request.getUriPath();
         String method = request.getMethod();
@@ -120,7 +92,7 @@ public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
                 uriPath,
                 gatewayUrl,
                 targetUrl,
-                timeout,
+                timeoutMillis,
                 body != null ? body.length() : 0,
                 headers != null ? headers.keySet() : java.util.Set.of());
 
@@ -129,7 +101,7 @@ public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
             conn.setRequestMethod(method != null && !method.isEmpty() ? method : "POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(30_000);
-            conn.setReadTimeout(timeout != null ? timeout : 600_000);
+            conn.setReadTimeout(timeoutMillis);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("X-Target-URL", targetUrl);
 
@@ -178,9 +150,10 @@ public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
     }
 
     /** Streams response characters to the sink as soon as the mock platform forwards them. */
+    @Override
     public void executeStreaming(
             OrderHttpSessionStrRequest request,
-            Integer timeoutMillis,
+            int timeoutMillis,
             Predicate<OrderHttpSessionStrResponse> responseSink) {
         long started = System.nanoTime();
         HttpURLConnection conn = null;
@@ -223,8 +196,18 @@ public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
         }
     }
 
+    @Override
+    public String sessionType() {
+        return "MockOrderHttpSessionClient";
+    }
+
+    @Override
+    public void close() {
+        log.info("[MockOrderClient] CLOSE targetUrl={}", targetUrl);
+    }
+
     private HttpURLConnection prepareConnection(
-            OrderHttpSessionStrRequest request, Integer timeoutMillis) throws IOException {
+            OrderHttpSessionStrRequest request, int timeoutMillis) throws IOException {
         String uriPath = request.getUriPath();
         HttpURLConnection conn =
                 openConnection(gatewayUrl + (uriPath != null ? uriPath : ""));
@@ -232,7 +215,7 @@ public class MockOrderHttpSessionClient extends OrderHttpSessionClient {
         conn.setRequestMethod(method != null && !method.isEmpty() ? method : "POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(30_000);
-        conn.setReadTimeout(timeoutMillis != null ? timeoutMillis : 600_000);
+        conn.setReadTimeout(timeoutMillis);
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("X-Target-URL", targetUrl);
         for (Map.Entry<String, String> entry : request.getHeadersMap().entrySet()) {

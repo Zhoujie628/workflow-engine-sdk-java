@@ -86,13 +86,22 @@ public class SpringSpnDemo {
         boolean success = false;
         String transportMode = resolveTransportMode(applicationArgs);
         boolean mockMode = "mock".equalsIgnoreCase(transportMode);
+        boolean orderSimulatorMode =
+                "order".equalsIgnoreCase(transportMode)
+                        && Boolean.parseBoolean(
+                                System.getProperty(
+                                        "EASTCOM_ORDER_SIMULATOR_ENABLED",
+                                        System.getenv() != null
+                                                ? System.getenv("EASTCOM_ORDER_SIMULATOR_ENABLED")
+                                                : "false"));
+        boolean needMockGateway = mockMode || orderSimulatorMode;
         log.info(
                 "[Demo] START mode={}, gateway=http://127.0.0.1:26400, "
                         + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]",
                 transportMode);
         try {
             long stageStarted;
-            if (mockMode) {
+            if (needMockGateway) {
                 stageStarted = System.nanoTime();
                 log.info("[Demo] STAGE_START stage=start-mock-gateway");
                 gateway =
