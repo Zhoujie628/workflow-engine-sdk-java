@@ -17,7 +17,7 @@
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
         "description": "Extension for A2A-T negotiation text exchange.",
         "required": false
       },

@@ -29,7 +29,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import java.nio.file.Path;
 
-import dev.openan.workflow.engine.examples.demo.SpnCrossCityDiagnosisDemo;
 import dev.openan.workflow.engine.examples.demo.SpringSpnDemo;
 /**
  * Spring Boot Workbench Agent -- northbound A2A server.
@@ -39,7 +38,7 @@ import dev.openan.workflow.engine.examples.demo.SpringSpnDemo;
  * business logic lives in {@link dev.openan.workflow.engine.examples.agents.SpringWorkbenchExecutor} (implements {@code AgentExecutor}).
  *
  * <p>Demo orchestration (starting OMC agents, sending Task-T, shutting down) is handled separately
- * by {@link dev.openan.workflow.engine.examples.demo.SpringSpnDemo}, mirroring the existing {@code SpnCrossCityDiagnosisDemo} pattern.
+ * by {@link dev.openan.workflow.engine.examples.demo.SpringSpnDemo}.
  *
  * <p>Can also be run standalone as a Spring Boot service (no demo logic).
  */

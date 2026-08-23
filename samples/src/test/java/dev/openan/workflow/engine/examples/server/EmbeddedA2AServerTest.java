@@ -109,7 +109,16 @@ class EmbeddedA2AServerTest {
                                         "extendedAgentCard",
                                         false,
                                         "extensions",
-                                        List.of()),
+                                        List.of(
+                                                Map.of(
+                                                        "uri",
+                                                        "https://projects.tmforum.org/a2aproject"
+                                                                + "/telecommunication/extensions"
+                                                                + "/Negotiation-T/v1",
+                                                        "description",
+                                                        "Negotiation-T test extension",
+                                                        "required",
+                                                        false))),
                         "defaultInputModes", List.of("text/plain"),
                         "defaultOutputModes", List.of("text/plain"),
                         "skills",
@@ -176,7 +185,43 @@ class EmbeddedA2AServerTest {
         String taskMeta = extractExtensionValue(result, "Task-T");
         assertNotNull(taskMeta, "Task-T metadata should be present in response");
         assertTrue(
-                taskMeta.contains("城市1"),
-                "Diagnosis metadata should mention City1, got: " + taskMeta);
+                taskMeta.contains("诊断结果"),
+                "Diagnosis metadata should contain structured diagnosis result, got: " + taskMeta);
+    }
+
+    /**
+     * Negotiation path: when the message metadata carries a Task-T prompt plus the Negotiation-T
+     * extension key, the agent starts a negotiation (propose + INPUT_REQUIRED); the engine's
+     * auto-loop must observe the interruption, ask the (default) control point for a
+     * clarification, send the follow-up, and complete with the business result. Guards against
+     * the SSE stream hanging open on INPUT_REQUIRED (A2A interrupted states are not final).
+     */
+    @Test
+    void testNegotiationAutoLoopCompletes() {
+        // Task-T prompt with a blank task object so server-side validation would also flag it;
+        // the Negotiation-T key activates the extension on the A2A-Extensions header.
+        String taskPrompt =
+                "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
+                        + "## 任务对象(Task Object)\n接入端口名称：\n\n"
+                        + "## 任务上下文(Task Context)\n1. 投诉分类：\"专线质差\"";
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+        metadata.put(
+                "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1",
+                taskPrompt);
+        metadata.put(
+                "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
+                "");
+        SendMessageResult result =
+                client
+                        .sendMessage(AGENT_NAME, "diagnose SPN fault", null, metadata)
+                        .orTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                        .join();
+        assertNotNull(result);
+        assertFalse(
+                result.getText().isEmpty(),
+                "Negotiation round must end with the business response, got: " + result.getText());
+        assertTrue(
+                result.getText().contains("诊断结果"),
+                "Final response must be the completed diagnosis, got: " + result.getText());
     }
 }

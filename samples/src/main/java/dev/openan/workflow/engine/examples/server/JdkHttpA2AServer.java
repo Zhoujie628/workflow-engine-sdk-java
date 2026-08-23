@@ -397,6 +397,25 @@ public class JdkHttpA2AServer implements AutoCloseable {
                 handleStream(exchange, restHandler, readBody(exchange));
                 return;
             }
+            // Task routes (?? A2A: ??/??/??)
+            if ("GET".equalsIgnoreCase(method) && path.startsWith("/tasks/") && !path.contains(":")) {
+                String taskId = path.substring("/tasks/".length());
+                if (taskId.contains("?")) taskId = taskId.substring(0, taskId.indexOf("?"));
+                var resp = restHandler.getTask(buildCallContext(exchange), "", taskId, null);
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+                return;
+            }
+            if ("POST".equalsIgnoreCase(method) && path.contains(":cancel")) {
+                String taskId = path.substring("/tasks/".length(), path.indexOf(":cancel"));
+                var resp = restHandler.cancelTask(buildCallContext(exchange), "", readBody(exchange), taskId);
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+                return;
+            }
+            if ("POST".equalsIgnoreCase(method) && path.contains(":subscribe")) {
+                String taskId = path.substring("/tasks/".length(), path.indexOf(":subscribe"));
+                handleSubscribe(exchange, restHandler, taskId);
+                return;
+            }
             exchange.sendResponseHeaders(404, -1);
         } catch (Exception e) {
             log.error("[{}] Handler error: {}", agentName, e.getMessage(), e);
@@ -436,6 +455,44 @@ public class JdkHttpA2AServer implements AutoCloseable {
         } else {
             log.warn("[{}] Login failed: bad credentials", agentName);
             sendJson(exchange, 401, Map.of("error", "Invalid credentials"));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleSubscribe(HttpExchange exchange, RestHandler restHandler, String taskId)
+            throws IOException {
+        try {
+            var resp = restHandler.subscribeToTask(buildCallContext(exchange), "", taskId);
+            if (resp instanceof RestHandler.HTTPRestStreamingResponse streaming) {
+                exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, 0);
+                AtomicLong seq = new AtomicLong(0);
+                CountDownLatch done = new CountDownLatch(1);
+                OutputStream os = exchange.getResponseBody();
+                streaming.getPublisher().subscribe(new Flow.Subscriber<String>() {
+                    private Flow.Subscription sub;
+                    public void onSubscribe(Flow.Subscription s) { sub = s; s.request(1); }
+                    public void onNext(String item) {
+                        try {
+                            String sse = String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
+                                    + "data:" + item + "\n\n";
+                            os.write(sse.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                            sub.request(1);
+                        } catch (IOException e) {
+                            sub.cancel(); done.countDown();
+                        }
+                    }
+                    public void onError(Throwable t) { done.countDown(); }
+                    public void onComplete() { done.countDown(); }
+                });
+                try { done.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                finally { os.close(); }
+            } else {
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+            }
+        } catch (A2AError e) {
+            sendJson(exchange, 500, Map.of("error", e.getMessage()));
         }
     }
 

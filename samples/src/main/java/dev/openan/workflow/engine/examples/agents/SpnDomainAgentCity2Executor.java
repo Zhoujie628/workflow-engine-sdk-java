@@ -40,27 +40,18 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
 public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity2Executor.class);
 
+    // Diagnosis result placed in artifact.metadata[Task-T URI], mirroring spec case 7.1 (normal).
     private static final String NORMAL_DIAGNOSIS_RESULT =
-            "诊断结果：城市2城市OMC诊断结果 - 端口状态正常，光功率-17dBm(正常范围)，无异常告警。\n"
-                    + "修复建议：城市2城市无需修复，故障不在此地市。\n"
-                    + "故障根因：无根因(此地市正常)。";
-
-    private static final String RECOVERY_RESULT = "城市2侧OMC抢通完成，业务恢复正常。";
+            "1. 诊断结果：成功\n"
+                    + "2. 诊断结果详情：城市2OMC端口状态正常，光功率-17dBm(正常范围)，无异常告警，故障不在此地市\n"
+                    + "3. 修复建议：城市2无需修复";
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
-        String sys =
-                "你是SPN领域城市2OMC故障诊断专家。根据输入诊断信息，城市2侧端口正常、光功率-17dBm(正常范围)、无异常告警。输出诊断结果：城市2无需修复、故障不在此地市。简洁专业，中文。";
+        String sys = "你是SPN领域OMC故障诊断专家。按如下结构输出：1. 诊断结果（成功/失败）；"
+                + "2. 诊断结果详情；3. 修复建议。城市2侧端口正常、无故障。简洁专业，中文。";
         String user = "输入：\n" + input + "\n\n城市2OMC端口port-3=UP，光功率-17dBm，无告警。请输出诊断结论。";
         return LlmHelper.text(env, sys, user, fallback);
-    }
-
-    private static void sleepBriefly() {
-        try {
-            Thread.sleep(300);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     @Override
@@ -77,11 +68,6 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     }
 
     @Override
-    protected String defaultNegotiationText() {
-        return "城市2OMC诊断需要确认客户专线故障是否涉及城市2侧端口，请补充。";
-    }
-
-    @Override
     protected Map<String, Object> buildResponseMetadata(RequestContext ctx, String response) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(NegotiationUtils.TASK_PROMPT_KEY, response);
@@ -90,7 +76,7 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
 
     @Override
     protected String buildResultSummary() {
-        return "SPN专线故障诊断结果";
+        return "专线业务投诉诊断任务诊断结果消息";
     }
 
     @Override

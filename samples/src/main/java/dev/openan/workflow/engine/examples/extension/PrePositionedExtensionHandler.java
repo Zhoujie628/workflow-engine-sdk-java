@@ -25,10 +25,16 @@ import org.a2aproject.sdk.spec.Part;
 import org.a2aproject.sdk.spec.TaskState;
 import org.a2aproject.sdk.spec.TaskStatus;
 import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
+
+import net.openan.a2at.sdk.core.model.MetadataContent;
+import net.openan.a2at.sdk.server.A2ATServer;
+import net.openan.a2at.sdk.server.model.PromptComplianceResult;
+import java.nio.file.Path;
 import org.a2aproject.sdk.spec.TextPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -55,6 +61,21 @@ public class PrePositionedExtensionHandler {
     private static final Logger log = LoggerFactory.getLogger(PrePositionedExtensionHandler.class);
     private volatile String authorizationPolicy;
     private volatile String notificationSubscription;
+    private volatile A2ATServer a2atServer;
+
+    private A2ATServer a2atServer() {
+        if (a2atServer != null) return a2atServer;
+        if (Boolean.getBoolean("a2at.llm.disabled")) return null;
+        String env = System.getProperty("A2AT_ENV_PATH", System.getenv("A2AT_ENV_PATH"));
+        if (env == null || env.isBlank()) return null;
+        try {
+            a2atServer = new A2ATServer(Path.of(env));
+            return a2atServer;
+        } catch (Exception e) {
+            log.warn("A2ATServer init failed: {}", e.getMessage());
+            return null;
+        }
+    }
 
     /**
      * Detect whether the incoming message carries an Authorization-T or Notification-T extension in
@@ -108,6 +129,35 @@ public class PrePositionedExtensionHandler {
     }
 
     /**
+     * Parameter JSON Schema for the Authorization-T validate-and-fill pipeline: the whitelist
+     * policy fields the agent wants extracted from a rendered authorization prompt.
+     */
+    private static Map<String, Object> buildAuthParamSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("授权策略的操作类型", Map.of("type", "string"));
+        properties.put("动网操作的授权策略列表", Map.of("type", "string"));
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        return schema;
+    }
+
+    /**
+     * Parameter JSON Schema for the Notification-T validate-and-fill pipeline: the subscription
+     * fields extracted from a rendered subscribe-incident prompt.
+     */
+    private static Map<String, Object> buildNotificationParamSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("通知主题", Map.of("type", "string"));
+        properties.put("订阅条件", Map.of("type", "string"));
+        properties.put("上报通知数据格式", Map.of("type", "string"));
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        return schema;
+    }
+
+    /**
      * Handle a pre-positioned message: store the payload, emit an ACK artifact, and complete the
      * task.
      *
@@ -124,10 +174,75 @@ public class PrePositionedExtensionHandler {
                         .findFirst()
                         .map(v -> v instanceof String s ? s : String.valueOf(v))
                         .orElse("");
+        // Extract templateUri from metadata if present (sent by SDK prompt generation)
+        String templateUri = null;
+        if (ctx.getMessage().metadata() != null) {
+            Object tu = ctx.getMessage().metadata().get(MetadataContent.TEMPLATE_URI_METADATA_KEY);
+            if (tu instanceof String s) templateUri = s;
+        }
         if (extKeyword.contains("Authorization")) {
             authorizationPolicy = payloadText;
+            // Full validate-and-fill pipeline: rule gate + LLM semantic validation + param
+            // extraction, falling back to the lightweight compliance check.
+            A2ATServer server = a2atServer();
+            if (server != null) {
+                try {
+                    net.openan.a2at.sdk.core.model.FilledParamData filled =
+                            server.validateAuthPromptAndDataFilling(
+                                    payloadText,
+                                    buildAuthParamSchema(),
+                                    net.openan.a2at.sdk.core.model.StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+                    log.info(
+                            "[{}] Authorization-T validateAuthPromptAndDataFilling passed, templateUri={}, params={}",
+                            agentTag,
+                            templateUri,
+                            filled.data() != null ? filled.data().keySet() : java.util.Set.of());
+                } catch (Exception ve) {
+                    log.warn(
+                            "[{}] Authorization-T validate-and-fill rejected ({}); falling back to compliance check",
+                            agentTag,
+                            ve.getMessage());
+                    try {
+                        PromptComplianceResult result = server.checkTaskPrompt(payloadText);
+                        if (result.success()) {
+                            log.info("[{}] Authorization-T prompt compliance check passed, templateUri={}",
+                                    agentTag, templateUri);
+                        } else {
+                            log.warn("[{}] Authorization-T prompt compliance check failed: code={}, message={}",
+                                    agentTag,
+                                    result.failure() != null ? result.failure().code() : "unknown",
+                                    result.failure() != null ? result.failure().message() : "unknown");
+                        }
+                    } catch (Exception e) {
+                        log.warn("[{}] Authorization-T compliance check error: {}", agentTag, e.getMessage());
+                    }
+                }
+            }
         } else if (extKeyword.contains("Notification")) {
             notificationSubscription = payloadText;
+            A2ATServer server = a2atServer();
+            if (server != null) {
+                try {
+                    net.openan.a2at.sdk.core.model.FilledParamData filled =
+                            server.validateNotificationPromptAndDataFilling(
+                                    payloadText,
+                                    buildNotificationParamSchema(),
+                                    net.openan.a2at.sdk.core.model.StandardTemplates.SUBSCRIBE_INCIDENT);
+                    log.info(
+                            "[{}] Notification-T validateNotificationPromptAndDataFilling"
+                                    + " passed, templateUri={}, params={}",
+                            agentTag,
+                            templateUri,
+                            filled.data() != null ? filled.data().keySet() : java.util.Set.of());
+                } catch (Exception ve) {
+                    log.warn(
+                            "[{}] Notification-T validate-and-fill rejected ({}); keeping payload as subscription",
+                            agentTag,
+                            ve.getMessage());
+                }
+            } else {
+                log.info("[{}] Notification-T received, templateUri={}", agentTag, templateUri);
+            }
         }
         log.info(
                 "[{}] Pre-positioned {} received, payload length={}",

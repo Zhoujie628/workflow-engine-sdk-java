@@ -21,88 +21,48 @@ package dev.openan.workflow.engine.examples.negotiation;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
 
-import net.openan.a2at.sdk.negotiation.runtime.NegotiationHandler;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Constants and helpers for the server-side negotiation flow, mirroring the Python reference in
- * orchestration-center/common/negotiation_utils.py.
- *
- * <p>Markers and key names align with the a2a-t-sdk-java negotiation payload mapper
- * (NEGOTIATION_CONTEXT_KEY / NEGOTIATION_TEXT_KEY) and the engine-side NegotiationTHandler /
- * autoNegotiate follow-up format.
+ * Negotiation-T helpers using <b>only standard A2A-T protocol fields</b> (spec §5.1
+ * Message.role and §6 metadata-key conventions). No custom markers, no internal-only
+ * keys, no value-content inspection.
  */
 public final class NegotiationUtils {
 
-    static final String NEGOTIATION_RESOLUTION_MARKER = "[NEGOTIATION_RESOLUTION]";
-    static final String NEGOTIATION_REQUEST_MARKER = "[NEGOTIATION_REQUEST]";
-    static final String NEGOTIATION_CONTEXT_MARKER = "[NEGOTIATION_CONTEXT]";
-    public static final String NEGOTIATION_CONCERN_KEY = "negotiationConcern";
-    public static final String NEGOTIATION_CONTEXT_KEY = NegotiationHandler.NEGOTIATION_TEXT_KEY;
-    public static final String NEGOTIATION_TEXT_KEY = A2ATExtension.NEGOTIATION_T.uri();
+    /** Standard Negotiation-T extension URI (spec §2). */
+    public static final String NEGOTIATION_T_URI = A2ATExtension.NEGOTIATION_T.uri();
+
+    /** Standard Task-T extension URI (spec §2). */
     public static final String TASK_PROMPT_KEY = A2ATExtension.TASK_T.uri();
 
     private NegotiationUtils() {}
 
-    public static boolean isFollowUpTask(String text) {
-        return text != null && text.contains(NEGOTIATION_RESOLUTION_MARKER);
+    /**
+     * Whether metadata carries the Negotiation-T extension key (key-level check). Used by both
+     * client and server to detect negotiation messages generically.
+     */
+    public static boolean hasNegotiationMetadata(Map<String, Object> metadata) {
+        if (metadata == null) return false;
+        return metadata.containsKey(NEGOTIATION_T_URI);
     }
 
-    /** Extract the original task text from a [NEGOTIATION_RESOLUTION] follow-up message. */
-    public static String extractOriginalTask(String text) {
-        if (text == null || !text.contains(NEGOTIATION_RESOLUTION_MARKER)) {
-            return text != null ? text : "";
-        }
-        int idx = text.indexOf("Original Task:");
-        if (idx < 0) {
-            return "";
-        }
-        String after = text.substring(idx + "Original Task:".length()).trim();
-        int end = after.indexOf("\n\nPlease re-execute the task based on the clarification above.");
-        if (end >= 0) {
-            after = after.substring(0, end).trim();
-        }
-        return after;
+    /**
+     * Whether metadata carries the Task-T extension key (key-level check). Distinguishes a new
+     * diagnostic task (has Task-T) from a negotiation reply (only Negotiation-T).
+     */
+    public static boolean hasTaskMetadata(Map<String, Object> metadata) {
+        if (metadata == null) return false;
+        return metadata.containsKey(TASK_PROMPT_KEY);
     }
 
-    /** Strip negotiation markers to recover a clean task text for re-execution. */
-    public static String cleanupResolutionMarker(String text) {
-        if (text == null) {
-            return "";
-        }
-        if (!text.contains(NEGOTIATION_RESOLUTION_MARKER)) {
-            return text;
-        }
-        String original = extractOriginalTask(text);
-        return original.isEmpty() ? text : original;
-    }
-
-    /** Build the negotiation response metadata placed on an INPUT_REQUIRED task. */
-    public static Map<String, Object> negotiationResponseMetadata(
-            Map<String, Object> contextData, String negotiationText, String concern) {
+    /** Build the Negotiation-T metadata for an OMC-side Message(ROLE_AGENT) propose. */
+    public static Map<String, Object> negotiationResponseMetadata(String negotiationText) {
         Map<String, Object> metadata = new LinkedHashMap<>();
-        if (contextData != null && !contextData.isEmpty()) {
-            metadata.put(NEGOTIATION_CONTEXT_KEY, contextData);
-        }
         if (negotiationText != null && !negotiationText.isEmpty()) {
-            metadata.put(NEGOTIATION_TEXT_KEY, negotiationText);
-        }
-        if (concern != null && !concern.isEmpty()) {
-            metadata.put(NEGOTIATION_CONCERN_KEY, concern);
+            metadata.put(NEGOTIATION_T_URI, negotiationText);
         }
         return metadata;
-    }
-
-    /** Build the [NEGOTIATION_RESOLUTION] follow-up text the client resends. */
-    public static String buildResolutionMessage(String originalTask, String resolutionText) {
-        return NEGOTIATION_RESOLUTION_MARKER
-                + "\n"
-                + "The engine has reviewed your negotiation request and provides the following clarification:\n\n"
-                + resolutionText
-                + "\n\n---\nOriginal Task:\n"
-                + originalTask
-                + "\n\nPlease re-execute the task based on the clarification above.";
     }
 }
