@@ -117,20 +117,56 @@ After receiving:
 2. Metadata extraction (task-level + artifact-level)
 3. Negotiation-T auto-loop (triggered when metadata carries the Negotiation-T key; see "Negotiation auto-loop behavior" below)
 
+#### sendMessageFromData (structured-data dual track)
+
+```java
+CompletableFuture<SendMessageResult> sendMessageFromData(
+        String agentName,
+        String message,
+        Map<String, Object> data,
+        Map<String, Object> schema,
+        TemplateUri templateUri);
+```
+
+| Parameter     | Type                  | Description                                                        |
+|---------------|-----------------------|---------------------------------------------------------------------|
+| `agentName`   | `String`              | Target agent name                                                   |
+| `message`     | `String`              | Short accompanying message text (A2A message parts text)           |
+| `data`        | `Map<String, Object>` | Structured business data (raw fields, not a rendered prompt)       |
+| `schema`      | `Map<String, Object>` | JSON schema describing what each data field means                  |
+| `templateUri` | `TemplateUri`         | Target template; null uses the SDK default (PRIVATE_LINE_COMPLAINT)|
+
+**Choosing a track**: when the caller holds structured data (e.g. complaint-ticket fields) prefer
+this method — the SDK renders the Task-T prompt deterministically via
+`generateTaskPromptFromDataWithSchema` (no scenario recognition, no LLM call). With free-form
+natural-language input use `sendMessage` (the SDK scenario-recognition pipeline). Both tracks run
+through the full Negotiation-T auto-loop, auth, and extension-header injection.
+
+`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
+provides the same structured-data track for Authorization-T / Notification-T pre-positioning.
+
 #### Negotiation auto-loop behavior
 
 - **Trigger**: the response metadata carries the Negotiation-T extension key (the agent opened a
-  negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`).
-- **Each round**: `ControlPoint.onNegotiation` produces a clarification → the SDK content layer
-  renders the follow-up message (Accept template; a `reject:` / `abort:` prefix on the
-  clarification selects the Reject / Abort terminal template) → the SDK state machine advances
-  (AGREED / REJECTED) → send to the agent → recurse on the next round.
+  negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`) and the message metadata carries
+  `negotiation_context` (the negotiation context produced by the agent-side `startNegotiation`).
+- **Each round**: the SDK `receiveNegotiation` parses the request →
+  `validateProposePromptAndDataFilling` validates the propose against its template and extracts
+  parameters → `ControlPoint.onNegotiation` produces a clarification → the SDK content layer
+  renders the follow-up message → the SDK state machine advances (`continueNegotiation`,
+  AGREED / REJECTED) → send to the agent → recurse on the next round.
+- **Clarification conventions** (the onNegotiation return value):
+  - `data:{...json...}` — deterministic fromData Accept rendering (no LLM call; the JSON body is
+    the filled-parameter map)
+  - `reject:<reason>` / `abort:<reason>` — Reject / Abort terminal templates
+  - any other text — fromText Accept rendering (one LLM extraction step)
 - **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
   via the SDK abort template (best effort — delivery failures are logged only), a
   `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
-- **Negotiation context**: the SDK carries id/round/maxRounds in the message metadata's
-  `negotiationContext` key (not rendered in the message text); the engine parses it and passes it
-  to the validate APIs.
+- **Negotiation context**: the agent carries the `startNegotiation` payload's context
+  (negotiationType / negotiationId / round / status) in the message metadata's
+  `negotiation_context` key; the engine parses it and passes it to the receive / validate /
+  continue APIs.
 
 #### Template queries
 
