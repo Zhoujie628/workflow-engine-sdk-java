@@ -17,9 +17,9 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples.agents;
+package dev.openan.workflow.engine.examples.workbench;
 
-import dev.openan.workflow.engine.examples.LlmHelper;
+import dev.openan.workflow.engine.examples.util.LlmHelper;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.DefaultControlPoint;
 import dev.openan.workflow.engine.client.A2ATExtension;
@@ -37,6 +37,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 /**
  * ControlPoint for the SPN cross-city diagnosis workflow.
  *

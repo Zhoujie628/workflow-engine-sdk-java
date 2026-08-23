@@ -17,7 +17,7 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples;
+package dev.openan.workflow.engine.examples.server;
 
 import static org.junit.jupiter.api.Assertions.*;
 

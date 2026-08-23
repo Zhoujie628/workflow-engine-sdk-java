@@ -17,22 +17,28 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples.spring;
+package dev.openan.workflow.engine.examples;
+
+import dev.openan.workflow.engine.client.EnvFileLoader;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import java.nio.file.Path;
+
+import dev.openan.workflow.engine.examples.demo.SpringSpnDemo;
 /**
  * Spring Boot Workbench Agent -- northbound A2A server.
  *
  * <p>This is the Workbench Agent itself: a Spring Boot service that exposes A2A-T endpoints
  * (message:send, message:stream) via the {@code spring-boot-starter} auto-configuration. The
- * business logic lives in {@link SpringWorkbenchExecutor} (implements {@code AgentExecutor}).
+ * business logic lives in {@link dev.openan.workflow.engine.examples.agents.SpringWorkbenchExecutor} (implements {@code AgentExecutor}).
  *
  * <p>Demo orchestration (starting OMC agents, sending Task-T, shutting down) is handled separately
- * by {@link SpringSpnDemo}, mirroring the existing {@code SpnCrossCityDiagnosisDemo} pattern.
+ * by {@link dev.openan.workflow.engine.examples.demo.SpringSpnDemo}.
  *
  * <p>Can also be run standalone as a Spring Boot service (no demo logic).
  */
@@ -43,7 +49,16 @@ public class SpringWorkbenchApplication {
 
     public static void main(String[] args) {
         System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
+        loadDotEnv();
         SpringApplication.run(SpringWorkbenchApplication.class, args);
         log.info("[SpringWorkbench] A2A server started -- ready to receive A2A-T messages");
+    }
+
+    /** Loads local demo configuration before Spring resolves application properties. */
+    public static void loadDotEnv() {
+        String envPath = EnvResolver.resolveEnvPath();
+        if (envPath != null) {
+            EnvFileLoader.loadToSystemProperties(Path.of(envPath));
+        }
     }
 }

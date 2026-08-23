@@ -19,7 +19,7 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
-import dev.openan.workflow.engine.examples.LlmHelper;
+import dev.openan.workflow.engine.examples.util.LlmHelper;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
 import org.slf4j.Logger;
@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 /**
  * SPN Domain Agent for City1 (City1 OMC).
  *
@@ -41,38 +43,40 @@ import java.util.Map;
 public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity1Executor.class);
 
+    // Diagnosis result placed in artifact.metadata[Task-T URI], mirroring spec case 7.1.
     private static final String FAULT_DIAGNOSIS_RESULT =
-            "诊断结果：城市1城市OMC诊断结果 - 端口Down，光功率-28dBm(低于阈值)，存在故障。\n"
-                    + "修复方案：更换城市1OMC端口光模块，恢复端口Down状态。此修复方案需授权后执行（授权已预置）。\n"
-                    + "故障根因：城市1OMC端口光模块故障。";
+            "1. 诊断结果：成功\n"
+                    + "2. 诊断结果详情：P33206-YWHJ-业务汇聚机房1(990)的12-TPJ1EM8F-4端口出现无收光问题，"
+                    + "判断原因为对端设备掉电或端口关闭\n"
+                    + "3. 修复建议：恢复供电后重新启动网元，或者重新开启端口";
 
-    private static final String RECOVERY_RESULT = "城市1OMC端口光模块已更换，端口恢复Up，专线业务恢复正常。";
+    // Recovery (business-preemption) result reported via Notification-T, mirroring spec case 7.9.
+    private static final String RECOVERY_RESULT =
+            "### 业务抢通事件\n"
+                    + "1. 业务抢通方案执行状态：已结束\n"
+                    + "2. 投诉诊断任务流水号：9de168c0-6179-4778-8b72-4279582c0a3f\n"
+                    + "3. OSS侧事件流水号：event-id-202606250128\n"
+                    + "4. 接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17\n"
+                    + "5. 是否已授权OMC自动抢通：是\n"
+                    + "6. 业务抢通方案名称：隧道调优\n"
+                    + "7. 业务抢通方案详情：将受影响的隧道列表调优到新的路径列表，业务恢复。\n"
+                    + "8. 业务抢通方案执行结束时间：2026-05-11T08:31:46Z\n"
+                    + "9. 业务抢通方案执行结果：成功";
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
-        String sys = "你是SPN领域城市1OMC故障诊断专家。根据输入诊断信息，输出诊断结果、修复方案和故障根因，提及城市1。简洁专业，中文。";
-        String user = "输入：\n" + input + "\n\n已知：城市1OMC端口port-7=DOWN，光功率-28dBm（阈值-20dBm）。请输出诊断结论。";
+        String sys = "你是SPN领域OMC故障诊断专家。按如下结构输出：1. 诊断结果（成功/失败）；"
+                + "2. 诊断结果详情（故障根因点资源对象、端口、现象）；3. 修复建议。简洁专业，中文。";
+        String user = "输入：\n" + input + "\n\n已知：P33206-YWHJ-业务汇聚机房1(990)的12-TPJ1EM8F-4端口出现无收光问题。请输出诊断结果。";
         return LlmHelper.text(env, sys, user, fallback);
     }
 
     private static String llmRecoveryResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
-        String sys = "你是SPN领域城市1OMC抢通执行专家。用一句话报告抢通成功结果，提及城市1OMC端口恢复Up、专线业务恢复。中文。";
-        String user = "输入：\n" + input + "\n\n已更换光模块，端口恢复Up。请输出抢通结果。";
+        String sys = "你是SPN领域OMC业务抢通执行专家。按业务抢通事件数据格式输出结果，"
+                + "包含执行状态、方案名称、详情、执行结果。中文。";
+        String user = "输入：\n" + input + "\n\n已执行隧道调优，业务恢复。请输出业务抢通结果。";
         return LlmHelper.text(env, sys, user, fallback);
-    }
-
-    private static void sleepBriefly() {
-        try {
-            Thread.sleep(300);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    @Override
-    protected boolean needsNegotiation(String input) {
-        return true;
     }
 
     @Override
@@ -97,9 +101,9 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
         boolean inWhitelist =
                 policy != null
                         && !policy.isEmpty()
-                        && (policy.contains("业务抢通")
-                                || policy.contains("光模块")
-                                || policy.contains("授权"));
+                       && (policy.contains("业务抢通")
+                               || policy.contains("光模块")
+                               || policy.contains("授权"));
         if (inWhitelist) {
             log.info("[SPN-Domain-Agent] Fault in whitelist, self-triggering recovery");
             String recoveryResult = llmRecoveryResult(diagnosisResult, RECOVERY_RESULT);
@@ -110,14 +114,23 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
             return recoveryResult;
         }
         log.info("[SPN-Domain-Agent] Fault not in whitelist, refusing recovery");
-        String refusalResult = "操作不在白名单内，拒绝执行抢通。";
+        String refusalResult = "## 授权操作执行结果\n    授权操作执行结果：失败\n\n## 失败原因\n操作不在授权白名单内，拒绝执行业务抢通。";
         pushNotificationResult(refusalResult);
         return refusalResult;
     }
 
     @Override
-    protected String defaultNegotiationText() {
-        return "城市1OMC诊断需要确认客户专线故障的详细端口信息后再执行，请补充。";
+    protected net.openan.a2at.sdk.negotiation.content.NegotiationProposeContent buildProposeContent(
+            String input) {
+        // Information negotiation: the two missing parameters required to start diagnosis.
+        return new net.openan.a2at.sdk.negotiation.content.InformationProposeContent(
+                java.util.List.of(
+                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
+                                "接入端口名称",
+                                "举例：P533-珠江旧城-PTN3900-23-TPA1EG24-1"),
+                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
+                                "投诉分类", "举例：专线质差")),
+                "以上参数均为必选，缺少无法启动诊断");
     }
 
     @Override
@@ -129,7 +142,7 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
 
     @Override
     protected String buildResultSummary() {
-        return "SPN专线故障诊断结果";
+        return "专线业务投诉诊断任务诊断结果消息";
     }
 
     @Override

@@ -16,7 +16,7 @@
  *    License for the specific language governing permissions and limitations
  *    under the License.
  */
-package dev.openan.workflow.engine.examples.agents;
+package dev.openan.workflow.engine.examples.extension;
 
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
@@ -38,6 +38,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
+import dev.openan.workflow.engine.examples.agents.NegotiationBaseAgentExecutor;
 /**
  * Handles pre-positioned Authorization-T / Notification-T messages on the agent server side.
  *
