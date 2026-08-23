@@ -73,6 +73,31 @@ public enum A2ATExtension {
      */
     public static final String NEGOTIATION_PARAMS_META_KEY = "negotiation_params";
 
+    /**
+     * Engine-internal metadata key carrying structured task input (a string-to-object map) for
+     * the SDK's {@code generateTaskPromptFromDataWithSchema} pipeline. When present in the
+     * caller-supplied metadata, {@code TaskTHandler} renders the Task-T prompt from the data
+     * deterministically instead of running scenario recognition on the message text. Consumed
+     * (removed) before the A2A message goes on the wire; the rendered prompt travels under the
+     * Task-T extension URI.
+     */
+    public static final String TASK_DATA_META_KEY = "a2at.taskData";
+
+    /**
+     * Engine-internal metadata key carrying the JSON schema describing {@link
+     * #TASK_DATA_META_KEY} fields. Required when task data is present; the schema tells the
+     * SDK renderer what each field means. Engine-internal, never sent on the wire.
+     */
+    public static final String TASK_SCHEMA_META_KEY = "a2at.taskSchema";
+
+    /**
+     * Engine-internal metadata key carrying the template URI string for the fromData rendering
+     * track (e.g. {@code "Task-T/private-line-complaint/v1"}). Optional; defaults to {@link
+     * net.openan.a2at.sdk.core.model.StandardTemplates#PRIVATE_LINE_COMPLAINT}. Engine-internal,
+     * never sent on the wire.
+     */
+    public static final String TASK_TEMPLATE_META_KEY = "a2at.taskTemplate";
+
     private final String uri;
 
     A2ATExtension(String uri) {

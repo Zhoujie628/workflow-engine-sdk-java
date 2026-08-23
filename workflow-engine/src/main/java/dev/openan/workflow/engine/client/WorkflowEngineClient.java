@@ -67,6 +67,38 @@ public interface WorkflowEngineClient {
         return sendMessage(agentName, message, null, null);
     }
 
+    /**
+     * Structured-data send: renders the Task-T prompt deterministically from typed data via the
+     * SDK's fromData pipeline (no scenario recognition, no LLM), then runs the normal send path
+     * (Negotiation-T auto-loop, auth, extension headers).
+     *
+     * <p>Callers holding structured business data should prefer this over {@link #sendMessage}:
+     * the SDK renders the prompt from the data and schema instead of the caller hand-writing the
+     * rendered prompt text.
+     *
+     * @param agentName target agent name (must match AgentCard.name)
+     * @param message short accompanying message text (parts text of the A2A message)
+     * @param data structured task input (string-to-object map)
+     * @param schema JSON schema describing the meaning of each data field
+     * @param templateUri template the data renders through (e.g. {@code
+     *     StandardTemplates.PRIVATE_LINE_COMPLAINT}); null uses the SDK default
+     * @return future completing with response text, task, metadata, task state
+     */
+    default CompletableFuture<SendMessageResult> sendMessageFromData(
+            String agentName,
+            String message,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            net.openan.a2at.sdk.core.model.TemplateUri templateUri) {
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+        metadata.put(A2ATExtension.TASK_DATA_META_KEY, data);
+        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, schema);
+        if (templateUri != null) {
+            metadata.put(A2ATExtension.TASK_TEMPLATE_META_KEY, templateUri.uri());
+        }
+        return sendMessage(agentName, message, null, metadata);
+    }
+
     void setControlPoint(ControlPoint controlPoint);
 
     void setEventCallback(EventCallback callback);

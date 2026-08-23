@@ -70,6 +70,50 @@ public final class A2ATContentFacade {
     // ------------------------------------------------------------------
 
     /**
+     * Renders a Task-T prompt from structured data and a schema. Deterministic slot filling, no
+     * scenario recognition, no LLM call.
+     *
+     * @param data structured task input (string-to-object map)
+     * @param schema schema describing the meaning of each data field; must not be empty
+     * @param templateUri task template, e.g. {@link StandardTemplates#PRIVATE_LINE_COMPLAINT}
+     * @return rendered prompt with template URI and Task-T extension URI
+     */
+    public MetadataContent generateTaskFromData(
+            Map<String, Object> data, Map<String, Object> schema, TemplateUri templateUri) {
+        return client.generateTaskPromptFromDataWithSchema(data, schema, templateUri);
+    }
+
+    /**
+     * Renders an Authorization-T prompt from structured data and a schema. Deterministic, no LLM
+     * call.
+     *
+     * @param data structured authorization input
+     * @param schema schema describing the data fields; must not be empty
+     * @param templateUri authorization template, e.g. {@link
+     *     StandardTemplates#AUTHORIZATION_POLICY_MANAGEMENT}
+     * @return rendered prompt with template URI and Authorization-T extension URI
+     */
+    public MetadataContent generateAuthFromData(
+            Map<String, Object> data, Map<String, Object> schema, TemplateUri templateUri) {
+        return client.generateAuthPromptFromDataWithSchema(data, schema, templateUri);
+    }
+
+    /**
+     * Renders a Notification-T prompt from structured data and a schema. Deterministic, no LLM
+     * call.
+     *
+     * @param data structured notification input
+     * @param schema schema describing the data fields; must not be empty
+     * @param templateUri notification template, e.g. {@link
+     *     StandardTemplates#SUBSCRIBE_INCIDENT}
+     * @return rendered prompt with template URI and Notification-T extension URI
+     */
+    public MetadataContent generateNotificationFromData(
+            Map<String, Object> data, Map<String, Object> schema, TemplateUri templateUri) {
+        return client.generateNotificationPromptFromDataWithSchema(data, schema, templateUri);
+    }
+
+    /**
      * Renders a propose-phase negotiation message from typed data. Deterministic, no LLM call.
      *
      * @param data typed propose input (context + content matching the template's type)

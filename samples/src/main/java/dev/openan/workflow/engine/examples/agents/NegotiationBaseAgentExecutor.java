@@ -398,7 +398,13 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         String contextId = ctx.getContextId();
         String negId = java.util.UUID.randomUUID().toString();
         String negText = renderProposeText(negId, input);
-        Map<String, Object> metadata = NegotiationUtils.negotiationResponseMetadata(negText);
+        // Combine the content layer with the stateful SDK runtime per the official demo
+        // pattern: startNegotiation produces the transport context payload, whose context
+        // map travels in the propose metadata so the client-side engine can advance the
+        // state machine (receiveNegotiation/continueNegotiation) with a well-formed context.
+        Map<String, Object> startPayload = startStatefulNegotiation(negText);
+        Map<String, Object> metadata =
+                NegotiationUtils.negotiationResponseMetadata(negText, startPayload);
         Message proposeMessage =
                 Message.builder()
                         .messageId(java.util.UUID.randomUUID().toString())
@@ -410,8 +416,30 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                         .build();
         emitter.requiresInput(proposeMessage);
         log.info(
-                "[{}] Requested negotiation via INPUT_REQUIRED status message",
-                getClass().getSimpleName());
+                "[{}] Requested negotiation via INPUT_REQUIRED status message (context={})",
+                getClass().getSimpleName(),
+                startPayload != null ? "stateful" : "fallback");
+    }
+
+    /**
+     * Starts the SDK negotiation state machine for a propose: returns the {@code
+     * startNegotiation} transport payload when the server facade is available, else null (the
+     * propose then goes out without a context and the client falls back to direct extraction).
+     */
+    private Map<String, Object> startStatefulNegotiation(String negText) {
+        A2ATServer server = a2atServer();
+        if (server == null) {
+            return null;
+        }
+        try {
+            return server.startNegotiation(negotiationType(), negText, Map.of());
+        } catch (Exception e) {
+            log.warn(
+                    "[{}] startNegotiation failed ({}); propose goes without SDK context",
+                    getClass().getSimpleName(),
+                    e.getMessage());
+            return null;
+        }
     }
 
     /**

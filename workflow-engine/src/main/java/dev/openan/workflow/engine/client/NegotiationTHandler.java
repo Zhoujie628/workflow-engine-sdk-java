@@ -78,10 +78,26 @@ class NegotiationTHandler implements ExtensionHandler {
         return paramSchema;
     }
 
+    /**
+     * Extracts the stateful negotiation context map from the reply metadata.
+     *
+     * <p>Priority 1: the {@code negotiation_context} key — the SDK demo convention; the agent
+     * embeds the {@code startNegotiation} payload's context map (negotiationType /
+     * negotiationId / round / status) there, exactly what {@code receiveNegotiation} expects.
+     *
+     * <p>Priority 2 (legacy): a {@code DATA-NEGOTIATION-T} metadata entry. When neither is
+     * present the caller falls back to passing the whole metadata map, which the SDK rejects
+     * with a context-parse error — handled by the direct-extraction fallback.
+     */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> extractNegotiationContext(Map<String, Object> metadata) {
         if (metadata == null) {
             return null;
+        }
+        Object contextValue = metadata.get("negotiation_context");
+        if (contextValue instanceof Map<?, ?> contextMap
+                && ((Map<?, ?>) contextMap).containsKey("negotiationType")) {
+            return (Map<String, Object>) contextMap;
         }
         for (var entry : metadata.entrySet()) {
             if (entry.getKey().contains("DATA-NEGOTIATION-T") && entry.getValue() instanceof Map) {
@@ -136,26 +152,57 @@ class NegotiationTHandler implements ExtensionHandler {
     }
 
     /**
-     * Parses the SDK-carried negotiation context ({@code negotiationContext} metadata key with
-     * id/round/maxRounds) from the received message metadata. Returns null when absent or
-     * malformed; the SDK validate APIs treat a null context as not-a-negotiation-message.
+     * Parses the SDK-carried negotiation context for the validate APIs.
+     *
+     * <p>Primary source: the {@code negotiationContext} metadata key (id/round/maxRounds). The
+     * SDK's {@code buildMetadataContent} only embeds {@code id} there, so as a fallback the
+     * stateful context ({@code negotiation_context} key, carrying negotiationId/round) is
+     * synthesized into a full context. Returns null when neither is usable; the SDK validate
+     * APIs treat a null context as not-a-negotiation-message.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext parseNegotiationContext(
             Map<String, Object> metadata) {
         Object raw = metadata.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (!(raw instanceof Map<?, ?> contextMap)) {
-            return null;
-        }
-        try {
-            Object id = contextMap.get("id");
-            Object round = contextMap.get("round");
-            Object maxRounds = contextMap.get("maxRounds");
-            if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
-                return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                        s, r.intValue(), m.intValue());
+        if (raw instanceof Map<?, ?> contextMap) {
+            try {
+                Object id = contextMap.get("id");
+                Object round = contextMap.get("round");
+                Object maxRounds = contextMap.get("maxRounds");
+                if (id instanceof String s
+                        && round instanceof Number r
+                        && maxRounds instanceof Number m) {
+                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                            s, r.intValue(), m.intValue());
+                }
+            } catch (IllegalArgumentException e) {
+                log.debug("[Negotiation-T] Malformed negotiationContext metadata: {}", e.getMessage());
             }
-        } catch (IllegalArgumentException e) {
-            log.debug("[Negotiation-T] Malformed negotiationContext metadata: {}", e.getMessage());
+        }
+        // Fallback: synthesize from the stateful negotiation_context map. Two shapes:
+        // 1) raw context map {negotiationType, negotiationId, round, status} (from the propose
+        //    metadata), 2) the receiveNegotiation result {needResponse, message, context: {...}}
+        //    stored under the same key after receiveNegotiation succeeds.
+        Object stateful = metadata.get("negotiation_context");
+        if (stateful instanceof Map<?, ?> outer) {
+            Map<?, ?> stateMap = outer;
+            Object inner = outer.get("context");
+            if (inner instanceof Map<?, ?> innerMap && innerMap.get("negotiationId") != null) {
+                stateMap = innerMap;
+            }
+            Object id = stateMap.get("negotiationId") != null
+                    ? stateMap.get("negotiationId")
+                    : stateMap.get("id");
+            Object round = stateMap.get("round");
+            if (id instanceof String s && round instanceof Number r) {
+                try {
+                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                            s,
+                            r.intValue(),
+                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+                } catch (IllegalArgumentException ignored) {
+                    // fall through
+                }
+            }
         }
         return null;
     }
@@ -223,8 +270,15 @@ class NegotiationTHandler implements ExtensionHandler {
                         if (contextMap == null) {
                             contextMap = metadata;
                         }
+                        // The negotiation message travels in metadata under the Negotiation-T
+                        // URI key (the parts text is a short placeholder), per the SDK demo
+                        // convention. Validate/receive against that full propose text.
+                        String proposeText = extractNegotiationText(metadata);
+                        if (proposeText == null || proposeText.isEmpty()) {
+                            proposeText = result.getText();
+                        }
                         Map<String, Object> receiveResult =
-                                a2atClient.receiveNegotiation(result.getText(), contextMap);
+                                a2atClient.receiveNegotiation(proposeText, contextMap);
                         {
                             Map<String, Object> rr = receiveResult;
                             Boolean needResponse = (Boolean) rr.get("needResponse");
@@ -246,7 +300,7 @@ class NegotiationTHandler implements ExtensionHandler {
                                         parseNegotiationContext(metadata);
                                 try {
                                     FilledParamData paramData = a2atClient.validateProposePromptAndDataFilling(
-                                            result.getText(), context, negotiationParamSchema(), proposeUri);
+                                            proposeText, context, negotiationParamSchema(), proposeUri);
                                     if (paramData != null && paramData.data() != null
                                             && !paramData.data().isEmpty()) {
                                         metadata.put(

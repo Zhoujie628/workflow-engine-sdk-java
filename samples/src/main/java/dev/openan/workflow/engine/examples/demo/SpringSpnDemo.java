@@ -185,7 +185,13 @@ public class SpringSpnDemo {
         }
     }
 
-    /** Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1. */
+    /**
+     * Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1.
+     *
+     * <p>Structured-data track: the demo hands over the raw complaint data + schema and the
+     * A2A-T SDK renders the Task-T prompt deterministically (no hand-written prompt text, no
+     * LLM call) — the same pattern as the official SDK sample.
+     */
     private String sendTaskToWorkbench() throws Exception {
         long started = System.nanoTime();
         AgentCard wbCard =
@@ -204,11 +210,8 @@ public class SpringSpnDemo {
                                 .build());
         DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
         try {
-            // Task-T structured prompt placed in message.metadata (spec §6).
-            Map<String, Object> metadata =
-                    SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTask());
             log.info(
-                    "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}",
+                    "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}, track=fromData",
                     WB_AGENT_NAME,
                     transport.getContextId(),
                     wbCard.supportedInterfaces().isEmpty()
@@ -216,8 +219,13 @@ public class SpringSpnDemo {
                             : wbCard.supportedInterfaces().get(0).url(),
                     SpnCasePrompts.TASK_TEXT.length());
             SendMessageResult result =
-                    client
-                            .sendMessage(WB_AGENT_NAME, SpnCasePrompts.TASK_TEXT, null, metadata)
+                    client.sendMessageFromData(
+                                    WB_AGENT_NAME,
+                                    SpnCasePrompts.TASK_TEXT,
+                                    SpnCasePrompts.privateLineComplaintData(),
+                                    SpnCasePrompts.privateLineComplaintSchema(),
+                                    net.openan.a2at.sdk.core.model.StandardTemplates
+                                            .PRIVATE_LINE_COMPLAINT)
                             .join();
             log.info(
                     "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",
