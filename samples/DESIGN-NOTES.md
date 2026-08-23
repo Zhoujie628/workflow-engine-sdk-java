@@ -23,7 +23,7 @@ graph TD
     base["agents/BaseAgentExecutor.java<br/>基类：extractText / buildStatusMessage"]
     spn1["agents/SpnDomainAgentCity1Executor.java<br/>城市1 OMC Agent"]
     spn2["agents/SpnDomainAgentCity2Executor.java<br/>城市2 OMC Agent"]
-    wb["agents/SpringWorkbenchExecutor.java<br/>Spring 管理的工作台 Agent"]
+    wb["workbench/SpringWorkbenchExecutor.java<br/>Spring 管理的工作台 Agent"]
     cp["workbench/WorkbenchControlPoint.java<br/>ControlPoint 决策逻辑（SRP 拆分）"]
     prompts["demo/SpnCasePrompts.java<br/>专线投诉场景 Task-T 结构化提示词"]
     demo["demo/SpringSpnDemo.java<br/>Demo 入口（direct/mock/order 三种传输模式）"]

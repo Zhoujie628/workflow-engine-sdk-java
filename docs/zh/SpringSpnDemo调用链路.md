@@ -39,7 +39,7 @@ graph TD
 
 ```mermaid
 graph TD
-    A["SpringWorkbenchExecutor.execute(ctx, emitter)<br/>// SpringWorkbenchExecutor.java:80"]
+    A["SpringWorkbenchExecutor.execute(ctx, emitter)<br/>// SpringWorkbenchExecutor.java:90"]
     A --> B["extractText(ctx.getMessage())<br/>// 提取任务文本"]
     A --> C["ClientRuntimeFactory.create()<br/>// ★ 关键分叉点"]
     C --> D["mode=DIRECT → return null<br/>// 用默认 A2A HTTP 直连"]
@@ -148,24 +148,24 @@ graph TD
 
 | 类名 | 文件路径 | 职责 |
 |------|----------|------|
-| SpringSpnDemo | samples/.../spring/SpringSpnDemo.java | Demo 入口，启动各组件 |
-| SpringWorkbenchApplication | samples/.../spring/SpringWorkbenchApplication.java | Spring Boot 启动类 |
-| SpringWorkbenchExecutor | samples/.../spring/SpringWorkbenchExecutor.java | Workbench Agent 执行器 |
-| ClientRuntimeFactory | samples/.../spring/ClientRuntimeFactory.java | 运行时工厂（DIRECT/MOCK/ORDER） |
-| EastcomOrderSimulatorConfiguration | samples/.../spring/EastcomOrderSimulatorConfiguration.java | 模拟器 Spring 配置 |
-| WorkbenchOrchestrator | samples/.../agents/WorkbenchOrchestrator.java | 编排流水线 |
-| ExtensionPrePositioner | samples/.../agents/ExtensionPrePositioner.java | 扩展预置（Auth/Notif） |
-| WorkbenchControlPoint | samples/.../agents/WorkbenchControlPoint.java | DAG 步骤分发 |
-| NegotiationStrategy | samples/.../agents/NegotiationStrategy.java | 协商策略 |
-| OrderGatewayClientRuntime | samples/.../OrderGatewayClientRuntime.java | 指令平台客户端 |
-| MockGatewayClientRuntime | samples/.../MockGatewayClientRuntime.java | Mock 网关客户端 |
-| StreamingOrderHttpSessionClient | samples/.../StreamingOrderHttpSessionClient.java | RSocket 流式会话 |
-| MockOrderHttpSessionClient | samples/.../MockOrderHttpSessionClient.java | Mock HTTP 会话 |
-| GatewayA2AResponseParser | samples/.../GatewayA2AResponseParser.java | SSE/protobuf 事件解析 |
-| AgentGatewayRoute | samples/.../AgentGatewayRoute.java | 路由模型 |
-| ConfiguredAgentGatewayRouteResolver | samples/.../ConfiguredAgentGatewayRouteResolver.java | 配置化路由解析 |
-| MockGatewayServer | samples/.../server/MockGatewayServer.java | Mock 网关 HTTP 反代 |
-| EastcomOrderSimulatorServer | samples/.../server/EastcomOrderSimulatorServer.java | RSocket 模拟器 |
+| SpringSpnDemo | samples/.../demo/SpringSpnDemo.java | Demo 入口，启动各组件 |
+| SpringWorkbenchApplication | samples/.../SpringWorkbenchApplication.java | Spring Boot 启动类 |
+| SpringWorkbenchExecutor | samples/.../workbench/SpringWorkbenchExecutor.java | Workbench Agent 执行器 |
+| ClientRuntimeFactory | samples/.../gateway/ClientRuntimeFactory.java | 运行时工厂（DIRECT/MOCK/ORDER） |
+| EastcomOrderSimulatorConfiguration | samples/.../gateway/EastcomOrderSimulatorConfiguration.java | 模拟器 Spring 配置 |
+| WorkbenchOrchestrator | samples/.../workbench/WorkbenchOrchestrator.java | 编排流水线 |
+| ExtensionPrePositioner | samples/.../extension/ExtensionPrePositioner.java | 扩展预置（Auth/Notif） |
+| WorkbenchControlPoint | samples/.../workbench/WorkbenchControlPoint.java | DAG 步骤分发 |
+| NegotiationStrategy | samples/.../negotiation/NegotiationStrategy.java | 协商策略 |
+| OrderGatewayClientRuntime | samples/.../gateway/OrderGatewayClientRuntime.java | 指令平台客户端 |
+| MockGatewayClientRuntime | samples/.../gateway/MockGatewayClientRuntime.java | Mock 网关客户端 |
+| StreamingOrderHttpSessionClient | samples/.../gateway/StreamingOrderHttpSessionClient.java | RSocket 流式会话 |
+| MockOrderHttpSessionClient | samples/.../gateway/MockOrderHttpSessionClient.java | Mock HTTP 会话 |
+| GatewayA2AResponseParser | samples/.../gateway/GatewayA2AResponseParser.java | SSE/protobuf 事件解析 |
+| AgentGatewayRoute | samples/.../gateway/AgentGatewayRoute.java | 路由模型 |
+| ConfiguredAgentGatewayRouteResolver | samples/.../gateway/ConfiguredAgentGatewayRouteResolver.java | 配置化路由解析 |
+| MockGatewayServer | samples/.../gateway/MockGatewayServer.java | Mock 网关 HTTP 反代 |
+| EastcomOrderSimulatorServer | samples/.../gateway/EastcomOrderSimulatorServer.java | RSocket 模拟器 |
 | JdkHttpA2AServer | samples/.../server/JdkHttpA2AServer.java | OMC Agent HTTPS 服务器 |
 | A2ATransport | workflow-engine/.../client/A2ATransport.java | A2A 传输层 |
 | WorkflowExecutor | workflow-engine/.../core/WorkflowExecutor.java | DAG 执行引擎 |

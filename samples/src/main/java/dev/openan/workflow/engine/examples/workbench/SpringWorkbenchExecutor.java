@@ -17,14 +17,13 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples.agents;
+package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
-import dev.openan.workflow.engine.examples.workbench.WorkbenchOrchestrator;
 
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
