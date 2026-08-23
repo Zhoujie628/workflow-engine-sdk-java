@@ -41,7 +41,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import dev.openan.workflow.engine.examples.agents.TransportWorkbenchAgentExecutor;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
 /**
  * Workflow orchestration for the SPN cross-city diagnosis.
@@ -55,8 +54,8 @@ import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
  *   <li>{@link NegotiationStrategy} -- negotiation clarification (injected into the control point)
  * </ul>
  *
- * <p>This class does NOT handle agent server I/O (that stays in {@link
- * TransportWorkbenchAgentExecutor}) or the details of any single A2A-T extension protocol.
+ * <p>This class does NOT handle agent server I/O (that stays in the Spring-managed
+ * {@code SpringWorkbenchExecutor}) or the details of any single A2A-T extension protocol.
  */
 public class WorkbenchOrchestrator {
 

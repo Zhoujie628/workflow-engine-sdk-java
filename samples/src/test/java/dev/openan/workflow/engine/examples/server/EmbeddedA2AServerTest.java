@@ -28,6 +28,7 @@ import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
+import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
 import org.a2aproject.sdk.spec.AgentCard;
@@ -143,8 +144,8 @@ class EmbeddedA2AServerTest {
                                                 "https://127.0.0.1:" + port,
                                                 "tenant",
                                                 "")));
-        server = new JdkHttpA2AServer("127.0.0.1", port, card, new SpnDomainAgentCity1Executor());
-        server.start();
+        server =
+                new OmcAgentLauncher().startFromCard(card, new SpnDomainAgentCity1Executor());
         Thread.sleep(500);
         A2ATransport transport =
                 new A2ATransport(

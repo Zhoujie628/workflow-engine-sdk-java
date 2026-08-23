@@ -271,7 +271,7 @@ Current: Demo sends Task-T to Workbench Agent (A2A server) -> Workbench Agent re
 workflow -> workflow sends Task-T to SPN agents.
 
 The Workbench correctly plays both server (upper layer) and client (SPN agents) roles. But the
-TransportWorkbenchAgentExecutor mixes "receive task"
+workbench executor mixes "receive task"
 and "run workflow" in one execute () call, making the flow hard to follow.
 
 Simplification: Keep the dual role but make it cleaner:
@@ -313,7 +313,7 @@ Current:
 AgentExecutor (SDK interface)
 -> BaseAgentExecutor (extractText, buildStatusMessage)
 -> NegotiationBaseAgentExecutor (negotiation, pre-positioning, business)
--> SpnDomainAgentCity1Executor -> SpnDomainAgentCity2Executor -> TransportWorkbenchAgentExecutor
+-> SpnDomainAgentCity1Executor -> SpnDomainAgentCity2Executor -> (workbench executor)
 
 Three levels of inheritance makes it hard to trace the flow.
 

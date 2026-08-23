@@ -21,7 +21,7 @@ import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
 import dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint;
-import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
+import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.model.ExecutionResult;
 import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.StepType;
@@ -35,7 +35,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,7 +54,7 @@ class SpnCrossCityE2ETest {
     private static final ObjectMapper mapper =
             new ObjectMapper().registerModule(new AgentCardJacksonModule());
 
-    private final List<JdkHttpA2AServer> servers = new ArrayList<>();
+    private final OmcAgentLauncher omc = new OmcAgentLauncher();
     private DefaultWorkflowEngineClient client;
     private ExtensionSender sender;
     private int port1;
@@ -112,22 +111,8 @@ class SpnCrossCityE2ETest {
         port2 = port1 + 1;
         AgentCard c1 = cardFor("SPN Domain Agent City1", port1);
         AgentCard c2 = cardFor("SPN Domain Agent City2", port2);
-        JdkHttpA2AServer s1 =
-                new JdkHttpA2AServer(
-                        "127.0.0.1",
-                        port1,
-                        mapper.convertValue(c1, Map.class),
-                        new SpnDomainAgentCity1Executor());
-        JdkHttpA2AServer s2 =
-                new JdkHttpA2AServer(
-                        "127.0.0.1",
-                        port2,
-                        mapper.convertValue(c2, Map.class),
-                        new SpnDomainAgentCity2Executor());
-        s1.start();
-        s2.start();
-        servers.add(s1);
-        servers.add(s2);
+        omc.startFromCard(mapper.convertValue(c1, Map.class), new SpnDomainAgentCity1Executor());
+        omc.startFromCard(mapper.convertValue(c2, Map.class), new SpnDomainAgentCity2Executor());
         Thread.sleep(600);
         A2ATransport transport =
                 new A2ATransport(
@@ -141,13 +126,7 @@ class SpnCrossCityE2ETest {
     @AfterEach
     void tearDown() {
         if (client != null) client.close();
-        servers.forEach(
-                s -> {
-                    try {
-                        s.close();
-                    } catch (Exception ignored) {
-                    }
-                });
+        omc.close();
     }
 
     private Workflow crossCityWorkflow() {
