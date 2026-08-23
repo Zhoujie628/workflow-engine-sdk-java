@@ -16,3 +16,9 @@ logs/
 
 
 .flattened-pom.xml
+
+# vendor/customer-specific reference documents (dev-only, not tracked)
+*.docx
+东信联机指令平台接口说明*.md
+传输工作台与SPN*.md
+A2A-T协议验证用例抽取.md
