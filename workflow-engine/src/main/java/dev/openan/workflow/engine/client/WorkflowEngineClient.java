@@ -90,7 +90,27 @@ public interface WorkflowEngineClient {
             Map<String, Object> data,
             Map<String, Object> schema,
             net.openan.a2at.sdk.core.model.TemplateUri templateUri) {
-        Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+        return sendMessageFromData(agentName, message, data, schema, templateUri, null);
+    }
+
+    /**
+     * Structured-data send with additional preset metadata (e.g. the empty Negotiation-T key to
+     * activate the extension alongside the task).
+     *
+     * @param extraMetadata additional preset metadata merged into the message; engine-internal
+     *     keys (a2at.taskData/taskSchema/taskTemplate) are added on top
+     */
+    default CompletableFuture<SendMessageResult> sendMessageFromData(
+            String agentName,
+            String message,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            net.openan.a2at.sdk.core.model.TemplateUri templateUri,
+            Map<String, Object> extraMetadata) {
+        Map<String, Object> metadata =
+                extraMetadata != null
+                        ? new java.util.LinkedHashMap<>(extraMetadata)
+                        : new java.util.LinkedHashMap<>();
         metadata.put(A2ATExtension.TASK_DATA_META_KEY, data);
         metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, schema);
         if (templateUri != null) {

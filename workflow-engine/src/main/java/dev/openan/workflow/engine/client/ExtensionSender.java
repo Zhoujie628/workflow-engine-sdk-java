@@ -84,6 +84,20 @@ public interface ExtensionSender {
     }
 
     /**
+     * Structured-data Notification-T subscription: renders the service-recovery subscription
+     * prompt deterministically from typed data (no LLM), then opens the long-lived stream.
+     * Subsequent events pushed by the agent flow to {@code eventCallback}.
+     */
+    default CompletableFuture<SendMessageResult> sendNotificationFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            Consumer<Map<String, Object>> eventCallback) {
+        throw new UnsupportedOperationException("sendNotificationFromData not implemented");
+    }
+
+    /**
      * Establish a Notification-T subscription.
      *
      * <p>The returned future completes on the first acknowledgement or event. Subsequent events

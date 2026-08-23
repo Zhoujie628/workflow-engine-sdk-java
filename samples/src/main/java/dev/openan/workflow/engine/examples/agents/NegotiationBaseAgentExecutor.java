@@ -668,9 +668,13 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     }
 
     /**
-     * Parses the SDK-carried negotiation context ({@code negotiationContext} metadata key) from
-     * the incoming message metadata. Returns null when absent or malformed; the SDK validate
-     * APIs treat a null context as not-a-negotiation-message.
+     * Parses the SDK-carried negotiation context for the validate APIs.
+     *
+     * <p>Primary source: the {@code negotiationContext} metadata key — but the SDK's {@code
+     * buildMetadataContent} only embeds {@code id} there, so as a fallback the stateful {@code
+     * negotiation_context} map is synthesized (covering both the raw context shape and the
+     * receiveNegotiation-result shape wrapping it under "context"). Returns null when neither is
+     * usable; the SDK validate APIs treat a null context as not-a-negotiation-message.
      */
     protected static net.openan.a2at.sdk.core.model.NegotiationContext parseNegotiationContext(
             Map<String, Object> metadata) {
@@ -680,22 +684,43 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         Object raw =
                 metadata.get(
                         net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (!(raw instanceof Map<?, ?> contextMap)) {
-            return null;
-        }
-        try {
-            Object id = contextMap.get("id");
-            Object round = contextMap.get("round");
-            Object maxRounds = contextMap.get("maxRounds");
-            if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
-                return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                        s, r.intValue(), m.intValue());
+        if (raw instanceof Map<?, ?> contextMap) {
+            try {
+                Object id = contextMap.get("id");
+                Object round = contextMap.get("round");
+                Object maxRounds = contextMap.get("maxRounds");
+                if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
+                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                            s, r.intValue(), m.intValue());
+                }
+            } catch (IllegalArgumentException e) {
+                log.debug(
+                        "[{}] Malformed negotiationContext metadata: {}",
+                        NegotiationBaseAgentExecutor.class.getSimpleName(),
+                        e.getMessage());
             }
-        } catch (IllegalArgumentException e) {
-            log.debug(
-                    "[{}] Malformed negotiationContext metadata: {}",
-                    NegotiationBaseAgentExecutor.class.getSimpleName(),
-                    e.getMessage());
+        }
+        Object stateful = metadata.get("negotiation_context");
+        if (stateful instanceof Map<?, ?> outer) {
+            Map<?, ?> stateMap = outer;
+            Object inner = outer.get("context");
+            if (inner instanceof Map<?, ?> innerMap && innerMap.get("negotiationId") != null) {
+                stateMap = innerMap;
+            }
+            Object id = stateMap.get("negotiationId") != null
+                    ? stateMap.get("negotiationId")
+                    : stateMap.get("id");
+            Object round = stateMap.get("round");
+            if (id instanceof String s && round instanceof Number r) {
+                try {
+                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                            s,
+                            r.intValue(),
+                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+                } catch (IllegalArgumentException ignored) {
+                    // fall through
+                }
+            }
         }
         return null;
     }

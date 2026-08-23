@@ -546,6 +546,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                             mc.promptText());
             if (payload != null && !payload.isEmpty()) {
                 meta.putAll(payload);
+                // The continueNegotiation payload nests the context under the Negotiation-T NL
+                // key ({message, negotiationType, negotiationId, round, status}). Surface it as
+                // the top-level negotiation_context key too, so the receiving agent's context
+                // parser finds a full stateful map in one place.
+                for (var entry : payload.entrySet()) {
+                    if (entry.getKey().contains("Negotiation-T")
+                            && !entry.getKey().contains("DATA-NEGOTIATION-T")
+                            && entry.getValue() instanceof Map<?, ?> data) {
+                        meta.put("negotiation_context", new java.util.LinkedHashMap<>(castMap(data)));
+                        break;
+                    }
+                }
             }
         } catch (Exception ce) {
             log.debug(

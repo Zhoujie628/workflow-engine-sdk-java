@@ -147,8 +147,8 @@ public class PrePositionedExtensionHandler {
      * fields extracted from a rendered subscribe-incident prompt.
      */
     private static Map<String, Object> buildNotificationParamSchema() {
+        // Slots of the SDK's Notification-T service-recovery template (订阅条件 + 上报通知数据格式).
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("通知主题", Map.of("type", "string"));
         properties.put("订阅条件", Map.of("type", "string"));
         properties.put("上报通知数据格式", Map.of("type", "string"));
         Map<String, Object> schema = new LinkedHashMap<>();
@@ -227,7 +227,8 @@ public class PrePositionedExtensionHandler {
                             server.validateNotificationPromptAndDataFilling(
                                     payloadText,
                                     buildNotificationParamSchema(),
-                                    net.openan.a2at.sdk.core.model.StandardTemplates.SUBSCRIBE_INCIDENT);
+                                    net.openan.a2at.sdk.core.model.StandardTemplates
+                                            .SERVICE_RECOVERY);
                     log.info(
                             "[{}] Notification-T validateNotificationPromptAndDataFilling"
                                     + " passed, templateUri={}, params={}",

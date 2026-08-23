@@ -198,7 +198,7 @@ public record DefaultExtensionSender(A2ATransport transport)
                 case AUTHORIZATION_T -> a2atClient.generateAuthPromptFromDataWithSchema(
                         data, schema, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
                 case NOTIFICATION_T -> a2atClient.generateNotificationPromptFromDataWithSchema(
-                        data, schema, StandardTemplates.SUBSCRIBE_INCIDENT);
+                        data, schema, StandardTemplates.SERVICE_RECOVERY);
                 default -> null;
             };
         } catch (Exception e) {
@@ -237,25 +237,75 @@ public record DefaultExtensionSender(A2ATransport transport)
                                 value = naturalLanguageInput;
                                 metadata.put(A2ATExtension.NOTIFICATION_T.uri(), value);
                             }
-                            Consumer<ClientEvent> eventSink =
-                                    eventCallback != null
-                                            ? event ->
-                                                    forwardNotificationEvent(
-                                                            event, agentName, eventCallback)
-                                            : null;
-                            log.info(
-                                    "[ExtensionSender] sendNotification to {}: metadataValue={} chars, callback={}",
-                                    agentName,
-                                    value.length(),
-                                    eventCallback != null);
-                            return transport.sendNotificationStream(
+                            return sendNotificationMetadata(
+                                    agentCard, agentName, instruction, metadata, eventCallback, value);
+                        });
+    }
+
+    @Override
+    public CompletableFuture<SendMessageResult> sendNotificationFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            Consumer<Map<String, Object>> eventCallback) {
+        AgentCard agentCard = transport.getCard(agentName);
+        if (agentCard == null) {
+            log.error("[ExtensionSender] Agent not found: {}", agentName);
+            return CompletableFuture.failedFuture(
+                    new RuntimeException("Agent not found: " + agentName));
+        }
+        return CompletableFuture.supplyAsync(
+                        () ->
+                                generateExtensionPromptFromData(
+                                        A2ATExtension.NOTIFICATION_T, data, schema))
+                .thenCompose(
+                        mc -> {
+                            if (mc == null || mc.promptText() == null || mc.promptText().isEmpty()) {
+                                log.error(
+                                        "[ExtensionSender] Notification-T fromData rendering"
+                                                + " unavailable for {}; refusing to send raw data",
+                                        agentName);
+                                return CompletableFuture.failedFuture(
+                                        new RuntimeException(
+                                                "Notification-T fromData rendering failed"));
+                            }
+                            Map<String, Object> metadata = new HashMap<>();
+                            metadata.putAll(mc.buildMetadataContent());
+                            return sendNotificationMetadata(
                                     agentCard,
                                     agentName,
                                     instruction,
-                                    transport.getContextId(),
                                     metadata,
-                                    eventSink);
+                                    eventCallback,
+                                    mc.promptText());
                         });
+    }
+
+    /** Shared Notification-T stream-open path used by both the text and fromData tracks. */
+    private CompletableFuture<SendMessageResult> sendNotificationMetadata(
+            AgentCard agentCard,
+            String agentName,
+            String instruction,
+            Map<String, Object> metadata,
+            Consumer<Map<String, Object>> eventCallback,
+            String renderedValue) {
+        Consumer<ClientEvent> eventSink =
+                eventCallback != null
+                        ? event -> forwardNotificationEvent(event, agentName, eventCallback)
+                        : null;
+        log.info(
+                "[ExtensionSender] sendNotification to {}: metadataValue={} chars, callback={}",
+                agentName,
+                renderedValue.length(),
+                eventCallback != null);
+        return transport.sendNotificationStream(
+                agentCard,
+                agentName,
+                instruction,
+                transport.getContextId(),
+                metadata,
+                eventSink);
     }
 
     private void forwardNotificationEvent(
@@ -308,6 +358,10 @@ public record DefaultExtensionSender(A2ATransport transport)
      * SDK's own {@code A2AT_LANGUAGE} configuration, no longer from a caller-supplied language
      * string.
      *
+     * <p>Notification-T defaults to the service-recovery template (业务抢通事件订阅) — the
+     * subscription the workbench pre-positions in this scenario; pass an explicit template via
+     * the fromData variant when subscribing to something else (e.g. SUBSCRIBE_INCIDENT).
+     *
      * @return {@link MetadataContent} with prompt text and template URI, or null if SDK unavailable
      */
     MetadataContent generateExtensionPrompt(A2ATExtension extension, String naturalLanguageInput) {
@@ -322,7 +376,7 @@ public record DefaultExtensionSender(A2ATransport transport)
                 case AUTHORIZATION_T -> a2atClient.generateAuthPromptFromText(
                         naturalLanguageInput, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
                 case NOTIFICATION_T -> a2atClient.generateNotificationPromptFromText(
-                        naturalLanguageInput, StandardTemplates.SUBSCRIBE_INCIDENT);
+                        naturalLanguageInput, StandardTemplates.SERVICE_RECOVERY);
                 case NEGOTIATION_T -> null; // Negotiation uses a dedicated flow in NegotiationTHandler
             };
         } catch (Exception e) {
