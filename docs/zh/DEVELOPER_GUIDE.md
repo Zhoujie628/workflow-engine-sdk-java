@@ -247,6 +247,10 @@ A2AT_CRED_KEY=<32字节hex>
 
 `a2atEnvPath` 为 null 时，Task-T 提示词生成跳过。
 
+**测试中禁用 LLM 层**：设置系统属性 `a2at.llm.disabled=true`，示例 agent 将完全跳过
+A2ATClient/A2ATServer 初始化 — 协商降级为默认文本，不发起任何 LLM 调用。示例测试套件
+用它在无外部依赖环境下运行。
+
 ## 10. 集成模式
 
 ### SSE Server（Spring WebFlux）

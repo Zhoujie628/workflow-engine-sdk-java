@@ -11,6 +11,8 @@ The engine handles all protocol mechanics: A2A message transport, SSE streaming,
 ## Features
 
 - **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (auto negotiation loop), Authorization-T (pre-positioned whitelist), Notification-T (long-lived SSE subscription)
+- **Negotiation Content Layer**: SDK-template rendering for propose / accept / reject / abort messages (typed-data and free-text variants), validate-and-fill param extraction across all three negotiation types (information / target / feasibility), round-exhaustion abort flow
+- **Template Queries**: runtime enumeration of all A2A-T prompt templates (`getPrompts` / `getNegotiationPrompts` / `getPrompt`)
 - **DAG Workflow Execution**: Parallel dispatch, self-loop steps, conditional routing
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
