@@ -19,6 +19,8 @@
 
 package dev.openan.workflow.engine.client;
 
+import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
+
 /**
  * A2A-T extension types supported by the workflow execution engine.
  *
@@ -43,8 +45,7 @@ public enum A2ATExtension {
     TASK_T("https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1"),
 
     /** Negotiation text exchange. Handled automatically via auto-loop. */
-    NEGOTIATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T"),
+    NEGOTIATION_T(ExtensionUriConstants.NEGOTIATION_T_EXTENSION_URI),
 
     /** Authorization whitelist. Pre-positioned before workflow starts. */
     AUTHORIZATION_T(
@@ -53,6 +54,24 @@ public enum A2ATExtension {
     /** Result notification subscription. Pre-positioned before workflow starts. */
     NOTIFICATION_T(
             "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1");
+
+    /**
+     * Internal metadata key under which {@code NegotiationTHandler} stores the SDK receive
+     * payload (needResponse/message/context). Engine-internal, not an A2A-T protocol key.
+     */
+    public static final String NEGOTIATION_CONTEXT_META_KEY = "negotiation_context";
+
+    /**
+     * Internal metadata key under which {@code NegotiationTHandler} stores the extracted
+     * negotiation message text. Engine-internal, not an A2A-T protocol key.
+     */
+    public static final String NEGOTIATION_MESSAGE_META_KEY = "negotiation_message";
+
+    /**
+     * Internal metadata key under which {@code NegotiationTHandler} stores the parameters
+     * extracted by the validate-and-fill pipeline. Engine-internal, not an A2A-T protocol key.
+     */
+    public static final String NEGOTIATION_PARAMS_META_KEY = "negotiation_params";
 
     private final String uri;
 

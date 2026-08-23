@@ -80,4 +80,17 @@ public interface ExtensionHandler {
             A2ATClient a2atClient,
             ControlPoint controlPoint,
             EventCallback eventCallback);
+
+    /**
+     * Parameter JSON Schema for the SDK validate-and-fill pipeline on received negotiation
+     * messages: the business parameters this handler wants extracted. Declares the shape in
+     * terms of the caller's domain, so the engine core never hardcodes business fields.
+     *
+     * <p>Default: an empty object schema (context params id/round/maxRounds only).
+     *
+     * @return parameter JSON schema map, never null
+     */
+    default Map<String, Object> negotiationParamSchema() {
+        return Map.of("type", "object");
+    }
 }

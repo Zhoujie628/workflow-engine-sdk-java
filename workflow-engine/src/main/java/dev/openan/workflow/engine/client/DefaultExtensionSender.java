@@ -22,8 +22,9 @@ package dev.openan.workflow.engine.client;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
 import net.openan.a2at.sdk.client.A2ATClient;
-import net.openan.a2at.sdk.client.model.PromptGenerationFailure;
-import net.openan.a2at.sdk.client.model.PromptGenerationResult;
+import net.openan.a2at.sdk.core.model.MetadataContent;
+import net.openan.a2at.sdk.core.model.StandardTemplates;
+import net.openan.a2at.sdk.core.model.TemplateUri;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -70,10 +71,15 @@ public record DefaultExtensionSender(A2ATransport transport)
         return CompletableFuture.supplyAsync(
                         () -> generateExtensionPrompt(extension, naturalLanguageInput))
                 .thenCompose(
-                        metadataValue -> {
-                            String value = metadataValue;
-                            if (value == null || value.isEmpty()) {
+                        mc -> {
+                            String value;
+                            Map<String, Object> metadata = new HashMap<>();
+                            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
+                                value = mc.promptText();
+                                metadata.putAll(mc.buildMetadataContent());
+                            } else {
                                 value = naturalLanguageInput;
+                                metadata.put(extension.uri(), value);
                                 log.info(
                                         "[ExtensionSender] SDK prompt generation unavailable for {} ({}), using input as metadata",
                                         agentName,
@@ -84,7 +90,6 @@ public record DefaultExtensionSender(A2ATransport transport)
                                     agentName,
                                     extension.displayName(),
                                     value.length());
-                            Map<String, Object> metadata = Map.of(extension.uri(), value);
                             if (extension == A2ATExtension.NOTIFICATION_T) {
                                 return transport.sendNotificationStream(
                                         agentCard,
@@ -135,13 +140,16 @@ public record DefaultExtensionSender(A2ATransport transport)
                                 generateExtensionPrompt(
                                         A2ATExtension.NOTIFICATION_T, naturalLanguageInput))
                 .thenCompose(
-                        metadataValue -> {
-                            String value = metadataValue;
-                            if (value == null || value.isEmpty()) {
+                        mc -> {
+                            String value;
+                            Map<String, Object> metadata = new HashMap<>();
+                            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
+                                value = mc.promptText();
+                                metadata.putAll(mc.buildMetadataContent());
+                            } else {
                                 value = naturalLanguageInput;
+                                metadata.put(A2ATExtension.NOTIFICATION_T.uri(), value);
                             }
-                            Map<String, Object> metadata =
-                                    Map.of(A2ATExtension.NOTIFICATION_T.uri(), value);
                             Consumer<ClientEvent> eventSink =
                                     eventCallback != null
                                             ? event ->
@@ -206,63 +214,37 @@ public record DefaultExtensionSender(A2ATransport transport)
     // Extension prompt generation dispatch
     // ------------------------------------------------------------------
 
-    String generateExtensionPrompt(A2ATExtension extension, String naturalLanguageInput) {
-        if (extension == A2ATExtension.TASK_T) {
-            return generateTaskPromptText(naturalLanguageInput);
-        }
-        if (extension == A2ATExtension.NEGOTIATION_T) {
-            return generateNegotiationPrompt(naturalLanguageInput);
-        }
-        if (extension == A2ATExtension.AUTHORIZATION_T) {
-            return generateAuthorizationPrompt(naturalLanguageInput);
-        }
-        if (extension == A2ATExtension.NOTIFICATION_T) {
-            return generateNotificationPrompt(naturalLanguageInput);
-        }
-        return null;
-    }
-
-    private String generateTaskPromptText(String naturalLanguageInput) {
+    /**
+     * Generates a structured extension prompt via the A2A-T SDK.
+     *
+     * <p>The template is addressed by a {@link TemplateUri}; the message language comes from the
+     * SDK's own {@code A2AT_LANGUAGE} configuration, no longer from a caller-supplied language
+     * string.
+     *
+     * @return {@link MetadataContent} with prompt text and template URI, or null if SDK unavailable
+     */
+    MetadataContent generateExtensionPrompt(A2ATExtension extension, String naturalLanguageInput) {
         A2ATClient a2atClient = transport.getA2atClient();
         if (a2atClient == null) {
             return null;
         }
         try {
-            PromptGenerationResult result = a2atClient.generateTaskPrompt(naturalLanguageInput);
-            if (result.success()) {
-                return result.promptText();
-            }
-            PromptGenerationFailure f = result.failure();
-            log.warn(
-                    "[ExtensionSender] SDK Task-T prompt generation failed: code={}, stage={}, message={}",
-                    f != null ? f.code() : "unknown",
-                    f != null ? f.stage() : "unknown",
-                    f != null ? f.message() : "unknown");
+            return switch (extension) {
+                case TASK_T -> a2atClient.generateTaskPromptFromText(
+                        naturalLanguageInput, StandardTemplates.PRIVATE_LINE_COMPLAINT);
+                case AUTHORIZATION_T -> a2atClient.generateAuthPromptFromText(
+                        naturalLanguageInput, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+                case NOTIFICATION_T -> a2atClient.generateNotificationPromptFromText(
+                        naturalLanguageInput, StandardTemplates.SUBSCRIBE_INCIDENT);
+                case NEGOTIATION_T -> null; // Negotiation uses a dedicated flow in NegotiationTHandler
+            };
         } catch (Exception e) {
-            log.warn("[ExtensionSender] SDK Task-T prompt generation error: {}", e.getMessage());
-        }
-        return null;
-    }
-    // TODO
-    private String generateNegotiationPrompt(String naturalLanguageInput) {
-        if (transport.getA2atClient() == null) {
+            log.warn(
+                    "[ExtensionSender] SDK {} prompt generation error: {}",
+                    extension.displayName(),
+                    e.getMessage());
             return null;
         }
-        return null;
-    }
-    // TODO
-    private String generateAuthorizationPrompt(String naturalLanguageInput) {
-        if (transport.getA2atClient() == null) {
-            return null;
-        }
-        return null;
-    }
-    // TODO
-    private String generateNotificationPrompt(String naturalLanguageInput) {
-        if (transport.getA2atClient() == null) {
-            return null;
-        }
-        return null;
     }
 
     @Override

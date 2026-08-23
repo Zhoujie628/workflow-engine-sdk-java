@@ -22,6 +22,11 @@ package dev.openan.workflow.engine.client;
 import io.grpc.ManagedChannelBuilder;
 
 import org.a2aproject.sdk.client.Client;
+import dev.openan.workflow.engine.model.SendMessageResult;
+import org.a2aproject.sdk.spec.TaskQueryParams;
+import org.a2aproject.sdk.spec.TaskIdParams;
+import org.a2aproject.sdk.spec.Task;
+import org.a2aproject.sdk.spec.CancelTaskParams;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.MessageEvent;
 import org.a2aproject.sdk.client.TaskEvent;
@@ -463,6 +468,66 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
             Thread.currentThread().interrupt();
             throw new RuntimeException("A2A message:send interrupted for " + agentName, e);
         }
+    }
+
+    @Override
+    public Task getTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+        if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        try {
+            return client.getTask(new TaskQueryParams(taskId), callContext);
+        } catch (A2AClientException e) {
+            throw new RuntimeException("A2A getTask failed for " + agentCard.name() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public Task cancelTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+        if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        try {
+            return client.cancelTask(CancelTaskParams.builder().id(taskId).build(), callContext);
+        } catch (A2AClientException e) {
+            throw new RuntimeException("A2A cancelTask failed for " + agentCard.name() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<SendMessageResult> subscribeToTask(
+            AgentCard agentCard,
+            String taskId,
+            ClientCallContext callContext,
+            java.util.function.Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("A2A client runtime is closed"));
+        }
+        java.util.concurrent.CompletableFuture<SendMessageResult> future = new java.util.concurrent.CompletableFuture<>();
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        List<ClientEvent> events = Collections.synchronizedList(new ArrayList<>());
+        try {
+            client.subscribeToTask(
+                    new TaskIdParams(taskId),
+                    List.of((event, card) -> {
+                        events.add(event);
+                        if (eventSink != null) {
+                            try { eventSink.accept(event); } catch (Exception ignored) {}
+                        }
+                        if (!future.isDone()) {
+                            String state = A2ATransport.extractResponseTaskState(events);
+                            String text = A2ATransport.extractResponseText(events);
+                            future.complete(SendMessageResult.builder()
+                                    .text(text)
+                                    .taskState(state)
+                                    .build());
+                        }
+                    }),
+                    null,
+                    callContext);
+        } catch (A2AClientException e) {
+            return java.util.concurrent.CompletableFuture.failedFuture(
+                    new RuntimeException("A2A subscribeToTask failed for " + agentCard.name() + ": " + e.getMessage(), e));
+        }
+        return future;
     }
 
     @Override

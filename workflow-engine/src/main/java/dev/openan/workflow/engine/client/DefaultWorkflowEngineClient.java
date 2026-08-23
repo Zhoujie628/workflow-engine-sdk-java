@@ -25,6 +25,10 @@ import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
 import net.openan.a2at.sdk.client.A2ATClient;
+import net.openan.a2at.sdk.core.model.MetadataContent;
+import net.openan.a2at.sdk.core.model.PromptTemplate;
+import net.openan.a2at.sdk.core.model.StandardTemplates;
+import net.openan.a2at.sdk.core.model.TemplateUri;
 import net.openan.a2at.sdk.negotiation.runtime.helper.NegotiationPayloadMapper;
 import net.openan.a2at.sdk.negotiation.types.model.NegotiationContext;
 import net.openan.a2at.sdk.negotiation.types.model.NegotiationStatus;
@@ -41,6 +45,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -67,9 +72,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     public DefaultWorkflowEngineClient(
             A2ATransport transport,
             int maxNegotiationRounds,
-            List<ExtensionHandler> customHandlers) {
+            List<ExtensionHandler> customHandlers,
+            Map<String, Object> negotiationParamSchema) {
         this.transport = transport;
-        this.extensionRegistry = new ExtensionRegistry();
+        this.extensionRegistry = new ExtensionRegistry(negotiationParamSchema);
         if (customHandlers != null) {
             for (ExtensionHandler h : customHandlers) {
                 extensionRegistry.register(h);
@@ -82,16 +88,37 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 maxNegotiationRounds);
     }
 
+    public DefaultWorkflowEngineClient(
+            A2ATransport transport,
+            int maxNegotiationRounds,
+            List<ExtensionHandler> customHandlers) {
+        this(transport, maxNegotiationRounds, customHandlers, null);
+    }
+
     public DefaultWorkflowEngineClient(A2ATransport transport) {
-        this(transport, 3, null);
+        this(transport, 3, null, null);
     }
 
     // ------------------------------------------------------------------
     // Wiring
     // ------------------------------------------------------------------
 
+    /**
+     * Whether the agent's reply opens a negotiation: metadata carries the Negotiation-T key AND
+     * the task is not already completed with a business result. A completed reply carrying both
+     * keys (e.g. a follow-up round whose artifact includes the negotiation Accept) ends the
+     * loop — the business already ran.
+     */
     private static boolean isNegotiationNeeded(SendMessageResult result) {
-        return result.getTaskState() != null && result.getTaskState().contains("INPUT_REQUIRED");
+        Map<String, Object> meta = result.getMetadata();
+        if (meta == null || !meta.containsKey(A2ATExtension.NEGOTIATION_T.uri())) {
+            return false;
+        }
+        boolean completed =
+                result.getTaskState() != null
+                        && result.getTaskState().contains("TASK_STATE_COMPLETED");
+        boolean hasBusinessResult = meta.containsKey(A2ATExtension.TASK_T.uri());
+        return !(completed && hasBusinessResult);
     }
 
     @Override
@@ -102,6 +129,28 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     @Override
     public void setEventCallback(EventCallback callback) {
         this.eventCallback = callback != null ? callback : new EventCallback();
+    }
+
+    // ------------------------------------------------------------------
+    // A2A-T template queries
+    // ------------------------------------------------------------------
+
+    @Override
+    public List<PromptTemplate> getPrompts() {
+        A2ATContentFacade content = transport.getContentFacade();
+        return content != null ? content.getPrompts() : List.of();
+    }
+
+    @Override
+    public List<PromptTemplate> getNegotiationPrompts() {
+        A2ATContentFacade content = transport.getContentFacade();
+        return content != null ? content.getNegotiationPrompts() : List.of();
+    }
+
+    @Override
+    public Optional<PromptTemplate> getPrompt(TemplateUri templateUri) {
+        A2ATContentFacade content = transport.getContentFacade();
+        return content != null ? content.getPrompt(templateUri) : Optional.empty();
     }
 
     // ------------------------------------------------------------------
@@ -168,132 +217,215 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             String contextId,
             SendMessageResult result,
             int round) {
-        if (!isNegotiationNeeded(result) || round > maxNegotiationRounds) {
-            emit(
-                    EventType.AGENT_RESPONSE,
-                    Map.of("agent", agentName, "response", result.getText(), "metadata", result.getMetadata() != null ? result.getMetadata() : Map.of()));
+        if (!isNegotiationNeeded(result)) {
+            emitAgentResponse(agentName, result);
             return CompletableFuture.completedFuture(result);
+        }
+        if (round > maxNegotiationRounds) {
+            return abortNegotiation(agentCard, agentName, contextId, result, round);
         }
         Map<String, Object> negMeta =
                 result.getMetadata() != null ? result.getMetadata() : new HashMap<>();
-        String negText = negMeta.getOrDefault("negotiation_message",
-                negMeta.getOrDefault("negotiationConcern", "")).toString();
+        Object negVal = negMeta.get(A2ATExtension.NEGOTIATION_T.uri());
+        String negText = negVal instanceof String s ? s : "";
         log.info("[Negotiation] Round {} for '{}': {}", round, agentName, negText);
         emit(
                 EventType.NEGOTIATION_REQUEST,
                 Map.of("agent", agentName, "round", round, "concern", negText));
-        CompletableFuture<String> clarFuture;
-        if (controlPoint != null) {
-            clarFuture = controlPoint.onNegotiation(agentName, negText, negMeta);
-        } else {
-            clarFuture =
-                    CompletableFuture.completedFuture(
-                            "Please proceed with the original task using available information.");
-        }
+        CompletableFuture<String> clarFuture =
+                controlPoint != null
+                        ? controlPoint.onNegotiation(agentName, negText, negMeta)
+                        : CompletableFuture.completedFuture(
+                                "Please proceed with the original task using available information.");
         return clarFuture.thenCompose(
-                clarification -> {
-                    if (clarification == null || clarification.isEmpty()) {
-                        emit(
-                                EventType.NEGOTIATION_FAILED,
-                                Map.of(
-                                        "agent",
+                clarification ->
+                        clarification == null || clarification.isEmpty()
+                                ? failWithoutClarification(agentName, result, round)
+                                : continueNegotiationRound(
+                                        agentCard,
                                         agentName,
-                                        "round",
-                                        round,
-                                        "reason",
-                                        "no clarification"));
-                        emit(
-                                EventType.AGENT_RESPONSE,
-                                Map.of("agent", agentName, "response", result.getText(), "metadata", result.getMetadata() != null ? result.getMetadata() : Map.of()));
-                        return CompletableFuture.completedFuture(result);
-                    }
-                    log.info(
-                            "[Negotiation] Clarification for '{}' round {}: {}",
-                            agentName,
-                            round,
-                            clarification);
-                    emit(
-                            EventType.NEGOTIATION_RESOLVED,
-                            Map.of(
-                                    "agent",
-                                    agentName,
-                                    "round",
-                                    round,
-                                    "clarification",
-                                    clarification));
-                    String followUp =
-                            "[NEGOTIATION_RESOLUTION]\nThe engine has reviewed your negotiation request and provides the following clarification:\n\n"
-                                    + clarification
-                                    + "\n\n---\nOriginal Task:\n"
-                                    + originalMessage
-                                    + "\n\nPlease re-execute the task based on the clarification above.";
-                    String taskId = result.getTask() != null ? result.getTask().id() : null;
-                    return buildNegotiationFollowUpMeta(agentName, negMeta, clarification)
-                            .thenCompose(
-                                    followUpMeta ->
-                                            runBeforeSendHandlers(agentCard, followUp, followUpMeta)
-                                                    .thenCompose(
-                                                            meta -> {
-                                                                String ctx =
-                                                                        contextId != null
-                                                                                ? contextId
-                                                                                : transport.getContextId();
-                                                                return transport
-                                                                        .send(
-                                                                                agentCard,
-                                                                                agentName,
-                                                                                followUp,
-                                                                                ctx,
-                                                                                taskId,
-                                                                                meta,
-                                                                                event ->
-                                                                                        forwardIntermediateEvent(
-                                                                                                event, agentName))
-                                                                        .thenCompose(
-                                                                                r -> runAfterReceiveHandlers(agentCard, r))
-                                                                        .thenCompose(
-                                                                                r ->
-                                                                                        autoNegotiate(
-                                                                                                agentCard,
-                                                                                                agentName,
-                                                                                                originalMessage,
-                                                                                                contextId,
-                                                                                                r,
-                                                                                                round + 1));
-                                                            }));
-                });
+                                        originalMessage,
+                                        contextId,
+                                        result,
+                                        negMeta,
+                                        clarification,
+                                        round));
     }
 
+    /** Emits the terminal AGENT_RESPONSE event for an agent's reply. */
+    private void emitAgentResponse(String agentName, SendMessageResult result) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("agent", agentName);
+        data.put("response", result.getText() != null ? result.getText() : "");
+        data.put("metadata", result.getMetadata() != null ? result.getMetadata() : Map.of());
+        emit(EventType.AGENT_RESPONSE, data);
+    }
+
+    /**
+     * Terminal path when the control point produces no clarification: negotiation failed, the
+     * agent's reply stands as the final response.
+     */
+    private CompletableFuture<SendMessageResult> failWithoutClarification(
+            String agentName, SendMessageResult result, int round) {
+        emit(
+                EventType.NEGOTIATION_FAILED,
+                Map.of("agent", agentName, "round", round, "reason", "no clarification"));
+        emitAgentResponse(agentName, result);
+        return CompletableFuture.completedFuture(result);
+    }
+
+    /**
+     * Round-budget-exhaustion path: terminates via the SDK abort flow. The abort message is sent
+     * to the agent (best effort \u2014 send failures are logged, not propagated, since the negotiation
+     * is over either way) and the last agent reply stands as the final response. The loop does
+     * NOT continue on the abort reply.
+     */
+    private CompletableFuture<SendMessageResult> abortNegotiation(
+            AgentCard agentCard,
+            String agentName,
+            String contextId,
+            SendMessageResult result,
+            int round) {
+        log.warn(
+                "[Negotiation] Round budget exhausted for '{}' ({} rounds); aborting",
+                agentName,
+                maxNegotiationRounds);
+        emit(
+                EventType.NEGOTIATION_FAILED,
+                Map.of("agent", agentName, "round", round, "reason", "round budget exhausted"));
+        return buildNegotiationFollowUpMeta(
+                        agentName,
+                        result.getMetadata() != null ? result.getMetadata() : new HashMap<>(),
+                        "abort: negotiation round budget exhausted (" + maxNegotiationRounds + ")")
+                .thenCompose(
+                        abortMeta -> {
+                            Object rendered = abortMeta.get(A2ATExtension.NEGOTIATION_T.uri());
+                            String followUp =
+                                    rendered instanceof String s && !s.isEmpty()
+                                            ? s
+                                            : "\u534f\u5546\u5df2\u7ec8\u6b62";
+                            return runBeforeSendHandlers(agentCard, followUp, abortMeta)
+                                    .thenCompose(
+                                            meta ->
+                                                    transport.send(
+                                                            agentCard,
+                                                            agentName,
+                                                            followUp,
+                                                            contextId,
+                                                            meta,
+                                                            event ->
+                                                                    forwardIntermediateEvent(
+                                                                            event, agentName)));
+                        })
+                .handle(
+                        (ignored, error) -> {
+                            if (error != null) {
+                                log.warn(
+                                        "[Negotiation] Abort message delivery to '{}' failed: {}",
+                                        agentName,
+                                        error.getMessage());
+                            }
+                            emitAgentResponse(agentName, result);
+                            return result;
+                        });
+    }
+
+    /**
+     * One negotiation round with a clarification: renders the follow-up metadata via the SDK
+     * content layer, sends it, and recurses into the next round.
+     */
+    private CompletableFuture<SendMessageResult> continueNegotiationRound(
+            AgentCard agentCard,
+            String agentName,
+            String originalMessage,
+            String contextId,
+            SendMessageResult result,
+            Map<String, Object> negMeta,
+            String clarification,
+            int round) {
+        log.info(
+                "[Negotiation] Clarification for '{}' round {}: {}",
+                agentName,
+                round,
+                clarification);
+        emit(
+                EventType.NEGOTIATION_RESOLVED,
+                Map.of("agent", agentName, "round", round, "clarification", clarification));
+        String taskId = result.getTask() != null ? result.getTask().id() : null;
+        return buildNegotiationFollowUpMeta(agentName, negMeta, clarification)
+                .thenCompose(
+                        followUpMeta -> {
+                            // The message body is the rendered negotiation text itself: the SDK
+                            // template output when generation succeeded, the raw clarification on
+                            // fallback. The same text also travels in metadata under the
+                            // Negotiation-T key; agents read either.
+                            Object rendered =
+                                    followUpMeta.get(A2ATExtension.NEGOTIATION_T.uri());
+                            String followUp =
+                                    rendered instanceof String s && !s.isEmpty()
+                                            ? s
+                                            : clarification;
+                            return runBeforeSendHandlers(agentCard, followUp, followUpMeta)
+                                    .thenCompose(
+                                            meta -> {
+                                                String ctx =
+                                                        contextId != null
+                                                                ? contextId
+                                                                : transport.getContextId();
+                                                return transport
+                                                        .send(
+                                                                agentCard,
+                                                                agentName,
+                                                                followUp,
+                                                                ctx,
+                                                                taskId,
+                                                                meta,
+                                                                event ->
+                                                                        forwardIntermediateEvent(
+                                                                                event, agentName))
+                                                        .thenCompose(
+                                                                r ->
+                                                                        runAfterReceiveHandlers(
+                                                                                agentCard, r))
+                                                        .thenCompose(
+                                                                r ->
+                                                                        autoNegotiate(
+                                                                                agentCard,
+                                                                                agentName,
+                                                                                originalMessage,
+                                                                                contextId,
+                                                                                r,
+                                                                                round + 1));
+                                            });
+                        });
+    }
+
+    /**
+     * Builds the follow-up metadata for one negotiation round using the SDK content layer.
+     *
+     * <p>The clarification text is classified: {@code reject:...} / {@code abort:...} prefixes
+     * select the Reject or Abort terminal templates, anything else renders an Accept message via
+     * {@code generateNegotiationAcceptPromptFromText} (one LLM extraction step). When the
+     * negotiation context is available, the SDK state machine is also advanced so the follow-up
+     * payload carries the next-round context. All failures degrade to the raw-clarification
+     * fallback.
+     */
     private CompletableFuture<Map<String, Object>> buildNegotiationFollowUpMeta(
             String agentName, Map<String, Object> negMeta, String clarification) {
-        A2ATClient a2atClient = transport.getA2atClient();
-        if (a2atClient == null) {
+        A2ATContentFacade content = transport.getContentFacade();
+        if (content == null) {
             return CompletableFuture.completedFuture(buildFallbackMeta(clarification));
         }
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
-                        Object ctxObj = negMeta.get("negotiation_context");
-                        if (ctxObj instanceof Map<?, ?> rr) {
-                            Object innerCtx = rr.get("context");
-                            if (innerCtx instanceof Map<?, ?> contextMap) {
-                                @SuppressWarnings("unchecked")
-                                NegotiationContext context =
-                                        NegotiationPayloadMapper.contextFromMap(
-                                                (Map<String, Object>) contextMap);
-                                Map<String, Object> payload =
-                                        a2atClient.continueNegotiation(
-                                                context, NegotiationStatus.AGREED, clarification);
-                                log.info(
-                                        "[Negotiation] SDK continueNegotiation payload for '{}': round {} -> AGREED",
-                                        agentName,
-                                        context.round());
-                                return new HashMap<>(payload);
-                            }
+                        MetadataContent mc = renderFollowUpMessage(content, agentName, negMeta, clarification);
+                        if (mc.promptText() != null && !mc.promptText().isEmpty()) {
+                            return advanceStateMachine(content, agentName, negMeta, clarification, mc);
                         }
                     } catch (Exception e) {
                         log.warn(
-                                "[Negotiation] continueNegotiation failed for '{}': {}; using fallback",
+                                "[Negotiation] SDK content generation failed for '{}': {}; using fallback",
                                 agentName,
                                 e.getMessage());
                     }
@@ -301,11 +433,142 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 });
     }
 
+    /**
+     * Renders the follow-up message matching the clarification's decision prefix: {@code
+     * reject:} / {@code abort:} select the terminal templates, anything else renders an Accept
+     * message.
+     */
+    private MetadataContent renderFollowUpMessage(
+            A2ATContentFacade content,
+            String agentName,
+            Map<String, Object> negMeta,
+            String clarification) {
+        net.openan.a2at.sdk.core.model.NegotiationContext contentCtx =
+                extractContentContext(negMeta);
+        String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
+        if (decision.startsWith("reject:")) {
+            log.info("[Negotiation] SDK generateNegotiationRejectPrompt for '{}'", agentName);
+            return content.generateRejectFromText(
+                    clarification.substring("reject:".length()).strip(),
+                    requireContext(contentCtx, agentName),
+                    StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+        }
+        if (decision.startsWith("abort:")) {
+            log.info("[Negotiation] SDK generateNegotiationAbortPrompt for '{}'", agentName);
+            return content.generateAbortFromText(
+                    clarification.substring("abort:".length()).strip(),
+                    requireContext(contentCtx, agentName));
+        }
+        MetadataContent mc =
+                content.generateAcceptFromText(
+                        clarification,
+                        requireContext(contentCtx, agentName),
+                        StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+        log.info(
+                "[Negotiation] SDK generateNegotiationAcceptPrompt: templateUri={}",
+                mc.templateUri());
+        return mc;
+    }
+
+    /**
+     * Builds the follow-up metadata from the rendered message and, when the state-machine context
+     * is available, advances the SDK state machine so the follow-up carries the next-round (or
+     * terminal) context payload alongside the message.
+     */
+    private Map<String, Object> advanceStateMachine(
+            A2ATContentFacade content,
+            String agentName,
+            Map<String, Object> negMeta,
+            String clarification,
+            MetadataContent mc) {
+        Map<String, Object> meta = A2ATContentFacade.toMetadata(mc);
+        NegotiationContext typesCtx = extractTypesContext(negMeta);
+        if (typesCtx == null) {
+            return meta;
+        }
+        String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
+        try {
+            Map<String, Object> payload =
+                    content.continueNegotiation(
+                            typesCtx,
+                            decision.startsWith("reject:") ? NegotiationStatus.REJECTED : NegotiationStatus.AGREED,
+                            mc.promptText());
+            if (payload != null && !payload.isEmpty()) {
+                meta.putAll(payload);
+            }
+        } catch (Exception ce) {
+            log.debug(
+                    "[Negotiation] continueNegotiation unavailable for '{}': {}",
+                    agentName,
+                    ce.getMessage());
+        }
+        return meta;
+    }
+
+    /** Extracts the SDK state-machine context from the negotiation receive payload, or null. */
+    private static NegotiationContext extractTypesContext(Map<String, Object> negMeta) {
+        Object ctxObj = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
+        if (!(ctxObj instanceof Map<?, ?> rr)) {
+            return null;
+        }
+        Object innerCtx = rr.get("context");
+        if (!(innerCtx instanceof Map<?, ?> contextMap)) {
+            return null;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            NegotiationContext typesCtx =
+                    NegotiationPayloadMapper.contextFromMap((Map<String, Object>) contextMap);
+            return typesCtx;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Extracts the SDK-carried negotiation context (id/round/maxRounds) from the received
+     * metadata's {@code negotiationContext} key, or null when absent. Falls back to synthesizing
+     * one from the state-machine context payload when only that is present.
+     */
+    private static net.openan.a2at.sdk.core.model.NegotiationContext extractContentContext(
+            Map<String, Object> negMeta) {
+        Object raw =
+                negMeta.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
+        if (raw instanceof Map<?, ?> contextMap) {
+            Object id = contextMap.get("id");
+            Object round = contextMap.get("round");
+            Object maxRounds = contextMap.get("maxRounds");
+            if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
+                try {
+                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                            s, r.intValue(), m.intValue());
+                } catch (IllegalArgumentException ignored) {
+                    // fall through to the state-machine fallback
+                }
+            }
+        }
+        NegotiationContext typesCtx = extractTypesContext(negMeta);
+        if (typesCtx == null) {
+            return null;
+        }
+        return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                typesCtx.negotiationId(),
+                typesCtx.round(),
+                net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+    }
+
+    private static net.openan.a2at.sdk.core.model.NegotiationContext requireContext(
+            net.openan.a2at.sdk.core.model.NegotiationContext context, String agentName) {
+        if (context == null) {
+            throw new IllegalStateException(
+                    "No negotiation context from agent '" + agentName + "'; cannot render SDK message");
+        }
+        return context;
+    }
+
     private static Map<String, Object> buildFallbackMeta(String clarification) {
         Map<String, Object> meta = new HashMap<>();
-        meta.put(
-                A2ATExtension.NEGOTIATION_T.uri(),
-                "## Data Return Confirmation\n" + clarification + "\n");
+        meta.put(A2ATExtension.NEGOTIATION_T.uri(), clarification);
         return meta;
     }
     // ------------------------------------------------------------------
@@ -414,6 +677,36 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     // ------------------------------------------------------------------
     // Lifecycle
     // ------------------------------------------------------------------
+
+    @Override
+    public CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
+        AgentCard agentCard = transport.getCard(agentName);
+        if (agentCard == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
+        }
+        return transport.getTask(agentCard, agentName, taskId);
+    }
+
+    @Override
+    public CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
+        AgentCard agentCard = transport.getCard(agentName);
+        if (agentCard == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
+        }
+        return transport.cancelTask(agentCard, agentName, taskId);
+    }
+
+    @Override
+    public CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName, String taskId,
+            java.util.function.Consumer<java.util.Map<String, Object>> eventCallback) {
+        AgentCard agentCard = transport.getCard(agentName);
+        if (agentCard == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
+        }
+        return transport.subscribeToTask(agentCard, agentName, taskId,
+                event -> forwardIntermediateEvent(event, agentName));
+    }
 
     @Override
     public void close() {

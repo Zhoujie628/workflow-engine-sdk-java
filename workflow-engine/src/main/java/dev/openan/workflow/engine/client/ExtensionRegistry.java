@@ -49,6 +49,19 @@ class ExtensionRegistry {
         register(new NegotiationTHandler());
     }
 
+    /**
+     * Creates a registry whose built-in Negotiation-T handler validates received propose messages
+     * against the given business parameter schema. Use this instead of the no-arg constructor when
+     * the caller's domain declares concrete negotiation parameters.
+     *
+     * @param negotiationParamSchema parameter JSON schema for the validate-and-fill pipeline; null
+     *     keeps the default empty schema
+     */
+    public ExtensionRegistry(Map<String, Object> negotiationParamSchema) {
+        register(new TaskTHandler());
+        register(new NegotiationTHandler(negotiationParamSchema));
+    }
+
     public void register(ExtensionHandler handler) {
         handlers.put(handler.extensionKeyword(), handler);
     }
