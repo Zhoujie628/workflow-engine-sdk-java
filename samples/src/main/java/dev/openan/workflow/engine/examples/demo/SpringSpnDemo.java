@@ -20,32 +20,32 @@
 package dev.openan.workflow.engine.examples.demo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
-import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
-import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.examples.gateway.MockGatewayServer;
+import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
+import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
-import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
-import java.io.File;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
+
 /**
  * Demo entry point for the SPN cross-city diagnosis.
  *
@@ -59,7 +59,10 @@ import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
  * </ol>
  *
  * <p>Demonstrates heterogeneous architecture: Workbench (Spring Boot) and OMC (JDK HttpServer)
- * communicate via the unified A2A-T protocol.
+ * communicate via the unified A2A-T protocol. Transport modes ({@code --a2a.transport-mode}):
+ * {@code direct} (HTTP+JSON to OMC), {@code mock} (HTTP reverse proxy through a mock
+ * instruction center), {@code order} (Eastcom Order SDK forwarding; with the bundled
+ * protocol simulator when {@code EASTCOM_ORDER_SIMULATOR_ENABLED=true}).
  */
 public class SpringSpnDemo {
     private static final Logger log = LoggerFactory.getLogger(SpringSpnDemo.class);
@@ -69,7 +72,7 @@ public class SpringSpnDemo {
     private static final String WB_AGENT_NAME = "Transport Workbench Agent";
     private static final long STARTUP_WAIT = 3;
 
-    private final List<JdkHttpA2AServer> omcServers = new ArrayList<>();
+    private final OmcAgentLauncher omc = new OmcAgentLauncher();
     private MockGatewayServer gateway;
 
     public static void main(String[] args) throws Exception {
@@ -83,23 +86,17 @@ public class SpringSpnDemo {
         ConfigurableApplicationContext ctx = null;
         boolean success = false;
         String transportMode = resolveTransportMode(applicationArgs);
+        // The HTTP mock gateway only serves the adapter-level mock mode. The order mode
+        // talks to the real instruction platform (or the bundled protocol simulator on
+        // 26401 when EASTCOM_ORDER_SIMULATOR_ENABLED=true) and never routes via 26400.
         boolean mockMode = "mock".equalsIgnoreCase(transportMode);
-        boolean orderSimulatorMode =
-                "order".equalsIgnoreCase(transportMode)
-                        && Boolean.parseBoolean(
-                                System.getProperty(
-                                        "EASTCOM_ORDER_SIMULATOR_ENABLED",
-                                        System.getenv() != null
-                                                ? System.getenv("EASTCOM_ORDER_SIMULATOR_ENABLED")
-                                                : "false"));
-        boolean needMockGateway = mockMode || orderSimulatorMode;
         log.info(
-                "[Demo] START mode={}, gateway=http://127.0.0.1:26400, "
-                        + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]",
+                "[Demo] START mode={}, workbench=https://127.0.0.1:26337/a2a/json, "
+                        + "omcPorts=[26335,26336]",
                 transportMode);
         try {
             long stageStarted;
-            if (needMockGateway) {
+            if (mockMode) {
                 stageStarted = System.nanoTime();
                 log.info("[Demo] STAGE_START stage=start-mock-gateway");
                 gateway =
@@ -117,12 +114,15 @@ public class SpringSpnDemo {
 
             stageStarted = System.nanoTime();
             log.info("[Demo] STAGE_START stage=start-omc-agents");
-            startOmcAgents();
+            omc.startFromResource(
+                    "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
+            omc.startFromResource(
+                    "agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
             log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
             TimeUnit.SECONDS.sleep(STARTUP_WAIT);
             log.info(
                     "[Demo] STAGE_DONE stage=start-omc-agents, count={}, elapsedMs={}",
-                    omcServers.size(),
+                    omc.servers().size(),
                     elapsedMillis(stageStarted));
 
             stageStarted = System.nanoTime();
@@ -136,8 +136,8 @@ public class SpringSpnDemo {
             log.info(
                     "[Demo] STAGE_START stage=send-workbench-task, target={}, inputChars={}",
                     WB_AGENT_NAME,
-                    14);
-            log.debug("[Demo] Workbench task text={}", "创建专线业务投诉诊断任务");
+                    SpnCasePrompts.TASK_TEXT.length());
+            log.debug("[Demo] Workbench task text={}", SpnCasePrompts.TASK_TEXT);
             String response = sendTaskToWorkbench();
             log.info(
                     "[Demo] STAGE_DONE stage=send-workbench-task, responseChars={}, elapsedMs={}",
@@ -160,7 +160,7 @@ public class SpringSpnDemo {
         } finally {
             log.info(
                     "[Demo] SHUTDOWN_START omcCount={}, springStarted={}, gatewayStarted={}",
-                    omcServers.size(),
+                    omc.servers().size(),
                     ctx != null,
                     gateway != null);
             if (ctx != null) {
@@ -170,7 +170,7 @@ public class SpringSpnDemo {
                     log.warn("[Demo] Failed to close Spring context: {}", e.getMessage(), e);
                 }
             }
-            shutdownOmcAgents();
+            omc.close();
             if (gateway != null) {
                 try {
                     gateway.close();
@@ -185,43 +185,12 @@ public class SpringSpnDemo {
         }
     }
 
-    private void startOmcAgents() throws Exception {
-        startOmcAgent("agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
-        startOmcAgent("agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
-    }
-
-    @SuppressWarnings("unchecked")
-    private void startOmcAgent(String resourcePath, AgentExecutor executor) throws Exception {
-        long started = System.nanoTime();
-        String path = getClass().getClassLoader().getResource(resourcePath).getPath();
-        Map<String, Object> card = mapper.readValue(new File(path), Map.class);
-        List<Map<String, Object>> ifaces =
-                (List<Map<String, Object>>) card.getOrDefault("supportedInterfaces", List.of());
-        String url =
-                ifaces.isEmpty() ? "https://127.0.0.1:0" : String.valueOf(ifaces.get(0).get("url"));
-        java.net.URI uri = java.net.URI.create(url);
-        String host = uri.getHost() != null ? uri.getHost() : "127.0.0.1";
-        int port = Math.max(uri.getPort(), 0);
-        JdkHttpA2AServer server = new JdkHttpA2AServer(host, port, card, executor);
-        server.start();
-        omcServers.add(server);
-        log.info(
-                "[Demo] OMC_STARTED agent={}, resource={}, endpoint={}, elapsedMs={}",
-                card.get("name"), resourcePath, url, elapsedMillis(started));
-    }
-
     /** Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1. */
     private String sendTaskToWorkbench() throws Exception {
         long started = System.nanoTime();
-        String cardPath =
-                getClass()
-                        .getClassLoader()
-                        .getResource("agentcard/transport_workbench_agent.json")
-                        .getPath();
-        AgentCard wbCard = mapper.readValue(new File(cardPath), AgentCard.class);
-
-        String credPath =
-                getClass().getClassLoader().getResource("spn_agent_credentials.json").getPath();
+        AgentCard wbCard =
+                OmcAgentLauncher.cardFromResource("agentcard/transport_workbench_agent.json");
+        String credPath = OmcAgentLauncher.resourcePath("spn_agent_credentials.json");
         String envPath = EnvResolver.resolveEnvPath();
 
         A2ATransport transport =
@@ -236,29 +205,8 @@ public class SpringSpnDemo {
         DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
         try {
             // Task-T structured prompt placed in message.metadata (spec §6).
-            String taskPrompt =
-                    "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
-                            + "## 任务描述(Task Description)\n"
-                            + "基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, "
-                            + "达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n"
-                            + "## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n"
-                            + "## 任务对象(Task Object)\n"
-                            + "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17\n\n"
-                            + "## 任务上下文(Task Context)\n"
-                            + "1. 投诉分类：\"专线质差\"\n"
-                            + "2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n"
-                            + "3. OSS侧事件流水号：\"event-id-20260511-09013\"\n"
-                            + "4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，访问广州机房的核心交易系统非常慢。\"\n\n"
-                            + "## 预期输出(Expected Output)\n"
-                            + "1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n"
-                            + "2. 诊断结果详情；(必选)\n"
-                            + "3. 修复建议；(可选)\n"
-                            + "4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)";
-            String taskTUri =
-                    "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1";
-            java.util.Map<String, Object> metadata = new java.util.LinkedHashMap<>();
-            metadata.put(taskTUri, taskPrompt);
-            String partsText = "创建专线业务投诉诊断任务";
+            Map<String, Object> metadata =
+                    SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTask());
             log.info(
                     "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}",
                     WB_AGENT_NAME,
@@ -266,8 +214,11 @@ public class SpringSpnDemo {
                     wbCard.supportedInterfaces().isEmpty()
                             ? "?"
                             : wbCard.supportedInterfaces().get(0).url(),
-                    partsText.length());
-            SendMessageResult result = client.sendMessage(WB_AGENT_NAME, partsText, null, metadata).join();
+                    SpnCasePrompts.TASK_TEXT.length());
+            SendMessageResult result =
+                    client
+                            .sendMessage(WB_AGENT_NAME, SpnCasePrompts.TASK_TEXT, null, metadata)
+                            .join();
             log.info(
                     "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",
                     WB_AGENT_NAME,
@@ -280,20 +231,6 @@ public class SpringSpnDemo {
             client.close();
             transport.close();
         }
-    }
-
-    private void shutdownOmcAgents() {
-        log.info("[Demo] OMC_SHUTDOWN_START count={}", omcServers.size());
-        omcServers.forEach(
-                s -> {
-                    try {
-                        s.close();
-                    } catch (Exception e) {
-                        log.warn("[Demo] Failed to close OMC server: {}", e.getMessage(), e);
-                    }
-                });
-        omcServers.clear();
-        log.info("[Demo] OMC_SHUTDOWN_DONE");
     }
 
     /** Backward-compatible programmatic entry point; production defaults to the Order SDK. */

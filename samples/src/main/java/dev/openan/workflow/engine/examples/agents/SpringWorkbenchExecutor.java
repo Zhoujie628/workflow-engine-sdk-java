@@ -24,7 +24,6 @@ import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
-import dev.openan.workflow.engine.examples.agents.TransportWorkbenchAgentExecutor;
 import dev.openan.workflow.engine.examples.workbench.WorkbenchOrchestrator;
 
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
@@ -42,15 +41,12 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
-import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 /**
  * Spring-managed Workbench AgentExecutor.
  *
- * <p>Same business logic as {@link
- * TransportWorkbenchAgentExecutor} -- receives a Task-T from
- * the upper layer, delegates to {@link WorkbenchOrchestrator} for the full pipeline, and returns
- * the result. The difference is purely the server container: this runs inside Spring Boot instead
- * of the JDK HttpServer-based {@code JdkHttpA2AServer}.
+ * <p>Receives a Task-T from the upper layer, delegates to {@link WorkbenchOrchestrator} for the
+ * full pipeline, and returns the result. The A2A server container is provided by the Spring Boot
+ * starter's auto-configuration.
  */
 @Component
 public class SpringWorkbenchExecutor extends BaseAgentExecutor {

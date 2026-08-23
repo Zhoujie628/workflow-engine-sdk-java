@@ -9,23 +9,19 @@ import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.DefaultExtensionSender;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
-import dev.openan.workflow.engine.client.AgentCardJacksonModule;
-import dev.openan.workflow.engine.model.SendMessageResult;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
-import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
+import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
+import dev.openan.workflow.engine.model.SendMessageResult;
 
-import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Reproduces the 11 protocol verification cases from the A2A-T spec extraction document.
@@ -33,18 +29,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public class A2ATProtocolCases {
     private static final Logger log = LoggerFactory.getLogger(A2ATProtocolCases.class);
-    private static final ObjectMapper mapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
 
-    private static final String TASK_T_URI =
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1";
-
-    private static final String NEGOTIATION_T_URI =
-            A2ATExtension.NEGOTIATION_T.uri();
+    private static final String NEGOTIATION_T_URI = A2ATExtension.NEGOTIATION_T.uri();
 
     private static final String AGENT_NAME = "SPN Domain Agent City1";
     private static final long STARTUP_WAIT = 3;
 
-    private JdkHttpA2AServer omcServer;
+    private final OmcAgentLauncher omc = new OmcAgentLauncher();
     private A2ATransport transport;
     private DefaultWorkflowEngineClient client;
     private DefaultExtensionSender sender;
@@ -89,19 +80,20 @@ public class A2ATProtocolCases {
     }
 
     private void setup() throws Exception {
-        String path = getClass().getClassLoader().getResource("agentcard/spn_domain_agent_city1.json").getPath();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> cardMap = mapper.readValue(new File(path), Map.class);
-        omcServer = new JdkHttpA2AServer("127.0.0.1", 26335, cardMap, new SpnDomainAgentCity1Executor());
-        omcServer.start();
+        omc.startFromResource(
+                "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
         TimeUnit.SECONDS.sleep(STARTUP_WAIT);
-        log.info("[ProtocolCases] OMC agent started on https://127.0.0.1:26335");
+        log.info("[ProtocolCases] OMC agent {} started on https://127.0.0.1:26335", AGENT_NAME);
 
-        AgentCard agentCard = mapper.readValue(new File(path), AgentCard.class);
-        String credPath = getClass().getClassLoader().getResource("spn_agent_credentials.json").getPath();
-        String envPath = EnvResolver.resolveEnvPath();
-        transport = new A2ATransport(List.of(agentCard), null,
-                WorkflowEngineClientConfig.builder().sslVerify(false).a2atEnvPath(envPath).credentialsConfigPath(credPath).build());
+        transport = new A2ATransport(
+                List.of(OmcAgentLauncher.cardFromResource("agentcard/spn_domain_agent_city1.json")),
+                null,
+                WorkflowEngineClientConfig.builder()
+                        .sslVerify(false)
+                        .a2atEnvPath(EnvResolver.resolveEnvPath())
+                        .credentialsConfigPath(
+                                OmcAgentLauncher.resourcePath("spn_agent_credentials.json"))
+                        .build());
         client = new DefaultWorkflowEngineClient(transport);
         sender = new DefaultExtensionSender(transport);
     }
@@ -109,7 +101,7 @@ public class A2ATProtocolCases {
     private void teardown() {
         if (client != null) client.close();
         if (transport != null) transport.close();
-        if (omcServer != null) { try { omcServer.close(); } catch (Exception e) { log.warn("OMC close: {}", e.getMessage()); } }
+        omc.close();
     }
 
     /** Case 0: enumerate available A2A-T templates via the engine's template-query surface. */
@@ -132,9 +124,10 @@ public class A2ATProtocolCases {
 
     private void case_7_1() throws Exception {
         log.info("[Case 7.1] Create diagnosis task (Task-T)");
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(TASK_T_URI, "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n## 任务描述(Task Description)\n基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, 达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n## 任务对象(Task Object)\n接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17\n\n## 任务上下文(Task Context)\n1. 投诉分类：\"专线质差\"\n2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n3. OSS侧事件流水号：\"event-id-20260511-09013\"\n4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，访问广州机房的核心交易系统非常慢。\"\n\n## 预期输出(Expected Output)\n1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n2. 诊断结果详情；(必选)\n3. 修复建议；(可选)\n4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)");
-        SendMessageResult result = client.sendMessage(AGENT_NAME, "创建专线业务投诉诊断任务", null, metadata).join();
+        Map<String, Object> metadata =
+                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTask());
+        SendMessageResult result =
+                client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT, null, metadata).join();
         log.info("[Case 7.1] state={}, textLen={}", result.getTaskState(), result.getText() != null ? result.getText().length() : 0);
         if (result.getTask() != null) { lastTaskId.set(result.getTask().id()); log.info("[Case 7.1] taskId={}", result.getTask().id()); }
     }
@@ -149,19 +142,19 @@ public class A2ATProtocolCases {
 
     private void case_7_3() {
         log.info("[Case 7.3] Negotiation - param missing (Task-T + Negotiation-T)");
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(TASK_T_URI, "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n## 任务描述(Task Description)\n基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, 达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n## 任务对象(Task Object)\n接入端口名称：\n\n## 任务上下文(Task Context)\n1. 投诉分类：\n2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n3. OSS侧事件流水号：\"event-id-20260511-09013\"\n4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，访问广州机房的核心交易系统非常慢。\"\n\n## 预期输出(Expected Output)\n1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n2. 诊断结果详情；(必选)\n3. 修复建议；(可选)\n4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)");
+        Map<String, Object> metadata =
+                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTaskBlankObject());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
-        SendMessageResult result = client.sendMessage(AGENT_NAME, "创建专线业务投诉诊断任务(参数缺失)", null, metadata).join();
+        SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(参数缺失)", null, metadata).join();
         log.info("[Case 7.3] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
 
     private void case_7_4() {
         log.info("[Case 7.4] Negotiation - semantic error (Task-T + Negotiation-T)");
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(TASK_T_URI, "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n## 任务描述(Task Description)\n基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, 达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n## 任务对象(Task Object)\n接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-18\n\n## 任务上下文(Task Context)\n1. 投诉分类：\"专线质差\"\n2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n3. OSS侧事件流水号：\"event-id-20260511-09013\"\n4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，访问广州机房的核心交易系统非常慢。\"\n\n## 预期输出(Expected Output)\n1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n2. 诊断结果详情；(必选)\n3. 修复建议；(可选)\n4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)");
+        Map<String, Object> metadata =
+                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTaskUnknownPort());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
-        SendMessageResult result = client.sendMessage(AGENT_NAME, "创建专线业务投诉诊断任务(语义错误)", null, metadata).join();
+        SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(语义错误)", null, metadata).join();
         log.info("[Case 7.4] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
 

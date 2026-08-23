@@ -18,17 +18,20 @@
 ```mermaid
 graph TD
     root["samples/src/main/java/.../examples/"]
-    srv["server/EmbeddedA2AServer.java<br/>可复用 A2A server（a2a-java SDK RestHandler）"]
+    srv["server/JdkHttpA2AServer.java<br/>可复用 A2A server（JDK HttpServer）"]
+    launch["server/OmcAgentLauncher.java<br/>从 agentcard JSON 启动并跟踪 Agent"]
     base["agents/BaseAgentExecutor.java<br/>基类：extractText / buildStatusMessage"]
-    spn1["agents/SpnDomainAgentExecutor.java<br/>上海 OMC Agent"]
-    spn2["agents/SpnDomainAgentCity2Executor.java<br/>广州 OMC Agent"]
-    wb["agents/TransportWorkbenchAgentExecutor.java<br/>工作台 Agent（编排者）"]
-    cp["agents/WorkbenchControlPoint.java<br/>ControlPoint 决策逻辑（SRP 拆分）"]
-    start["StartAgentsServer.java<br/>从 agentcard JSON 启动所有 Agent"]
-    demo["SpnCrossCityDiagnosisDemo.java<br/>Demo 入口"]
+    spn1["agents/SpnDomainAgentCity1Executor.java<br/>城市1 OMC Agent"]
+    spn2["agents/SpnDomainAgentCity2Executor.java<br/>城市2 OMC Agent"]
+    wb["agents/SpringWorkbenchExecutor.java<br/>Spring 管理的工作台 Agent"]
+    cp["workbench/WorkbenchControlPoint.java<br/>ControlPoint 决策逻辑（SRP 拆分）"]
+    prompts["demo/SpnCasePrompts.java<br/>专线投诉场景 Task-T 结构化提示词"]
+    demo["demo/SpringSpnDemo.java<br/>Demo 入口（direct/mock/order 三种传输模式）"]
 
-    root --> srv & base & start & demo
-    base --> spn1 & spn2 & wb & cp
+    root --> srv & launch & base & demo
+    base --> spn1 & spn2 & wb
+    demo --> prompts
+    wb --> cp
 ```
 
 **资源文件：**
@@ -45,7 +48,7 @@ graph TD
 现网 AgentCard 的 URL 格式是 `http://host:port/a2a/json`，路径前缀 `/a2a/json` 是标准做法。A2A
 REST 端点实际是 `http://host:port/a2a/json/message:stream`。
 
-`EmbeddedA2AServer` 必须从 AgentCard URL 提取路径前缀，在该前缀下注册路由：
+`JdkHttpA2AServer` 必须从 AgentCard URL 提取路径前缀，在该前缀下注册路由：
 
 ```java
 // 从 AgentCard URL 提取路径前缀
@@ -58,7 +61,7 @@ String path = fullPath.startsWith(pathPrefix) ? fullPath.substring(pathPrefix.le
 
 ## 四、Agent card 从配置文件加载，不依赖注册中心
 
-**`TransportWorkbenchAgentExecutor` 执行工作流时，从 classpath 的 agentcard JSON 加载 agent card，不从注册中心 fetch。**
+**工作台执行工作流时，从 classpath 的 agentcard JSON 加载 agent card，不从注册中心 fetch。**
 
 原因：注册中心可能残留 之前注册的旧 card（端口 8904、URL 不带前缀等），与 Java 版的 agent 不匹配。注册返回 409 duplicate
 时注册中心不会更新，导致引擎拿到错误的 URL。
@@ -106,7 +109,7 @@ SendMessageResult result = client.sendMessage("Transport Workbench Agent", taskT
 不会修改它；只有使用仓库公开 demo 证书的独立样例进程才在入口类、创建任何 `HttpClient` 之前设置：
 
 ```java
-// StartAgentsServer 入口类的 static 块
+// demo 入口类（SpringSpnDemo 等）的 main 方法开头
 static {
     System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
 }
@@ -117,7 +120,7 @@ static {
 
 ## 八、SOLID 原则
 
-- **SRP**：`WorkbenchControlPoint` 只管工作流决策（路由、授权、通知），`TransportWorkbenchAgentExecutor` 只管消息 I/O
+- **SRP**：`WorkbenchControlPoint` 只管工作流决策（路由、授权、通知），`SpringWorkbenchExecutor` 只管消息 I/O
 - **DRY**：`BaseAgentExecutor` 提供共享的 `extractText` / `buildStatusMessage`，3 个 Agent executor 都继承它
 - **无 Unicode 转义**：Java 源文件中的中文字符串直接用字面中文，不用 `\uXXXX`
     - 用 `apply_patch` 写文件（保持 UTF-8），不用 PowerShell here-string（会损坏中文）
@@ -137,4 +140,5 @@ static {
 - `mvn verify` 在已合法安装东信 SDK 的环境中通过
 - `mvn -pl workflow-engine,spring-boot-starter -am verify` 在无供应商私有依赖的公共环境中通过
 - `EmbeddedA2AServerTest` 验证：启动 server → sendMessage → 从 SSE 流提取诊断结果
-- `SpnCrossCityDiagnosisDemo` 端到端：3 个 Agent 启动 → 触发工作流 → 5 步全部执行成功
+- `SpnCrossCityE2ETest` 端到端：2 个 OMC Agent 启动 → 前置预定位 → 3 步工作流全部成功
+- `SpringSpnDemo` 端到端（三种传输模式）：Spring 工作台 + 2 个 OMC Agent → Task-T → 跨城诊断工作流执行成功
