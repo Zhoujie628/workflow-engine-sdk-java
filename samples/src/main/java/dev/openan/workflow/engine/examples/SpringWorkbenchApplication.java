@@ -35,7 +35,7 @@ import dev.openan.workflow.engine.examples.demo.SpringSpnDemo;
  *
  * <p>This is the Workbench Agent itself: a Spring Boot service that exposes A2A-T endpoints
  * (message:send, message:stream) via the {@code spring-boot-starter} auto-configuration. The
- * business logic lives in {@link dev.openan.workflow.engine.examples.agents.SpringWorkbenchExecutor} (implements {@code AgentExecutor}).
+ * business logic lives in {@link dev.openan.workflow.engine.examples.workbench.SpringWorkbenchExecutor} (implements {@code AgentExecutor}).
  *
  * <p>Demo orchestration (starting OMC agents, sending Task-T, shutting down) is handled separately
  * by {@link dev.openan.workflow.engine.examples.demo.SpringSpnDemo}.
