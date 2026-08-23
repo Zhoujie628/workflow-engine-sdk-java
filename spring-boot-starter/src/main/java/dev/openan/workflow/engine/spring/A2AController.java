@@ -35,6 +35,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -158,6 +160,92 @@ public class A2AController {
         return emitter;
     }
 
+    @GetMapping("/tasks/{id}")
+    public ResponseEntity<String> getTask(
+            HttpServletRequest req,
+            @PathVariable("id") String taskId) {
+        var ctx = buildContext(req);
+        var resp = restHandler.getTask(ctx, "", taskId, null);
+        return ResponseEntity.status(resp.getStatusCode())
+                .contentType(
+                        MediaType.parseMediaType(
+                                resp.getContentType() != null
+                                        ? resp.getContentType()
+                                        : MediaType.APPLICATION_JSON_VALUE))
+                .body(resp.getBody());
+    }
+
+    @PostMapping("/tasks/{id}:cancel")
+    public ResponseEntity<String> cancelTask(
+            HttpServletRequest req,
+            @PathVariable("id") String taskId,
+            @RequestBody(required = false) String body) {
+        var ctx = buildContext(req);
+        var resp = restHandler.cancelTask(ctx, "", body != null ? body : "{}", taskId);
+        return ResponseEntity.status(resp.getStatusCode())
+                .contentType(
+                        MediaType.parseMediaType(
+                                resp.getContentType() != null
+                                        ? resp.getContentType()
+                                        : MediaType.APPLICATION_JSON_VALUE))
+                .body(resp.getBody());
+    }
+
+    @PostMapping(
+            value = "/tasks/{id}:subscribe",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public ResponseBodyEmitter subscribeToTask(
+            HttpServletRequest req,
+            @PathVariable("id") String taskId) {
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
+        try {
+            var ctx = buildContext(req);
+            var resp = restHandler.subscribeToTask(ctx, "", taskId);
+            if (resp instanceof RestHandler.HTTPRestStreamingResponse streaming) {
+                final AtomicLong seq = new AtomicLong(0);
+                streaming.getPublisher().subscribe(
+                        new Flow.Subscriber<String>() {
+                            private Flow.Subscription sub;
+                            @Override
+                            public void onSubscribe(Flow.Subscription s) {
+                                sub = s;
+                                s.request(1);
+                            }
+                            @Override
+                            public void onNext(String item) {
+                                try {
+                                    String sse =
+                                            String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
+                                                    + "data:" + item + "\n\n";
+                                    emitter.send(sse);
+                                } catch (Exception e) {
+                                    log.error("[SSE] Subscribe write failed: {}", e.getMessage());
+                                    sub.cancel();
+                                    emitter.completeWithError(e);
+                                    return;
+                                }
+                                sub.request(1);
+                            }
+                            @Override
+                            public void onError(Throwable t) {
+                                log.error("[SSE] Subscribe stream error: {}", t.getMessage());
+                                emitter.completeWithError(t);
+                            }
+                            @Override
+                            public void onComplete() {
+                                emitter.complete();
+                            }
+                        });
+            } else {
+                emitter.send(resp.getBody());
+                emitter.complete();
+            }
+        } catch (Exception e) {
+            log.error("[SSE] Subscribe setup failed: {}", e.getMessage(), e);
+            emitter.completeWithError(e);
+        }
+        return emitter;
+    }
     private ServerCallContext buildContext(HttpServletRequest req) {
         Map<String, Object> state = new LinkedHashMap<>();
         Map<String, String> headers = new LinkedHashMap<>();
@@ -166,7 +254,11 @@ public class A2AController {
         state.put("headers", headers);
         String ext = req.getHeader("A2A-Extensions");
         Set<String> exts = (ext == null || ext.isBlank()) ? Set.of() : Set.of(ext.split(","));
-        String ver = req.getHeader("A2A-Protocol-Version");
+        // OMC spec uses A2A-Version; SDK also supports A2A-Protocol-Version alias
+        String ver = req.getHeader("A2A-Version");
+        if (ver == null || ver.isBlank()) {
+            ver = req.getHeader("A2A-Protocol-Version");
+        }
         return new ServerCallContext(null, state, exts, ver);
     }
 }

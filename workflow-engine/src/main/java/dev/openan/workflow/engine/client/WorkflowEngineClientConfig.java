@@ -51,6 +51,7 @@ public class WorkflowEngineClientConfig {
     private final int maxNegotiationRounds;
     private final List<ExtensionHandler> customHandlers;
     private final String preferredProtocol;
+    private final Map<String, Object> negotiationParamSchema;
 
     private WorkflowEngineClientConfig(Builder b) {
         this.sslVerify = b.sslVerify;
@@ -71,6 +72,7 @@ public class WorkflowEngineClientConfig {
         this.maxNegotiationRounds = b.maxNegotiationRounds;
         this.customHandlers = b.customHandlers;
         this.preferredProtocol = b.preferredProtocol;
+        this.negotiationParamSchema = b.negotiationParamSchema;
     }
 
     public static Builder builder() {
@@ -96,6 +98,7 @@ public class WorkflowEngineClientConfig {
         private int maxNegotiationRounds = 3;
         private List<ExtensionHandler> customHandlers = null;
         private String preferredProtocol = null;
+        private Map<String, Object> negotiationParamSchema = null;
 
         public Builder sslVerify(boolean v) {
             this.sslVerify = v;
@@ -184,6 +187,16 @@ public class WorkflowEngineClientConfig {
 
         public Builder customHandlers(List<ExtensionHandler> v) {
             this.customHandlers = v;
+            return this;
+        }
+
+        /**
+         * Business parameter JSON schema for the Negotiation-T validate-and-fill pipeline. Declares
+         * the caller's domain fields so the engine core stays domain-agnostic; null keeps the
+         * default empty schema (negotiation context params only).
+         */
+        public Builder negotiationParamSchema(Map<String, Object> v) {
+            this.negotiationParamSchema = v;
             return this;
         }
 

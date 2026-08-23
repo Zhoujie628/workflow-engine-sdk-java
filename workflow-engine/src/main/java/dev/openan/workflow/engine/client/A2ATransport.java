@@ -80,6 +80,7 @@ public class A2ATransport implements AutoCloseable {
     private final AuthProvider authProvider;
     private final A2ATClient a2atClient;
     private final String contextId;
+    private volatile A2ATContentFacade contentFacade;
     private final ClientCallContextFactory clientCallContextFactory;
     private final ExecutorService asyncExecutor;
     private final long notificationAckTimeoutSeconds;
@@ -172,6 +173,9 @@ public class A2ATransport implements AutoCloseable {
                 extractTextFromTask(tue.getTask(), text);
                 if (tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent ae)
                     extractTextFromArtifact(ae.artifact(), text);
+                if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue
+                        && sue.status().message() != null)
+                    extractTextFromMessage(sue.status().message(), text);
             } else if (event instanceof MessageEvent me)
                 extractTextFromMessage(me.getMessage(), text);
         }
@@ -208,20 +212,29 @@ public class A2ATransport implements AutoCloseable {
         return state;
     }
 
-    public static Map<String, Object> extractResponseMetadata(Iterable<ClientEvent> events) {
-        Map<String, Object> metadata = new HashMap<>();
-        for (ClientEvent event : events) {
-            if (event instanceof TaskEvent te) {
-                mergeTaskMetadata(te.getTask(), metadata);
-            } else if (event instanceof TaskUpdateEvent tue) {
-                mergeTaskMetadata(tue.getTask(), metadata);
-                if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue) {
-                    Map<String, Object> em = sue.metadata();
-                    if (em != null && !em.isEmpty()) metadata.putAll(em);
-                }
-            }
-        }
-        return metadata;
+   public static Map<String, Object> extractResponseMetadata(Iterable<ClientEvent> events) {
+       Map<String, Object> metadata = new HashMap<>();
+       for (ClientEvent event : events) {
+           if (event instanceof TaskEvent te) {
+               mergeTaskMetadata(te.getTask(), metadata);
+           } else if (event instanceof TaskUpdateEvent tue) {
+               mergeTaskMetadata(tue.getTask(), metadata);
+               if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue) {
+                   Map<String, Object> em = sue.metadata();
+                   if (em != null && !em.isEmpty()) metadata.putAll(em);
+                   // A status can carry its own Message (e.g. a Negotiation-T propose riding on
+                   // an INPUT_REQUIRED status); merge that message's metadata too.
+                   if (sue.status().message() != null) {
+                       Map<String, Object> sm = sue.status().message().metadata();
+                       if (sm != null && !sm.isEmpty()) metadata.putAll(sm);
+                   }
+               }
+           } else if (event instanceof MessageEvent me) {
+               Map<String, Object> mm = me.getMessage().metadata();
+               if (mm != null && !mm.isEmpty()) metadata.putAll(mm);
+           }
+       }
+       return metadata;
     }
 
     // ------------------------------------------------------------------
@@ -292,6 +305,29 @@ public class A2ATransport implements AutoCloseable {
 
     public A2ATClient getA2atClient() {
         return a2atClient;
+    }
+
+    /**
+     * Content-layer facade over the SDK client: negotiation message generation (propose / accept /
+     * reject / abort, from data or text), validate-and-fill, and template queries. Returns null
+     * when no A2A-T env path was configured.
+     */
+    public A2ATContentFacade getContentFacade() {
+        A2ATClient local = a2atClient;
+        if (local == null) {
+            return null;
+        }
+        A2ATContentFacade facade = contentFacade;
+        if (facade == null) {
+            synchronized (this) {
+                facade = contentFacade;
+                if (facade == null) {
+                    facade = new A2ATContentFacade(local);
+                    contentFacade = facade;
+                }
+            }
+        }
+        return facade;
     }
 
     public String getContextId() {
@@ -551,6 +587,68 @@ public class A2ATransport implements AutoCloseable {
     // ------------------------------------------------------------------
     // Lifecycle
     // ------------------------------------------------------------------
+
+    public CompletableFuture<SendMessageResult> getTask(
+            AgentCard agentCard, String agentName, String taskId) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
+                Task task = a2aClientRuntime.getTask(agentCard, taskId, ctx);
+                StringBuilder text = new StringBuilder();
+                extractTextFromTask(task, text);
+                Map<String, Object> metadata = new HashMap<>();
+                mergeTaskMetadata(task, metadata);
+                return SendMessageResult.builder()
+                        .text(text.toString())
+                        .task(task)
+                        .metadata(metadata)
+                        .taskState(task.status().state().name())
+                        .build();
+            } catch (Exception e) {
+                throw new RuntimeException("getTask failed for " + agentName + ": " + e.getMessage(), e);
+            }
+        }, asyncExecutor);
+    }
+
+    public CompletableFuture<SendMessageResult> cancelTask(
+            AgentCard agentCard, String agentName, String taskId) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
+                Task task = a2aClientRuntime.cancelTask(agentCard, taskId, ctx);
+                StringBuilder text = new StringBuilder();
+                extractTextFromTask(task, text);
+                return SendMessageResult.builder()
+                        .text(text.toString())
+                        .task(task)
+                        .taskState(task.status().state().name())
+                        .build();
+            } catch (Exception e) {
+                throw new RuntimeException("cancelTask failed for " + agentName + ": " + e.getMessage(), e);
+            }
+        }, asyncExecutor);
+    }
+
+    public CompletableFuture<SendMessageResult> subscribeToTask(
+            AgentCard agentCard, String agentName, String taskId,
+            Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
+        }
+        ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
+        return a2aClientRuntime.subscribeToTask(agentCard, taskId, ctx,
+                event -> {
+                    if (eventSink != null) {
+                        try { eventSink.accept(event); } catch (Exception ignored) {}
+                    }
+                });
+    }
 
     @Override
     public void close() {

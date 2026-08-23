@@ -71,5 +71,54 @@ public interface WorkflowEngineClient {
 
     void setEventCallback(EventCallback callback);
 
+    /**
+     * Lists every A2A-T prompt template of the configured language across all extensions
+     * (Task-T / Notification-T / Authorization-T / Negotiation-T). Never throws.
+     *
+     * @return template list sorted by URI; empty when the A2A-T SDK is not configured
+     */
+    default java.util.List<net.openan.a2at.sdk.core.model.PromptTemplate> getPrompts() {
+        return java.util.List.of();
+    }
+
+    /**
+     * Lists every negotiation template of the configured language (propose / accept-reject for
+     * information, target, feasibility, plus the common abort template). Never throws.
+     *
+     * @return negotiation template list; empty when the A2A-T SDK is not configured
+     */
+    default java.util.List<net.openan.a2at.sdk.core.model.PromptTemplate> getNegotiationPrompts() {
+        return java.util.List.of();
+    }
+
+    /**
+     * Loads one template by URI regardless of extension. Never throws.
+     *
+     * @param templateUri template URI such as {@code StandardTemplates.PRIVATE_LINE_COMPLAINT}
+     * @return the addressed template, or empty when missing / SDK not configured
+     */
+    default java.util.Optional<net.openan.a2at.sdk.core.model.PromptTemplate> getPrompt(
+            net.openan.a2at.sdk.core.model.TemplateUri templateUri) {
+        return java.util.Optional.empty();
+    }
+
+
+    /** Query a task by ID (A2A GET tasks/{id}). */
+    default CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
+        throw new UnsupportedOperationException("getTask not implemented");
+    }
+
+    /** Cancel a task by ID (A2A POST tasks/{id}:cancel). */
+    default CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
+        throw new UnsupportedOperationException("cancelTask not implemented");
+    }
+
+    /** Subscribe to a task stream (A2A POST tasks/{id}:subscribe). */
+    default CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName, String taskId,
+            java.util.function.Consumer<java.util.Map<String, Object>> eventCallback) {
+        throw new UnsupportedOperationException("subscribeToTask not implemented");
+    }
+
     void close();
 }

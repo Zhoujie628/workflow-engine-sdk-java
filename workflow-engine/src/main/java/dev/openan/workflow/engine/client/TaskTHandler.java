@@ -79,9 +79,15 @@ class TaskTHandler implements ExtensionHandler {
         if (a2atClient == null) {
             return CompletableFuture.completedFuture(metadata);
         }
-        if (messageText != null && messageText.contains("[NEGOTIATION_RESOLUTION]")) {
-            log.info("[Task-T] Skipping prompt generation for negotiation follow-up");
-            return CompletableFuture.completedFuture(metadata);
+        // Skip Task-T prompt generation when this is a Negotiation-T follow-up
+        // (metadata already carries the Negotiation-T key from the Accept prompt).
+        if (metadata != null) {
+            for (String key : metadata.keySet()) {
+                if (key.toUpperCase(java.util.Locale.ROOT).contains("NEGOTIATION-T")) {
+                    log.info("[Task-T] Skipping prompt generation for negotiation follow-up");
+                    return CompletableFuture.completedFuture(metadata);
+                }
+            }
         }
         String taskTUri = findTaskTUri(agentCard);
         if (taskTUri == null) {

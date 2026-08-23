@@ -62,14 +62,26 @@ final class SseNormalization {
         if (data == null) {
             return data;
         }
-        if (STREAM_RESPONSE_KEYS.stream().noneMatch(data::containsKey)) {
-            if (data.containsKey("id") && data.containsKey("status")) {
-                log.info("[A2A] Non-SSE response detected: bare Task, wrapping");
-                return Map.of("task", data);
-            }
-            if (data.containsKey("artifact") && data.containsKey("taskId")) {
-                return Map.of("artifactUpdate", data);
-            }
+       if (STREAM_RESPONSE_KEYS.stream().noneMatch(data::containsKey)) {
+           if (data.containsKey("id") && data.containsKey("status")) {
+               log.info("[A2A] Non-SSE response detected: bare Task, wrapping");
+               return Map.of("task", data);
+           }
+           // Some agents return "artifacts" (array) instead of "artifact" (single object)
+           // in artifactUpdate. Coerce to the standard single-object form.
+           if (data.containsKey("artifacts") && data.containsKey("taskId")) {
+               Object artifacts = data.get("artifacts");
+               if (artifacts instanceof java.util.List<?> list && !list.isEmpty()) {
+                   Map<String, Object> normalized = new java.util.LinkedHashMap<>(data);
+                   normalized.put("artifact", list.get(0));
+                   normalized.remove("artifacts");
+                   log.info("[A2A] Non-standard 'artifacts' array coerced to single 'artifact'");
+                   return Map.of("artifactUpdate", normalized);
+               }
+           }
+           if (data.containsKey("artifact") && data.containsKey("taskId")) {
+               return Map.of("artifactUpdate", data);
+           }
             if (data.containsKey("status") && data.containsKey("taskId")) {
                 return Map.of("statusUpdate", data);
             }
