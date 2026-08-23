@@ -124,6 +124,93 @@ public record DefaultExtensionSender(A2ATransport transport)
     }
 
     @Override
+    public CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            A2ATExtension extension) {
+        if (extension != A2ATExtension.AUTHORIZATION_T
+                && extension != A2ATExtension.NOTIFICATION_T) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "fromData rendering supports AUTHORIZATION_T and NOTIFICATION_T, got "
+                                    + extension));
+        }
+        AgentCard agentCard = transport.getCard(agentName);
+        if (agentCard == null) {
+            log.error("[ExtensionSender] Agent not found: {}", agentName);
+            return CompletableFuture.failedFuture(
+                    new RuntimeException("Agent not found: " + agentName));
+        }
+        return CompletableFuture.supplyAsync(() -> generateExtensionPromptFromData(extension, data, schema))
+                .thenCompose(
+                        mc -> {
+                            if (mc == null || mc.promptText() == null || mc.promptText().isEmpty()) {
+                                log.error(
+                                        "[ExtensionSender] fromData rendering unavailable for {} ({}); refusing to send raw data",
+                                        agentName,
+                                        extension.displayName());
+                                return CompletableFuture.failedFuture(
+                                        new RuntimeException(
+                                                "fromData rendering failed for " + extension));
+                            }
+                            Map<String, Object> metadata = new HashMap<>();
+                            metadata.putAll(mc.buildMetadataContent());
+                            log.info(
+                                    "[ExtensionSender] sendExtensionMessageFromData to {}: extension={}, renderedChars={}",
+                                    agentName,
+                                    extension.displayName(),
+                                    mc.promptText().length());
+                            if (extension == A2ATExtension.NOTIFICATION_T) {
+                                return transport.sendNotificationStream(
+                                        agentCard,
+                                        agentName,
+                                        instruction,
+                                        transport.getContextId(),
+                                        metadata,
+                                        null);
+                            }
+                            return transport
+                                    .send(
+                                            agentCard,
+                                            agentName,
+                                            instruction,
+                                            transport.getContextId(),
+                                            metadata,
+                                            null)
+                                    .whenComplete(
+                                            (ignored, error) ->
+                                                    transport.closeConversation(
+                                                            agentCard, transport.getContextId()));
+                        });
+    }
+
+    /** Deterministic fromData rendering for Authorization-T / Notification-T. */
+    private MetadataContent generateExtensionPromptFromData(
+            A2ATExtension extension, Map<String, Object> data, Map<String, Object> schema) {
+        net.openan.a2at.sdk.client.A2ATClient a2atClient = transport.getA2atClient();
+        if (a2atClient == null) {
+            return null;
+        }
+        try {
+            return switch (extension) {
+                case AUTHORIZATION_T -> a2atClient.generateAuthPromptFromDataWithSchema(
+                        data, schema, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+                case NOTIFICATION_T -> a2atClient.generateNotificationPromptFromDataWithSchema(
+                        data, schema, StandardTemplates.SUBSCRIBE_INCIDENT);
+                default -> null;
+            };
+        } catch (Exception e) {
+            log.warn(
+                    "[ExtensionSender] SDK {} fromData rendering error: {}",
+                    extension.displayName(),
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
     public CompletableFuture<SendMessageResult> sendNotification(
             String agentName,
             String instruction,

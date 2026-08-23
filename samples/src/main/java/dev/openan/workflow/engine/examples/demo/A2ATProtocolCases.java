@@ -123,11 +123,16 @@ public class A2ATProtocolCases {
     }
 
     private void case_7_1() throws Exception {
-        log.info("[Case 7.1] Create diagnosis task (Task-T)");
-        Map<String, Object> metadata =
-                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTask());
+        log.info("[Case 7.1] Create diagnosis task (Task-T, fromData track)");
         SendMessageResult result =
-                client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT, null, metadata).join();
+                client.sendMessageFromData(
+                                AGENT_NAME,
+                                SpnCasePrompts.TASK_TEXT,
+                                SpnCasePrompts.privateLineComplaintData(),
+                                SpnCasePrompts.privateLineComplaintSchema(),
+                                net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .PRIVATE_LINE_COMPLAINT)
+                        .join();
         log.info("[Case 7.1] state={}, textLen={}", result.getTaskState(), result.getText() != null ? result.getText().length() : 0);
         if (result.getTask() != null) { lastTaskId.set(result.getTask().id()); log.info("[Case 7.1] taskId={}", result.getTask().id()); }
     }
@@ -141,18 +146,20 @@ public class A2ATProtocolCases {
     }
 
     private void case_7_3() {
-        log.info("[Case 7.3] Negotiation - param missing (Task-T + Negotiation-T)");
-        Map<String, Object> metadata =
-                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTaskBlankObject());
+        log.info("[Case 7.3] Negotiation - param missing (Task-T fromData + Negotiation-T)");
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(A2ATExtension.TASK_DATA_META_KEY, SpnCasePrompts.privateLineComplaintDataBlankObject());
+        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, SpnCasePrompts.privateLineComplaintSchema());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
         SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(参数缺失)", null, metadata).join();
         log.info("[Case 7.3] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
 
     private void case_7_4() {
-        log.info("[Case 7.4] Negotiation - semantic error (Task-T + Negotiation-T)");
-        Map<String, Object> metadata =
-                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintTaskUnknownPort());
+        log.info("[Case 7.4] Negotiation - semantic error (Task-T fromData + Negotiation-T)");
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(A2ATExtension.TASK_DATA_META_KEY, SpnCasePrompts.privateLineComplaintDataUnknownPort());
+        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, SpnCasePrompts.privateLineComplaintSchema());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
         SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(语义错误)", null, metadata).join();
         log.info("[Case 7.4] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");

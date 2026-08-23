@@ -434,9 +434,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     /**
-     * Renders the follow-up message matching the clarification's decision prefix: {@code
-     * reject:} / {@code abort:} select the terminal templates, anything else renders an Accept
-     * message.
+     * Renders the follow-up message matching the clarification's decision prefix:
+     *
+     * <ul>
+     *   <li>{@code reject:...} / {@code abort:...} — Reject / Abort terminal templates
+     *   <li>{@code data:{...}} — deterministic fromData Accept rendering (JSON body carries the
+     *       filled parameter map; no LLM call)
+     *   <li>anything else — Accept via fromText (one LLM extraction step)
+     * </ul>
      */
     private MetadataContent renderFollowUpMessage(
             A2ATContentFacade content,
@@ -446,6 +451,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         net.openan.a2at.sdk.core.model.NegotiationContext contentCtx =
                 extractContentContext(negMeta);
         String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
+        if (decision.startsWith("data:")) {
+            // Deterministic fromData Accept: the JSON body carries the filled parameter map.
+            return renderAcceptFromData(content, agentName, contentCtx, clarification.substring("data:".length()));
+        }
         if (decision.startsWith("reject:")) {
             log.info("[Negotiation] SDK generateNegotiationRejectPrompt for '{}'", agentName);
             return content.generateRejectFromText(
@@ -468,6 +477,48 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 "[Negotiation] SDK generateNegotiationAcceptPrompt: templateUri={}",
                 mc.templateUri());
         return mc;
+    }
+
+    /**
+     * Deterministic fromData Accept rendering: parses the JSON payload into {@code NegotiationItem}
+     * name/value pairs and renders through the SDK's fromData pipeline (no LLM call).
+     */
+    private MetadataContent renderAcceptFromData(
+            A2ATContentFacade content,
+            String agentName,
+            net.openan.a2at.sdk.core.model.NegotiationContext contentCtx,
+            String jsonBody) {
+        requireContext(contentCtx, agentName);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> params =
+                    new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(jsonBody.strip(), Map.class);
+            java.util.List<net.openan.a2at.sdk.negotiation.content.NegotiationItem> items =
+                    new java.util.ArrayList<>();
+            for (var entry : params.entrySet()) {
+                items.add(
+                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
+                                entry.getKey(), String.valueOf(entry.getValue())));
+            }
+            MetadataContent mc =
+                    content.generateAcceptFromData(
+                            new net.openan.a2at.sdk.negotiation.content.NegotiationEndingData(
+                                    contentCtx,
+                                    new net.openan.a2at.sdk.negotiation.content
+                                            .InformationEndingContent(
+                                            net.openan.a2at.sdk.negotiation.content
+                                                    .NegotiationConclusion.ACCEPT,
+                                            items)),
+                            StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+            log.info(
+                    "[Negotiation] SDK generateNegotiationAcceptPromptFromData: templateUri={}, items={}",
+                    mc.templateUri(),
+                    params.keySet());
+            return mc;
+        } catch (Exception e) {
+            throw new IllegalStateException("fromData Accept rendering failed: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -527,8 +578,9 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
     /**
      * Extracts the SDK-carried negotiation context (id/round/maxRounds) from the received
-     * metadata's {@code negotiationContext} key, or null when absent. Falls back to synthesizing
-     * one from the state-machine context payload when only that is present.
+     * metadata's {@code negotiationContext} key, or null when absent. Falls back to the
+     * state-machine context payload ({@code negotiation_context} key, either the raw
+     * startNegotiation context map or the receiveNegotiation result) before giving up.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext extractContentContext(
             Map<String, Object> negMeta) {
@@ -547,6 +599,34 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 }
             }
         }
+        // State-machine context: the negotiation_context key holds either the raw context map
+        // (negotiationType/negotiationId/round/status) or the receiveNegotiation result wrapping
+        // it under "context".
+        Object stateful = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
+        Map<String, Object> statefulMap = null;
+        if (stateful instanceof Map<?, ?> m) {
+            Object inner = m.get("context");
+            statefulMap =
+                    inner instanceof Map<?, ?> innerMap
+                            ? castMap(innerMap)
+                            : castMap(m);
+        } else {
+            // The propose metadata's negotiation_context key (engine-external convention shared
+            // with the samples; mirrors the SDK demo constants).
+            Object rawStateCtx = negMeta.get("negotiation_context");
+            if (rawStateCtx instanceof Map<?, ?> m2) {
+                statefulMap = castMap(m2);
+            }
+        }
+        if (statefulMap != null) {
+            NegotiationContext typesCtx = parseTypesContext(statefulMap);
+            if (typesCtx != null) {
+                return new net.openan.a2at.sdk.core.model.NegotiationContext(
+                        typesCtx.negotiationId(),
+                        typesCtx.round(),
+                        net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+            }
+        }
         NegotiationContext typesCtx = extractTypesContext(negMeta);
         if (typesCtx == null) {
             return null;
@@ -555,6 +635,20 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 typesCtx.negotiationId(),
                 typesCtx.round(),
                 net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Map<?, ?> map) {
+        return (Map<String, Object>) map;
+    }
+
+    /** Parses a state-machine context map ({negotiationType, negotiationId, round, status}). */
+    private static NegotiationContext parseTypesContext(Map<String, Object> contextMap) {
+        try {
+            return NegotiationPayloadMapper.contextFromMap(contextMap);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static net.openan.a2at.sdk.core.model.NegotiationContext requireContext(

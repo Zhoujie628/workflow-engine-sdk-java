@@ -98,6 +98,24 @@ class TaskTHandler implements ExtensionHandler {
             log.info("[Task-T] Metadata already preset, skipping generation");
             return CompletableFuture.completedFuture(result);
         }
+        // Structured-data track: caller supplied taskData + taskSchema → deterministic
+        // fromData rendering (no scenario recognition, no LLM).
+        Object taskData = result.remove(A2ATExtension.TASK_DATA_META_KEY);
+        Object taskSchema = result.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
+        Object taskTemplate = result.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
+        if (taskData instanceof Map<?, ?> data && taskSchema instanceof Map<?, ?> schema) {
+            return CompletableFuture.supplyAsync(
+                    () ->
+                            renderFromData(
+                                    a2atClient,
+                                    agentCard,
+                                    taskTUri,
+                                    data,
+                                    schema,
+                                    taskTemplate instanceof String s ? s : null,
+                                    result));
+        }
+        // Free-text track: scenario recognition on the message text.
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
@@ -127,6 +145,49 @@ class TaskTHandler implements ExtensionHandler {
                     }
                     return result;
                 });
+    }
+
+    /** Deterministic fromData rendering; on failure degrades to the free-text track. */
+    private Map<String, Object> renderFromData(
+            A2ATClient a2atClient,
+            AgentCard agentCard,
+            String taskTUri,
+            Map<?, ?> data,
+            Map<?, ?> schema,
+            String templateUriStr,
+            Map<String, Object> result) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> typedData = (Map<String, Object>) data;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> typedSchema = (Map<String, Object>) schema;
+            net.openan.a2at.sdk.core.model.TemplateUri templateUri =
+                    templateUriStr != null
+                            ? net.openan.a2at.sdk.core.model.TemplateUri.parse(templateUriStr)
+                                    .orElse(
+                                            net.openan.a2at.sdk.core.model.StandardTemplates
+                                                    .PRIVATE_LINE_COMPLAINT)
+                            : net.openan.a2at.sdk.core.model.StandardTemplates
+                                    .PRIVATE_LINE_COMPLAINT;
+            net.openan.a2at.sdk.core.model.MetadataContent content =
+                    a2atClient.generateTaskPromptFromDataWithSchema(
+                            typedData, typedSchema, templateUri);
+            if (content != null && content.promptText() != null && !content.promptText().isEmpty()) {
+                result.put(taskTUri, content.promptText());
+                log.info(
+                        "[Task-T] Rendered prompt from task data for '{}': {} chars (template={})",
+                        getAgentName(agentCard),
+                        content.promptText().length(),
+                        content.templateUri());
+                return result;
+            }
+        } catch (Exception e) {
+            log.warn(
+                    "[Task-T] fromData rendering failed for '{}': {}",
+                    getAgentName(agentCard),
+                    e.getMessage());
+        }
+        return result;
     }
 
     @Override

@@ -25,9 +25,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Structured prompt fixtures for the SPN private-line complaint scenario (spec §6 metadata-key
- * conventions). Shared by the demo entry points and the protocol verification cases so the
- * Task-T payload is defined exactly once.
+ * Original business data for the SPN private-line complaint scenario.
+ *
+ * <p>Holds the raw structured fields (not the rendered prompt): the demo passes these to the
+ * engine's fromData track ({@code WorkflowEngineClient.sendMessageFromData}) and the A2A-T SDK
+ * renders the Task-T prompt deterministically from the data + schema. This mirrors the official
+ * SDK sample pattern — callers hand over business data, never a pre-rendered prompt.
+ *
+ * <p>The prompt-fixture variants (blank object / unknown port) for the protocol verification
+ * cases are expressed as data too: the same schema with different values.
  */
 public final class SpnCasePrompts {
 
@@ -40,33 +46,62 @@ public final class SpnCasePrompts {
     private SpnCasePrompts() {}
 
     /**
-     * Task-T structured prompt for the private-line complaint diagnosis (spec case 7.1): a
-     * well-formed complaint with a known faulty port in City1.
+     * JSON schema for the private-line complaint data, mirroring the SDK's bundled slot schema
+     * ({@code Task-T/network-layer/private-line-complaint/v1}): 任务对象 identifies the line,
+     * 任务上下文 carries the complaint context.
      */
-    public static String privateLineComplaintTask() {
-        return taskT(
-                "P781-珠江新城-PTN7900-23-TPA1EG24-17",
-                "\"专线质差\"",
-                "\"event-id-20260511-09013\"");
+    public static Map<String, Object> privateLineComplaintSchema() {
+        Map<String, Object> object = new LinkedHashMap<>();
+        object.put("type", "string");
+        object.put("description", "专线名称/专线业务标识/接入端口名称，三选一标识专线业务对象");
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("type", "string");
+        context.put(
+                "description",
+                "专线业务的故障现象描述和诊断任务上下文：投诉分类(专线中断/专线质差)、问题发生时间、"
+                        + "OSS侧事件流水号、投诉详情");
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("任务对象", object);
+        properties.put("任务上下文", context);
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        return schema;
     }
 
-    /**
-     * Task-T prompt variant with a blank task object and complaint category (spec case 7.3):
-     * triggers server-side blank-slot negotiation.
-     */
-    public static String privateLineComplaintTaskBlankObject() {
-        return taskT("", "", "\"event-id-20260511-09013\"");
+    /** Well-formed complaint (spec case 7.1): known faulty port in City1. */
+    public static Map<String, Object> privateLineComplaintData() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("任务对象", "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17");
+        data.put(
+                "任务上下文",
+                "投诉分类：\"专线质差\"；问题发生时间：\"2026-05-11T08:21:46Z\"；"
+                        + "OSS侧事件流水号：\"event-id-20260511-09013\"；"
+                        + "投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，"
+                        + "访问广州机房的核心交易系统非常慢。\"");
+        return data;
     }
 
-    /**
-     * Task-T prompt variant referencing an unknown port (spec case 7.4): triggers the
-     * semantic-error negotiation path.
-     */
-    public static String privateLineComplaintTaskUnknownPort() {
-        return taskT(
-                "P781-珠江新城-PTN7900-23-TPA1EG24-18",
-                "\"专线质差\"",
-                "\"event-id-20260511-09013\"");
+    /** Blank task-object variant (spec case 7.3): triggers blank-slot negotiation. */
+    public static Map<String, Object> privateLineComplaintDataBlankObject() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("任务对象", "");
+        data.put(
+                "任务上下文",
+                "投诉分类：；问题发生时间：\"2026-05-11T08:21:46Z\"；"
+                        + "OSS侧事件流水号：\"event-id-20260511-09013\"");
+        return data;
+    }
+
+    /** Unknown-port variant (spec case 7.4): triggers the semantic-error negotiation path. */
+    public static Map<String, Object> privateLineComplaintDataUnknownPort() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("任务对象", "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-18");
+        data.put(
+                "任务上下文",
+                "投诉分类：\"专线质差\"；问题发生时间：\"2026-05-11T08:21:46Z\"；"
+                        + "OSS侧事件流水号：\"event-id-20260511-09013\"");
+        return data;
     }
 
     /** Task-T metadata map carrying the given prompt under the standard extension key. */
@@ -74,32 +109,5 @@ public final class SpnCasePrompts {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(TASK_T_URI, taskPrompt);
         return metadata;
-    }
-
-    private static String taskT(String portName, String complaintCategory, String ossEventId) {
-        return "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
-                + "## 任务描述(Task Description)\n"
-                + "基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, "
-                + "达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n"
-                + "## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n"
-                + "## 任务对象(Task Object)\n"
-                + "接入端口名称："
-                + portName
-                + "\n\n"
-                + "## 任务上下文(Task Context)\n"
-                + "1. 投诉分类："
-                + complaintCategory
-                + "\n"
-                + "2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n"
-                + "3. OSS侧事件流水号："
-                + ossEventId
-                + "\n"
-                + "4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，"
-                + "访问广州机房的核心交易系统非常慢。\"\n\n"
-                + "## 预期输出(Expected Output)\n"
-                + "1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n"
-                + "2. 诊断结果详情；(必选)\n"
-                + "3. 修复建议；(可选)\n"
-                + "4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)";
     }
 }

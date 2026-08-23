@@ -60,6 +60,30 @@ public interface ExtensionSender {
     }
 
     /**
+     * Structured-data send: renders the extension prompt deterministically from typed data via
+     * the SDK's fromData pipeline (no LLM), then sends as a one-shot pre-positioning message.
+     *
+     * <p>Callers holding structured business data (e.g. an authorization policy as fields, not
+     * prose) should prefer this over the natural-language variants.
+     *
+     * @param agentName target agent name
+     * @param instruction short instruction text (becomes message parts)
+     * @param data structured extension input (string-to-object map)
+     * @param schema JSON schema describing the meaning of each data field
+     * @param extension extension type; only AUTHORIZATION_T and NOTIFICATION_T support
+     *     fromData rendering here
+     * @return future completing with the first response
+     */
+    default CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            A2ATExtension extension) {
+        throw new UnsupportedOperationException("sendExtensionMessageFromData not implemented");
+    }
+
+    /**
      * Establish a Notification-T subscription.
      *
      * <p>The returned future completes on the first acknowledgement or event. Subsequent events
