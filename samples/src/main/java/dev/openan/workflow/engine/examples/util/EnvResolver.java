@@ -17,7 +17,7 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples.agents;
+package dev.openan.workflow.engine.examples.util;
 
 import java.io.File;
 

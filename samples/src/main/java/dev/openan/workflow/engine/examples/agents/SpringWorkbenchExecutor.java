@@ -20,7 +20,6 @@
 package dev.openan.workflow.engine.examples.agents;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
-import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
@@ -41,7 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 /**
  * Spring-managed Workbench AgentExecutor.
@@ -56,12 +54,9 @@ import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 public class SpringWorkbenchExecutor extends BaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
 
-    private final ClientRuntimeFactory runtimeFactory;
     private final WorkbenchClientProperties properties;
 
-    public SpringWorkbenchExecutor(
-            ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
-        this.runtimeFactory = runtimeFactory;
+    public SpringWorkbenchExecutor(WorkbenchClientProperties properties) {
         this.properties = properties;
     }
 
@@ -82,15 +77,6 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                 : null;
     }
 
-    private A2AJavaClientRuntime createClientRuntime() {
-        A2AJavaClientRuntime runtime = runtimeFactory.create();
-        log.info(
-                "[SpringWorkbench] TRANSPORT_MODE mode={}, runtime={}",
-                runtimeFactory.mode(),
-                runtime != null ? runtime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime");
-        return runtime;
-    }
-
     @Override
     public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
         String taskId = ctx.getTaskId();
@@ -104,7 +90,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                 contextId,
                 input.length(),
                 properties.getOrchUrl(),
-                runtimeFactory.mode(),
+                "direct",
                 properties.isSslVerify());
 
         emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
@@ -116,8 +102,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                             properties.getOrchUrl(),
                             resolveCredentialsPath(),
                             properties.isSslVerify(),
-                            resolveEnvPath(),
-                            createClientRuntime())
+                            resolveEnvPath())
                             .run(input);
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put(A2ATExtension.TASK_T.uri(), result);

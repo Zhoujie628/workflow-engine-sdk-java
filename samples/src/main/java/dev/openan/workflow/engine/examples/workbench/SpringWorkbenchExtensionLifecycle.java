@@ -26,32 +26,23 @@ import jakarta.annotation.PreDestroy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 /** Keeps Authorization-T/Notification-T pre-positioning independent from individual tasks. */
 @Component
 public final class SpringWorkbenchExtensionLifecycle {
     private static final Logger log =
             LoggerFactory.getLogger(SpringWorkbenchExtensionLifecycle.class);
 
-    private final ClientRuntimeFactory runtimeFactory;
-    private final ConfigurableListableBeanFactory beanFactory;
     private final WorkbenchClientProperties properties;
 
     private WorkbenchExtensionLifecycle lifecycle;
 
-    public SpringWorkbenchExtensionLifecycle(
-            ClientRuntimeFactory runtimeFactory,
-            ConfigurableListableBeanFactory beanFactory,
-            WorkbenchClientProperties properties) {
-        this.runtimeFactory = runtimeFactory;
-        this.beanFactory = beanFactory;
+    public SpringWorkbenchExtensionLifecycle(WorkbenchClientProperties properties) {
         this.properties = properties;
     }
 
@@ -60,16 +51,12 @@ public final class SpringWorkbenchExtensionLifecycle {
         if (lifecycle != null && lifecycle.isActive()) {
             return;
         }
-        if (beanFactory.containsBean("eastcomOrderSimulatorServer")) {
-            beanFactory.registerDependentBean(
-                    "eastcomOrderSimulatorServer", "springWorkbenchExtensionLifecycle");
-        }
         WorkbenchExtensionLifecycle candidate =
                 new WorkbenchExtensionLifecycle(
                         resolveCredentialsPath(),
                         properties.isSslVerify(),
                         resolveEnvPath(),
-                        runtimeFactory::create,
+                        null,
                         this::onNotification);
         candidate.start();
         lifecycle = candidate;

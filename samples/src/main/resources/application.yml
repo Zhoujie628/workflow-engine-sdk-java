@@ -1,6 +1,8 @@
 server:
   port: 26337
   ssl:
+    # Public demo certificate only. Its private key and password are intentionally known;
+    # replace both before any shared, test, staging, or production deployment.
     enabled: true
     key-store: classpath:a2a-server-keystore.p12
     key-store-password: changeit

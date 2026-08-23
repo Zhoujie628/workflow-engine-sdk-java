@@ -17,7 +17,7 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.examples;
+package dev.openan.workflow.engine.examples.util;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

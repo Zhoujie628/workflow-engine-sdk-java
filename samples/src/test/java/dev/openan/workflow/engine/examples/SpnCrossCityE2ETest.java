@@ -20,7 +20,7 @@ import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
-import dev.openan.workflow.engine.examples.agents.WorkbenchControlPoint;
+import dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.model.ExecutionResult;
 import dev.openan.workflow.engine.model.JumpCondition;
