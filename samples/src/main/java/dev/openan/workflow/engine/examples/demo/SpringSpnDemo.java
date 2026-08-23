@@ -31,7 +31,6 @@ import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.examples.gateway.MockGatewayServer;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
-import dev.openan.workflow.engine.examples.demo.SpnCrossCityDiagnosisDemo;
 import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -50,8 +49,7 @@ import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
 /**
  * Demo entry point for the SPN cross-city diagnosis.
  *
- * <p>Mirrors {@link SpnCrossCityDiagnosisDemo} but with
- * the Workbench Agent running as a Spring Boot service. The demo orchestrates:
+ * <p>The Workbench Agent runs as a Spring Boot service. The demo orchestrates:
  *
  * <ol>
  *   <li>Start Spring Boot Workbench Agent (A2A server on port 26337)
@@ -134,19 +132,13 @@ public class SpringSpnDemo {
                     "[Demo] STAGE_DONE stage=start-spring-workbench, elapsedMs={}",
                     elapsedMillis(stageStarted));
 
-            String taskText =
-                    "SPN cross-city fault diagnosis: "
-                            + "Customer A Shanghai-Guangzhou SPN link down, "
-                            + "dispatch two city OMCs for parallel diagnosis, "
-                            + "aggregate analysis to locate the fault city, "
-                            + "authorize recovery, OMC reports recovery result";
             stageStarted = System.nanoTime();
             log.info(
                     "[Demo] STAGE_START stage=send-workbench-task, target={}, inputChars={}",
                     WB_AGENT_NAME,
-                    taskText.length());
-            log.debug("[Demo] Workbench task text={}", taskText);
-            String response = sendTaskToWorkbench(taskText);
+                    14);
+            log.debug("[Demo] Workbench task text={}", "创建专线业务投诉诊断任务");
+            String response = sendTaskToWorkbench();
             log.info(
                     "[Demo] STAGE_DONE stage=send-workbench-task, responseChars={}, elapsedMs={}",
                     response != null ? response.length() : 0,
@@ -218,7 +210,8 @@ public class SpringSpnDemo {
                 card.get("name"), resourcePath, url, elapsedMillis(started));
     }
 
-    private String sendTaskToWorkbench(String taskText) throws Exception {
+    /** Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1. */
+    private String sendTaskToWorkbench() throws Exception {
         long started = System.nanoTime();
         String cardPath =
                 getClass()
@@ -242,6 +235,30 @@ public class SpringSpnDemo {
                                 .build());
         DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
         try {
+            // Task-T structured prompt placed in message.metadata (spec §6).
+            String taskPrompt =
+                    "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
+                            + "## 任务描述(Task Description)\n"
+                            + "基于<任务对象>、<任务上下文> 进行投诉场景的网络侧故障根因诊断, "
+                            + "达成<任务目标>中定义的投诉诊断目标，按照<预期输出>中定义的结构返回任务处理结果。\n\n"
+                            + "## 任务目标(Task Target)\n对网络侧故障进行诊断，返回故障根因和修复建议等诊断结果信息。\n\n"
+                            + "## 任务对象(Task Object)\n"
+                            + "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17\n\n"
+                            + "## 任务上下文(Task Context)\n"
+                            + "1. 投诉分类：\"专线质差\"\n"
+                            + "2. 问题发生时间：\"2026-05-11T08:21:46Z\"\n"
+                            + "3. OSS侧事件流水号：\"event-id-20260511-09013\"\n"
+                            + "4. 投诉详情：\"从5月11号早上8点半开始，深圳访问广州的响应延迟从平均12ms骤升至320ms，访问广州机房的核心交易系统非常慢。\"\n\n"
+                            + "## 预期输出(Expected Output)\n"
+                            + "1. 诊断结果；参数的取值范围包括：成功、失败；(必选)\n"
+                            + "2. 诊断结果详情；(必选)\n"
+                            + "3. 修复建议；(可选)\n"
+                            + "4. 故障根因列表，每个故障根因包含故障根因名称、详细描述、修复建议、故障根因点位置等信息；(可选)";
+            String taskTUri =
+                    "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1";
+            java.util.Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+            metadata.put(taskTUri, taskPrompt);
+            String partsText = "创建专线业务投诉诊断任务";
             log.info(
                     "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}",
                     WB_AGENT_NAME,
@@ -249,8 +266,8 @@ public class SpringSpnDemo {
                     wbCard.supportedInterfaces().isEmpty()
                             ? "?"
                             : wbCard.supportedInterfaces().get(0).url(),
-                    taskText.length());
-            SendMessageResult result = client.sendMessage(WB_AGENT_NAME, taskText).join();
+                    partsText.length());
+            SendMessageResult result = client.sendMessage(WB_AGENT_NAME, partsText, null, metadata).join();
             log.info(
                     "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",
                     WB_AGENT_NAME,

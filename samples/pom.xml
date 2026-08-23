@@ -31,6 +31,12 @@
             <artifactId>a2a-java-sdk-spec-grpc</artifactId>
             <version>${a2a.java.sdk.version}</version>
         </dependency>
+        <!-- A2A-T server SDK (for server-side prompt compliance checking in OMC agents) -->
+        <dependency>
+            <groupId>net.openan.a2a-t.sdk</groupId>
+            <artifactId>a2a-t-server</artifactId>
+            <version>1.0.0</version>
+        </dependency>
         <!-- Protobuf JSON formatting (for serializing A2A messages to JSON in gateway adapter) -->
         <dependency>
             <groupId>com.google.protobuf</groupId>

@@ -1,7 +1,22 @@
 /*
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * All Rights Reserved.
+ *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0 (the License); you may
+ *    not use this file except in compliance with the License. You may obtain
+ *    a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an AS IS BASIS, WITHOUT
+ *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ *    License for the specific language governing permissions and limitations
+ *    under the License.
  */
+
 package dev.openan.workflow.engine.examples.gateway;
 
 import com.eastcom.apollo.orders.commons.api.HttpService;
@@ -369,18 +384,32 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             String httpMethod = parsedMethod[0];
                             String httpPath = parsedPath[0];
                             String body = bodyBuf.toString();
-                            String targetBase = lastResolvedTarget != null
-                                    ? lastResolvedTarget : "http://127.0.0.1:26335";
+                            // The SDK's configureHeaderHost sets the HTTP Host header to the
+                            // full neUrl (e.g. "https://127.0.0.1:26335") returned by
+                            // loadNeResource.  Using this per-request header avoids the race
+                            // condition on the shared lastResolvedTarget field when two NEs
+                            // call loadNeResource concurrently on the same RSocket connection.
+                            String hostHeader = findHeader(parsedHeaders, "Host");
+                            String targetBase;
+                            if (hostHeader != null
+                                    && (hostHeader.startsWith("http://")
+                                            || hostHeader.startsWith("https://"))) {
+                                targetBase = withoutTrailingSlash(hostHeader);
+                            } else {
+                                targetBase = lastResolvedTarget != null
+                                        ? lastResolvedTarget : "http://127.0.0.1:26335";
+                            }
                             String forwardUrl = targetBase
                                     + (httpPath.startsWith("/") ? httpPath : "/" + httpPath);
                             boolean streaming = forwardUrl.endsWith("/message:stream");
-                            log.info("[EastcomSimulator] FORWARD_START method={}, mode={}, target={}, bodyChars={}",
-                                    httpMethod, streaming ? "stream" : "send", forwardUrl, body.length());
-                            forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
-                                    .subscribe(
-                                        sink::next,
-                                        sink::error,
-                                        () -> {
+                           log.info("[EastcomSimulator] FORWARD_START method={}, mode={}, target={}, bodyChars={}",
+                                   httpMethod, streaming ? "stream" : "send", forwardUrl, body.length());
+                           forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
+                                    .subscribeOn(Schedulers.boundedElastic())
+                                   .subscribe(
+                                       sink::next,
+                                       sink::error,
+                                       () -> {
                                             // Response Flux completed - complete the sink
                                             // to close the RSocket channel
                                             sink.complete();
@@ -429,13 +458,12 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             sink.onDispose(disconnect::run);
                             connection.setRequestMethod(fMethod.isBlank() ? "POST" : fMethod);
                             connection.setDoOutput(true);
-                            connection.setConnectTimeout(30_000);
-                            // Short read timeout: Notification-T idle streams close after 3s
-                            // of no data, releasing the RSocket channel for subsequent NE requests.
-                            // Task-T/Negotiation-T complete via terminal-event detection; the 5s
-                            // gap between chunks is enough for OMC processing.
-                            connection.setReadTimeout(5_000);
-                            copyHeaders(fHeaders, connection);
+            connection.setConnectTimeout(30_000);
+            // Read timeout must cover LLM-backed OMC processing (A2AT_LLM_TIMEOUT_SECONDS
+            // defaults to 60s). Notification-T streams are no longer long-lived
+            // (ack-and-release), so this only applies to active diagnosis requests.
+            connection.setReadTimeout(65_000);
+            copyHeaders(fHeaders, connection);
                             try (OutputStream output = connection.getOutputStream()) {
                                 output.write(fBody.getBytes(StandardCharsets.UTF_8));
                             }
@@ -543,6 +571,20 @@ if (terminalScan.length() > 32_768) {
             if (connection.getRequestProperty("Content-Type") == null) {
                 connection.setRequestProperty("Content-Type", "application/json");
             }
+        }
+
+        /** Case-insensitive header lookup (HTTP header names are case-insensitive). */
+        private static String findHeader(Map<String, String> headers, String name) {
+            String exact = headers.get(name);
+            if (exact != null) {
+                return exact;
+            }
+            for (var entry : headers.entrySet()) {
+                if (name.equalsIgnoreCase(entry.getKey())) {
+                    return entry.getValue();
+                }
+            }
+            return null;
         }
 
         private static OrderHttpResponse responseWithHeader(String body) {

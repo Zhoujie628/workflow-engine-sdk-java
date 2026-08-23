@@ -1,7 +1,22 @@
 /*
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * All Rights Reserved.
+ *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0 (the License); you may
+ *    not use this file except in compliance with the License. You may obtain
+ *    a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an AS IS BASIS, WITHOUT
+ *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ *    License for the specific language governing permissions and limitations
+ *    under the License.
  */
+
 package dev.openan.workflow.engine.examples.gateway;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
@@ -215,6 +230,28 @@ public final class OrderGatewayClientRuntime
                     contextId,
                     route.ne());
         }
+    }
+
+    @Override
+    public org.a2aproject.sdk.spec.Task getTask(
+            AgentCard agentCard, String taskId,
+            org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
+        throw new UnsupportedOperationException("getTask not supported by gateway runtime");
+    }
+
+    @Override
+    public org.a2aproject.sdk.spec.Task cancelTask(
+            AgentCard agentCard, String taskId,
+            org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
+        throw new UnsupportedOperationException("cancelTask not supported by gateway runtime");
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<dev.openan.workflow.engine.model.SendMessageResult> subscribeToTask(
+            AgentCard agentCard, String taskId,
+            org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext,
+            java.util.function.Consumer<ClientEvent> eventSink) {
+        throw new UnsupportedOperationException("subscribeToTask not supported by gateway runtime");
     }
 
     @Override
@@ -570,7 +607,7 @@ public final class OrderGatewayClientRuntime
             }
 
             ConversationSessionKey key =
-                    new ConversationSessionKey(contextId, route.ne(), channel);
+                    new ConversationSessionKey(route.ne(), channel);
             while (true) {
                 ensureOpen();
                 ManagedSession entry = sessions.computeIfAbsent(key, ignored -> new ManagedSession());
@@ -614,10 +651,11 @@ public final class OrderGatewayClientRuntime
         }
 
         private boolean closeConversation(String contextId, String ne, String channel) {
-            if (contextId == null || contextId.isBlank()) {
-                return false;
-            }
-            ConversationSessionKey key = new ConversationSessionKey(contextId, ne, channel);
+            // Sessions are keyed by NE (not contextId) and reused across conversations.
+            // An explicit closeConversation releases the session for that NE+channel so
+            // a fresh login happens on the next request. During a multi-round negotiation
+            // (follow-up messages) the session stays alive and is reused.
+            ConversationSessionKey key = new ConversationSessionKey(ne, channel);
             ManagedSession entry = sessions.get(key);
             if (entry == null) {
                 return false;
@@ -642,13 +680,13 @@ public final class OrderGatewayClientRuntime
 
         @Override
         public void close() {
-            if (!closed.compareAndSet(false, true)) {
+        if (!closed.compareAndSet(false, true)) {
                 return;
             }
-            while (!sessions.isEmpty()) {
-                ConversationSessionKey key = sessions.keySet().iterator().next();
-                closeConversation(key.contextId(), key.ne(), key.channel());
+            for (var entry : new java.util.ArrayList<>(sessions.values())) {
+                closeSession(entry);
             }
+            sessions.clear();
         }
 
         private static void closeSession(ManagedSession entry) {
@@ -665,7 +703,7 @@ public final class OrderGatewayClientRuntime
         }
     }
 
-    private record ConversationSessionKey(String contextId, String ne, String channel) {}
+    private record ConversationSessionKey(String ne, String channel) {}
 
     private static final class ManagedSession {
         private final ReentrantLock lock = new ReentrantLock();
