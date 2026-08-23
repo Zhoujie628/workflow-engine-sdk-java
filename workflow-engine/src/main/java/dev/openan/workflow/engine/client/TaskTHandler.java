@@ -79,13 +79,22 @@ class TaskTHandler implements ExtensionHandler {
         if (a2atClient == null) {
             return CompletableFuture.completedFuture(metadata);
         }
-        // Skip Task-T prompt generation when this is a Negotiation-T follow-up
-        // (metadata already carries the Negotiation-T key from the Accept prompt).
+        // Skip Task-T prompt generation when this is a Negotiation-T follow-up: the metadata
+        // carries a RENDERED follow-up message under the Negotiation-T key. An EMPTY
+        // Negotiation-T value only activates the A2A-Extensions header (first task send) and
+        // must NOT skip generation.
         if (metadata != null) {
-            for (String key : metadata.keySet()) {
-                if (key.toUpperCase(java.util.Locale.ROOT).contains("NEGOTIATION-T")) {
+            for (Map.Entry<String, Object> entry : metadata.entrySet()) {
+                if (entry.getKey().toUpperCase(java.util.Locale.ROOT).contains("NEGOTIATION-T")
+                        && entry.getValue() instanceof String s
+                        && !s.isEmpty()) {
                     log.info("[Task-T] Skipping prompt generation for negotiation follow-up");
-                    return CompletableFuture.completedFuture(metadata);
+                    // Still strip engine-internal fromData keys: they must never reach the wire.
+                    Map<String, Object> cleaned = new HashMap<>(metadata);
+                    cleaned.remove(A2ATExtension.TASK_DATA_META_KEY);
+                    cleaned.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
+                    cleaned.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
+                    return CompletableFuture.completedFuture(cleaned);
                 }
             }
         }
