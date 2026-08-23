@@ -116,17 +116,51 @@ public interface WorkflowEngineClient {
 2. 提取 metadata（task 级 + artifact 级合并）
 3. Negotiation-T 自动循环（metadata 携带 Negotiation-T key 时触发；见下方「协商自动循环行为」）
 
+#### sendMessageFromData（结构化数据双轨）
+
+```java
+CompletableFuture<SendMessageResult> sendMessageFromData(
+        String agentName,
+        String message,
+        Map<String, Object> data,
+        Map<String, Object> schema,
+        TemplateUri templateUri);
+```
+
+| 参数           | 类型                  | 说明                                                    |
+|----------------|-----------------------|---------------------------------------------------------|
+| `agentName`    | `String`              | 目标智能体名称                                          |
+| `message`      | `String`              | 伴随的短消息文本（A2A 消息 parts 文本）                 |
+| `data`         | `Map<String, Object>` | 结构化业务数据（原始字段，非渲染后的提示词）            |
+| `schema`       | `Map<String, Object>` | JSON Schema，描述各数据字段的含义                      |
+| `templateUri`  | `TemplateUri`         | 目标模板；null 用 SDK 默认（PRIVATE_LINE_COMPLAINT）    |
+
+**双轨选型**：业务方持有结构化数据（如投诉工单字段）时优先用本方法——SDK 走
+`generateTaskPromptFromDataWithSchema` 确定性渲染（无场景识别、无 LLM 调用）；持有自然语言
+描述时用 `sendMessage`（SDK 场景识别管线）。两条轨道都完整经过 Negotiation-T 自动循环、
+认证和扩展头注入。
+
+`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
+为 Authorization-T / Notification-T 前置预置提供同样的结构化数据轨道。
+
 #### 协商自动循环行为
 
 - **触发条件**：响应 metadata 携带 Negotiation-T 扩展 key（agent 通过 `Message(ROLE_AGENT)` +
-  `INPUT_REQUIRED` 发起协商）。
-- **每轮**：`ControlPoint.onNegotiation` 生成澄清文本 → SDK 内容层渲染 follow-up 消息
-  （Accept 模板；clarification 以 `reject:` / `abort:` 前缀开头则渲染 Reject / Abort 模板）→
-  SDK 状态机推进（AGREED / REJECTED）→ 发送给 agent → 递归检查下一轮。
+  `INPUT_REQUIRED` 发起协商），且消息 metadata 携带 `negotiation_context`（协商上下文，
+  由 agent 侧 `startNegotiation` 产生）。
+- **每轮**：SDK `receiveNegotiation` 解析协商请求 → `validateProposePromptAndDataFilling`
+  按模板校验并抽取参数 → `ControlPoint.onNegotiation` 生成澄清 → SDK 内容层渲染 follow-up
+  消息 → SDK 状态机推进（`continueNegotiation`，AGREED / REJECTED）→ 发送给 agent →
+  递归检查下一轮。
+- **澄清文本约定**（onNegotiation 返回值）：
+  - `data:{...json...}` — 确定性 fromData 渲染 Accept（无 LLM 调用，JSON 为补充参数 map）
+  - `reject:原因` / `abort:原因` — 渲染 Reject / Abort 终态模板
+  - 其他文本 — fromText 渲染 Accept（一次 LLM 抽取）
 - **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
   （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
-- **协商上下文**：SDK 将 id/round/maxRounds 放在消息 metadata 的 `negotiationContext` key 中
-  （不在消息文本里渲染），引擎解析后传给 validate API。
+- **协商上下文**：agent 将 `startNegotiation` 载荷的上下文（negotiationType / negotiationId /
+  round / status）放在消息 metadata 的 `negotiation_context` key 中，引擎解析后传给
+  receive / validate / continue API。
 
 #### 模板查询
 
