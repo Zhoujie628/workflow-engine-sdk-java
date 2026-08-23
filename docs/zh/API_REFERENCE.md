@@ -73,8 +73,18 @@ public interface WorkflowEngineClient {
 
     void setControlPoint(ControlPoint controlPoint);
 
-
     void setEventCallback(EventCallback callback);
+
+    // A2A-T 模板查询（SDK 未配置时返回空集合，不抛异常）
+    List<PromptTemplate> getPrompts();               // 全部扩展的可用模板
+    List<PromptTemplate> getNegotiationPrompts();    // 协商模板（3 类型 x 2 阶段 + abort）
+    Optional<PromptTemplate> getPrompt(TemplateUri); // 按 URI 查询单个模板
+
+    // 任务生命周期（A2A 协议操作）
+    CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+    CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+    CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName, String taskId, Consumer<Map<String, Object>> callback);
 
     void close();
 }
@@ -104,7 +114,32 @@ public interface WorkflowEngineClient {
 
 1. 从 SSE 事件提取响应文本
 2. 提取 metadata（task 级 + artifact 级合并）
-3. Negotiation-T 自动循环（如果 `INPUT_REQUIRED`）
+3. Negotiation-T 自动循环（metadata 携带 Negotiation-T key 时触发；见下方「协商自动循环行为」）
+
+#### 协商自动循环行为
+
+- **触发条件**：响应 metadata 携带 Negotiation-T 扩展 key（agent 通过 `Message(ROLE_AGENT)` +
+  `INPUT_REQUIRED` 发起协商）。
+- **每轮**：`ControlPoint.onNegotiation` 生成澄清文本 → SDK 内容层渲染 follow-up 消息
+  （Accept 模板；clarification 以 `reject:` / `abort:` 前缀开头则渲染 Reject / Abort 模板）→
+  SDK 状态机推进（AGREED / REJECTED）→ 发送给 agent → 递归检查下一轮。
+- **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
+  （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
+- **协商上下文**：SDK 将 id/round/maxRounds 放在消息 metadata 的 `negotiationContext` key 中
+  （不在消息文本里渲染），引擎解析后传给 validate API。
+
+#### 模板查询
+
+模板查询暴露 SDK 内容层的模板目录，返回 `PromptTemplate`（templateUri / description / content）：
+
+- `getPrompts()`：全部 A2A-T 扩展（Task-T / Notification-T / Authorization-T / Negotiation-T）
+  在当前语言（`.env` 的 `A2AT_LANGUAGE`）下的可用模板，按 URI 排序。
+- `getNegotiationPrompts()`：协商模板全集（信息/目标/可行性协商的 propose 与 accept-reject，
+  加通用 abort 模板），固定顺序。
+- `getPrompt(uri)`：按 `TemplateUri` 查单个模板；不存在时返回空。
+
+模板 URI 常量用 SDK 的 `StandardTemplates`（如 `StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE`），
+避免手写 URI 字符串。
 
 ### ExtensionSender
 
@@ -172,8 +207,9 @@ public interface ExtensionSender {
 | `credentialsConfigPath`         | `String`                 | null   | 凭证 JSON 文件路径；显式配置缺失或损坏时启动失败 |
 | `credentialsConfig`             | `Map`                    | null   | 内联凭证配置；AgentCard 声明安全要求时必须匹配 |
 | `a2atEnvPath`                   | `String`                 | null   | `.env` 文件路径                           |
-| `maxNegotiationRounds`          | `int`                    | `3`    | 协商自动循环最大轮数                      |
+| `maxNegotiationRounds`          | `int`                    | `3`    | 协商自动循环最大轮数（超限走 abort 终止） |
 | `customHandlers`                | `List<ExtensionHandler>` | null   | 自定义扩展处理器                          |
+| `negotiationParamSchema`        | `Map`                    | null   | 协商 validate-and-fill 的业务参数 JSON Schema；null = 空 schema（仅提取协商上下文参数）。声明业务字段让引擎核心保持领域无关 |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -219,10 +255,30 @@ public interface ExtensionHandler {
             AgentCard agentCard, SendMessageResult result,
             A2ATClient a2atClient, ControlPoint controlPoint,
             EventCallback eventCallback);
+
+    // 协商 validate-and-fill 的业务参数 schema（默认空 schema）
+    Map<String, Object> negotiationParamSchema();
 }
 ```
 
-内置：Task-T 和 Negotiation-T 自动处理。可通过配置的 customHandlers 注册自定义处理器。
+内置：Task-T 和 Negotiation-T 自动处理。可通过配置的 customHandlers 注册自定义处理器
+（同 keyword 后注册的覆盖内置）。
+
+### A2ATContentFacade
+
+SDK 协商内容层的引擎门面，经 `A2ATransport.getContentFacade()` 获取（未配置 `.env` 时为 null）。
+SDK 消息生成/校验/模板查询的完整能力面，方法与 SDK `A2ATClient` 一一对应：
+
+| 分组 | 方法 | 说明 |
+|------|------|------|
+| fromData 生成 | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | 类型化数据确定性渲染，无 LLM |
+| fromText 生成 | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | 自由文本 + 一步 LLM 抽取 |
+| 运行时状态机 | `startNegotiation` / `receiveNegotiation` / `continueNegotiation` | SDK 协商轮次推进 |
+| 校验提取 | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | 规则门 + LLM 语义校验 + 参数合并；需传 `NegotiationContext`（null = 非协商消息） |
+| 模板查询 | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | 模板目录枚举与查询 |
+| 工具 | `toMetadata(MetadataContent)` | 生成消息转 A2A metadata map（含 `templateUri`、`negotiationContext` key） |
+
+模板 URI 用 `StandardTemplates` 常量传参。失败抛 `A2ATError` 子类，调用方应捕获并降级。
 
 ### A2AJavaClientRuntime
 
@@ -587,6 +643,15 @@ ExecutionResult result = executor.run().join();
 > 不在 AgentCard 上声明，不被 ExtensionHandler 处理，也不出现在
 > `A2A-Extensions` 头中。
 
+> **协商相关 metadata key 约定：**
+>
+> - `negotiationContext`（SDK 契约）：SDK 生成协商消息时写入，携带 `{id, round, maxRounds}`。
+>   validate API 依赖它区分协商消息与普通消息。
+> - `templateUri`（SDK 契约）：SDK 生成消息时写入，标识渲染所用模板。
+> - `negotiation_context` / `negotiation_message` / `negotiation_params`（引擎内部）：
+>   `NegotiationTHandler` 接收协商消息后写入 result metadata，供自动循环和调用方读取。
+>   常量定义在 `A2ATExtension`（`NEGOTIATION_CONTEXT_META_KEY` 等）。
+
 ---
 
 ## 线程安全
@@ -598,7 +663,9 @@ ExecutionResult result = executor.run().join();
 ## 错误处理
 
 - 智能体调用失败抛出 `RuntimeException`（包装原始异常）。
-- 协商失败在 `maxNegotiationRounds` 轮后终止。
+- 协商超过 `maxNegotiationRounds` 轮后：发出 `NEGOTIATION_FAILED` 事件，通过 SDK abort
+  模板向 agent 发送终止消息（尽力而为），agent 最后一次回复作为最终响应；循环不再继续。
+- 协商 follow-up 的 SDK 内容生成失败时降级为裸澄清文本（原文放入 Negotiation-T key），记 `WARN`。
 - 认证失败（401）记为 `ERROR` 日志，认证头不设置，请求继续发出。
 - SSE 流在终态事件后的连接关闭日志为 `DEBUG` 级别（预期行为）。
 

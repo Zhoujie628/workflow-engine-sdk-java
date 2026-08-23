@@ -254,6 +254,10 @@ A2AT_CRED_KEY=<32-byte hex>
 
 When `a2atEnvPath` is null, Task-T prompt generation is skipped.
 
+**Disabling the LLM layer in tests**: set the system property `a2at.llm.disabled=true` to make the
+sample agents skip A2ATClient/A2ATServer initialization entirely — negotiation falls back to
+default texts, no LLM calls are made. Used by the sample test suites for hermetic runs.
+
 ## 10. Integration Patterns
 
 ### SSE Server (Spring WebFlux)

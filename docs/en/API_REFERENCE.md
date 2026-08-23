@@ -75,6 +75,17 @@ public interface WorkflowEngineClient {
 
     void setEventCallback(EventCallback callback);
 
+    // A2A-T template queries (empty when the SDK is not configured; never throws)
+    List<PromptTemplate> getPrompts();               // all extensions' templates
+    List<PromptTemplate> getNegotiationPrompts();    // negotiation templates (3 types x 2 phases + abort)
+    Optional<PromptTemplate> getPrompt(TemplateUri); // single template by URI
+
+    // Task lifecycle (A2A protocol operations)
+    CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+    CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+    CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName, String taskId, Consumer<Map<String, Object>> callback);
+
     void close();
 }
 ```
@@ -104,7 +115,36 @@ After receiving:
 
 1. Response text extraction from SSE events
 2. Metadata extraction (task-level + artifact-level)
-3. Negotiation-T auto-loop (if `INPUT_REQUIRED`)
+3. Negotiation-T auto-loop (triggered when metadata carries the Negotiation-T key; see "Negotiation auto-loop behavior" below)
+
+#### Negotiation auto-loop behavior
+
+- **Trigger**: the response metadata carries the Negotiation-T extension key (the agent opened a
+  negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`).
+- **Each round**: `ControlPoint.onNegotiation` produces a clarification → the SDK content layer
+  renders the follow-up message (Accept template; a `reject:` / `abort:` prefix on the
+  clarification selects the Reject / Abort terminal template) → the SDK state machine advances
+  (AGREED / REJECTED) → send to the agent → recurse on the next round.
+- **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
+  via the SDK abort template (best effort — delivery failures are logged only), a
+  `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
+- **Negotiation context**: the SDK carries id/round/maxRounds in the message metadata's
+  `negotiationContext` key (not rendered in the message text); the engine parses it and passes it
+  to the validate APIs.
+
+#### Template queries
+
+The template queries expose the SDK content layer's template catalog and return
+`PromptTemplate` (templateUri / description / content):
+
+- `getPrompts()`: every A2A-T extension's (Task-T / Notification-T / Authorization-T /
+  Negotiation-T) loadable templates for the configured language (`.env` `A2AT_LANGUAGE`), sorted by URI.
+- `getNegotiationPrompts()`: the full negotiation set (propose and accept-reject for information,
+  target and feasibility negotiation, plus the common abort template), fixed order.
+- `getPrompt(uri)`: one template by `TemplateUri`; empty when missing.
+
+Use the SDK's `StandardTemplates` constants for template URIs (e.g.
+`StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE`) instead of hand-written URI strings.
 
 ### ExtensionSender
 
@@ -175,6 +215,7 @@ Builder-based configuration for the workflow engine client.
 | `a2atEnvPath`                   | `String`                 | null    | Path to `.env` file                          |
 | `maxNegotiationRounds`          | `int`                    | `3`     | Max negotiation auto-loop rounds             |
 | `customHandlers`                | `List<ExtensionHandler>` | null    | Custom extension handlers                    |
+| `negotiationParamSchema`        | `Map`                    | null    | Business parameter JSON schema for the negotiation validate-and-fill; null = empty schema (context params only). Declaring your domain fields keeps the engine core domain-agnostic |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -220,11 +261,32 @@ public interface ExtensionHandler {
             AgentCard agentCard, SendMessageResult result,
             A2ATClient a2atClient, ControlPoint controlPoint,
             EventCallback eventCallback);
+
+    // Business parameter schema for the negotiation validate-and-fill (default: empty schema)
+    Map<String, Object> negotiationParamSchema();
 }
 ```
 
 Built-in: Task-T and Negotiation-T are handled automatically. You can register custom handlers via customHandlers in the
-config.
+config (a later registration with the same keyword overrides the built-in).
+
+### A2ATContentFacade
+
+Engine facade over the SDK's negotiation content layer, obtained via
+`A2ATransport.getContentFacade()` (null when no `.env` is configured). It exposes the SDK's full
+message-generation / validation / template-query surface, one method per `A2ATClient` counterpart:
+
+| Group | Methods | Notes |
+|-------|---------|-------|
+| fromData generation | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | deterministic rendering from typed data, no LLM |
+| fromText generation | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | free text + one LLM extraction step |
+| Runtime state machine | `startNegotiation` / `receiveNegotiation` / `continueNegotiation` | SDK negotiation round progression |
+| Validate and fill | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | rule gate + LLM semantic validation + param merge; requires a `NegotiationContext` (null = not a negotiation message) |
+| Template queries | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | catalog enumeration and lookup |
+| Utility | `toMetadata(MetadataContent)` | generated message → A2A metadata map (with `templateUri`, `negotiationContext` keys) |
+
+Pass template URIs via `StandardTemplates` constants. Failures throw `A2ATError` subtypes;
+callers are expected to catch and degrade.
 
 ### A2AJavaClientRuntime
 
@@ -601,7 +663,11 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 ## Error Handling
 
 - Agent call failures throw `RuntimeException` wrapping the cause.
-- Negotiation failures fall through after `maxNegotiationRounds`.
+- Negotiation beyond `maxNegotiationRounds` rounds: a `NEGOTIATION_FAILED` event fires, a terminal
+  message is sent to the agent via the SDK abort template (best effort), and the last agent reply
+  stands as the final response; the loop does not continue.
+- SDK content-generation failures for negotiation follow-ups degrade to the raw clarification text
+  (placed under the Negotiation-T key), logged at `WARN`.
 - Auth failures (401) are logged as `ERROR` and auth headers are not set; the request proceeds without auth.
 - SSE stream errors after terminal events are logged at `DEBUG` level (expected behavior).
 
