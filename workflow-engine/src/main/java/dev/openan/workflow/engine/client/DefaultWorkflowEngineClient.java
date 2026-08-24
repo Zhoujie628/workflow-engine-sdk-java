@@ -29,9 +29,6 @@ import net.openan.a2at.sdk.core.model.MetadataContent;
 import net.openan.a2at.sdk.core.model.PromptTemplate;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.core.model.TemplateUri;
-import net.openan.a2at.sdk.negotiation.runtime.helper.NegotiationPayloadMapper;
-import net.openan.a2at.sdk.negotiation.types.model.NegotiationContext;
-import net.openan.a2at.sdk.negotiation.types.model.NegotiationStatus;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.MessageEvent;
@@ -522,9 +519,13 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     /**
-     * Builds the follow-up metadata from the rendered message and, when the state-machine context
-     * is available, advances the SDK state machine so the follow-up carries the next-round (or
-     * terminal) context payload alongside the message.
+     * Builds the follow-up metadata from the rendered message and, when the session context is
+     * available, advances the engine-held round so the follow-up carries the next-round (or
+     * terminal) context alongside the message.
+     *
+     * <p>The content layer is stateless — session identity and round tracking stay with the
+     * caller (SDK guide §1.10). The engine owns the context: parses it from the propose
+     * metadata, advances via {@code nextRound()}, and re-serializes it for the wire.
      */
     private Map<String, Object> advanceStateMachine(
             A2ATContentFacade content,
@@ -533,134 +534,63 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             String clarification,
             MetadataContent mc) {
         Map<String, Object> meta = A2ATContentFacade.toMetadata(mc);
-        NegotiationContext typesCtx = extractTypesContext(negMeta);
-        if (typesCtx == null) {
+        net.openan.a2at.sdk.core.model.NegotiationContext ctx = extractContentContext(negMeta);
+        if (ctx == null) {
             return meta;
         }
         String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
-        try {
-            Map<String, Object> payload =
-                    content.continueNegotiation(
-                            typesCtx,
-                            decision.startsWith("reject:") ? NegotiationStatus.REJECTED : NegotiationStatus.AGREED,
-                            mc.promptText());
-            if (payload != null && !payload.isEmpty()) {
-                meta.putAll(payload);
-                // The continueNegotiation payload nests the context under the Negotiation-T NL
-                // key ({message, negotiationType, negotiationId, round, status}). Surface it as
-                // the top-level negotiation_context key too, so the receiving agent's context
-                // parser finds a full stateful map in one place.
-                for (var entry : payload.entrySet()) {
-                    if (entry.getKey().contains("Negotiation-T")
-                            && !entry.getKey().contains("DATA-NEGOTIATION-T")
-                            && entry.getValue() instanceof Map<?, ?> data) {
-                        meta.put("negotiation_context", new java.util.LinkedHashMap<>(castMap(data)));
-                        break;
-                    }
-                }
-            }
-        } catch (Exception ce) {
-            log.debug(
-                    "[Negotiation] continueNegotiation unavailable for '{}': {}",
-                    agentName,
-                    ce.getMessage());
-        }
+        boolean terminal =
+                decision.startsWith("reject:") || decision.startsWith("abort:");
+        net.openan.a2at.sdk.core.model.NegotiationContext next =
+                terminal ? ctx : ctx.nextRound();
+        meta.put("negotiation_context", A2ATContentFacade.contextPayload(next));
+        log.info(
+                "[Negotiation] Context advanced for '{}' id={} round={} -> {}",
+                agentName,
+                next.id(),
+                ctx.round(),
+                terminal ? "terminal" : next.round());
         return meta;
     }
 
-    /** Extracts the SDK state-machine context from the negotiation receive payload, or null. */
-    private static NegotiationContext extractTypesContext(Map<String, Object> negMeta) {
-        Object ctxObj = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
-        if (!(ctxObj instanceof Map<?, ?> rr)) {
-            return null;
-        }
-        Object innerCtx = rr.get("context");
-        if (!(innerCtx instanceof Map<?, ?> contextMap)) {
-            return null;
-        }
-        try {
-            @SuppressWarnings("unchecked")
-            NegotiationContext typesCtx =
-                    NegotiationPayloadMapper.contextFromMap((Map<String, Object>) contextMap);
-            return typesCtx;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     /**
-     * Extracts the SDK-carried negotiation context (id/round/maxRounds) from the received
-     * metadata's {@code negotiationContext} key, or null when absent. Falls back to the
-     * state-machine context payload ({@code negotiation_context} key, either the raw
-     * startNegotiation context map or the receiveNegotiation result) before giving up.
+     * Extracts the negotiation session context (id/round/maxRounds) from the received
+     * metadata. Primary source: the engine's {@code negotiation_context} key (the wire
+     * serialization produced by {@link A2ATContentFacade#contextPayload}); fallback: the SDK
+     * content-layer's {@code negotiationContext} key ({@code buildMetadataContent} embeds
+     * {@code id} only — the missing rounds default). Returns null when neither is usable.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext extractContentContext(
             Map<String, Object> negMeta) {
+        Object stateful = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
+        if (!(stateful instanceof Map<?, ?> stateMap)) {
+            // The propose metadata's negotiation_context key (engine-external convention shared
+            // with the samples; mirrors the SDK demo constants).
+            stateful = negMeta.get("negotiation_context");
+        }
+        if (stateful instanceof Map<?, ?> stateMap2) {
+            net.openan.a2at.sdk.core.model.NegotiationContext ctx =
+                    A2ATContentFacade.contextFromMap(stateMap2);
+            if (ctx != null) {
+                return ctx;
+            }
+        }
         Object raw =
                 negMeta.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
         if (raw instanceof Map<?, ?> contextMap) {
             Object id = contextMap.get("id");
-            Object round = contextMap.get("round");
-            Object maxRounds = contextMap.get("maxRounds");
-            if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
+            if (id instanceof String s) {
                 try {
                     return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s, r.intValue(), m.intValue());
+                            s,
+                            1,
+                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
                 } catch (IllegalArgumentException ignored) {
-                    // fall through to the state-machine fallback
+                    // fall through
                 }
             }
         }
-        // State-machine context: the negotiation_context key holds either the raw context map
-        // (negotiationType/negotiationId/round/status) or the receiveNegotiation result wrapping
-        // it under "context".
-        Object stateful = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
-        Map<String, Object> statefulMap = null;
-        if (stateful instanceof Map<?, ?> m) {
-            Object inner = m.get("context");
-            statefulMap =
-                    inner instanceof Map<?, ?> innerMap
-                            ? castMap(innerMap)
-                            : castMap(m);
-        } else {
-            // The propose metadata's negotiation_context key (engine-external convention shared
-            // with the samples; mirrors the SDK demo constants).
-            Object rawStateCtx = negMeta.get("negotiation_context");
-            if (rawStateCtx instanceof Map<?, ?> m2) {
-                statefulMap = castMap(m2);
-            }
-        }
-        if (statefulMap != null) {
-            NegotiationContext typesCtx = parseTypesContext(statefulMap);
-            if (typesCtx != null) {
-                return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                        typesCtx.negotiationId(),
-                        typesCtx.round(),
-                        net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-            }
-        }
-        NegotiationContext typesCtx = extractTypesContext(negMeta);
-        if (typesCtx == null) {
-            return null;
-        }
-        return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                typesCtx.negotiationId(),
-                typesCtx.round(),
-                net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> castMap(Map<?, ?> map) {
-        return (Map<String, Object>) map;
-    }
-
-    /** Parses a state-machine context map ({negotiationType, negotiationId, round, status}). */
-    private static NegotiationContext parseTypesContext(Map<String, Object> contextMap) {
-        try {
-            return NegotiationPayloadMapper.contextFromMap(contextMap);
-        } catch (Exception e) {
-            return null;
-        }
+        return null;
     }
 
     private static net.openan.a2at.sdk.core.model.NegotiationContext requireContext(

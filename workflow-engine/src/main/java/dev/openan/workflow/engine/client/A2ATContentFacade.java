@@ -223,48 +223,63 @@ public final class A2ATContentFacade {
     }
 
     // ------------------------------------------------------------------
-    // Runtime state machine
+    // Negotiation session context (engine-held, content-layer contract)
     // ------------------------------------------------------------------
 
     /**
-     * Starts a negotiation payload in the SDK's client role.
+     * Builds the transport serialization of a negotiation session context: the {@code
+     * negotiation_context} metadata value carrying {@code id} / {@code round} / {@code
+     * maxRounds}.
      *
-     * @param type negotiation type (INFORMATION / TARGET / FEASIBILITY)
-     * @param contentText rendered negotiation message text
-     * @param facts structured facts attached to the payload
-     * @return transport payload for the initial turn (carries the negotiation context)
+     * <p>The content layer is stateless by design — session identity and round tracking stay
+     * with the caller (see SDK developer guide §1.10). The engine owns the context: it
+     * serializes it here for the wire and advances rounds itself via {@code
+     * NegotiationContext.nextRound()}.
+     *
+     * @param context the engine-held session context
+     * @return wire map for the {@code negotiation_context} metadata key
      */
-    public Map<String, Object> startNegotiation(
-            net.openan.a2at.sdk.negotiation.types.model.NegotiationType type,
-            String contentText,
-            Map<String, Object> facts) {
-        return client.startNegotiation(type, contentText, facts);
+    public static Map<String, Object> contextPayload(NegotiationContext context) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", context.id());
+        payload.put("round", context.round());
+        payload.put("maxRounds", context.maxRounds());
+        return payload;
     }
 
     /**
-     * Processes a received negotiation message using its transport context payload.
+     * Parses a negotiation session context from its {@code negotiation_context} wire
+     * serialization. Accepts both the engine format ({@code id}/{@code round}/{@code
+     * maxRounds}) and the legacy state-machine format ({@code negotiationId}/{@code round},
+     * optionally nested under a {@code context} key from removed receive payloads) for
+     * cross-version tolerance. Returns null when the map carries no usable identity.
      *
-     * @param message received negotiation message text
-     * @param context transport context payload associated with the message
-     * @return normalized payload ({@code needResponse}, {@code message}, {@code context}, ...)
+     * @param map the metadata value under the {@code negotiation_context} key
+     * @return the session context, or null when malformed
      */
-    public Map<String, Object> receiveNegotiation(String message, Map<String, Object> context) {
-        return client.receiveNegotiation(message, context);
-    }
-
-    /**
-     * Continues an existing negotiation with a locally stored context snapshot.
-     *
-     * @param context current negotiation context (types.model variant)
-     * @param status next status to emit (IN_PROGRESS / AGREED / REJECTED)
-     * @param contentText continuation message content
-     * @return transport payload for the next turn
-     */
-    public Map<String, Object> continueNegotiation(
-            net.openan.a2at.sdk.negotiation.types.model.NegotiationContext context,
-            net.openan.a2at.sdk.negotiation.types.model.NegotiationStatus status,
-            String contentText) {
-        return client.continueNegotiation(context, status, contentText);
+    public static NegotiationContext contextFromMap(Map<?, ?> map) {
+        if (map == null) {
+            return null;
+        }
+        Map<?, ?> effective = map;
+        Object inner = map.get("context");
+        if (inner instanceof Map<?, ?> innerMap && innerMap.get("id") != null) {
+            effective = innerMap;
+        }
+        Object id = effective.get("id") != null ? effective.get("id") : effective.get("negotiationId");
+        Object round = effective.get("round");
+        if (id instanceof String s && round instanceof Number r && r.intValue() > 0) {
+            Object maxRounds = effective.get("maxRounds");
+            int max = maxRounds instanceof Number m && m.intValue() > 0
+                    ? m.intValue()
+                    : NegotiationContext.DEFAULT_MAX_ROUNDS;
+            try {
+                return new NegotiationContext(s, r.intValue(), max);
+            } catch (IllegalArgumentException ignored) {
+                // fall through
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------

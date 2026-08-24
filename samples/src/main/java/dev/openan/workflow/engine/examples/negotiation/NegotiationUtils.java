@@ -67,56 +67,29 @@ public final class NegotiationUtils {
     }
 
     /**
-     * Metadata key carrying the JSON-serialised negotiation context map, matching the SDK demo
-     * convention ({@code NegotiationPayloadMapper.contextPayload} shape: {@code negotiationType}
-     * / {@code negotiationId} / {@code round} / {@code status}, all string or number values).
+     * Metadata key carrying the negotiation session context map ({@code id} / {@code round} /
+     * {@code maxRounds}).
      *
-     * <p>Propose replies must carry this key so the client-side engine can hand a well-formed
-     * context to {@code receiveNegotiation} / {@code continueNegotiation}; without it the SDK
-     * state machine rejects the payload ("Negotiation context field must be a string").
+     * <p>Propose replies must carry this key so the client-side engine can parse the session
+     * context and advance rounds itself — the content layer is stateless and the caller owns
+     * the session state (SDK guide §1.10).
      */
     public static final String NEGOTIATION_CONTEXT_KEY = "negotiation_context";
 
     /**
-     * Builds Negotiation-T propose metadata carrying the stateful context payload: the rendered
-     * propose text under the extension URI plus the {@code negotiation_context} key holding the
-     * SDK {@code startNegotiation} payload's context map.
+     * Builds Negotiation-T propose metadata carrying the session context: the rendered propose
+     * text under the extension URI plus the {@code negotiation_context} key holding the
+     * engine-format context map ({@code id}/{@code round}/{@code maxRounds}).
      *
      * @param negotiationText rendered propose text
-     * @param startPayload the {@code startNegotiation} return payload (context extracted via its
-     *     Negotiation-T data key); may be null for the fallback path (context omitted)
+     * @param contextMap the session context map; null omits the key (fallback path)
      */
     public static Map<String, Object> negotiationResponseMetadata(
-            String negotiationText, Map<String, Object> startPayload) {
+            String negotiationText, Map<String, Object> contextMap) {
         Map<String, Object> metadata = negotiationResponseMetadata(negotiationText);
-        Map<String, Object> contextMap = extractStartContext(startPayload);
         if (contextMap != null && !contextMap.isEmpty()) {
             metadata.put(NEGOTIATION_CONTEXT_KEY, contextMap);
         }
         return metadata;
-    }
-
-    /** Extracts the context map from a startNegotiation payload; null when absent. */
-    private static Map<String, Object> extractStartContext(Map<String, Object> startPayload) {
-        if (startPayload == null) {
-            return null;
-        }
-        // startNegotiation payload shape: { Negotiation-T URI: {message, negotiationType,
-        // negotiationId, round, status, extra}, facts? } — the context fields sit in the
-        // Negotiation-T entry itself, minus the message key.
-        for (var entry : startPayload.entrySet()) {
-            String key = entry.getKey();
-            if (key.contains("Negotiation-T")
-                    && !key.contains("DATA-NEGOTIATION-T")
-                    && entry.getValue() instanceof Map<?, ?> data) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> typed = new LinkedHashMap<>((Map<String, Object>) data);
-                typed.remove("message");
-                if (typed.containsKey("negotiationType")) {
-                    return typed;
-                }
-            }
-        }
-        return null;
     }
 }
