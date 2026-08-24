@@ -152,55 +152,35 @@ class NegotiationTHandler implements ExtensionHandler {
     }
 
     /**
-     * Parses the SDK-carried negotiation context for the validate APIs.
+     * Parses the negotiation session context for the validate APIs.
      *
-     * <p>Primary source: the {@code negotiationContext} metadata key (id/round/maxRounds). The
-     * SDK's {@code buildMetadataContent} only embeds {@code id} there, so as a fallback the
-     * stateful context ({@code negotiation_context} key, carrying negotiationId/round) is
-     * synthesized into a full context. Returns null when neither is usable; the SDK validate
-     * APIs treat a null context as not-a-negotiation-message.
+     * <p>Primary source: the engine's {@code negotiation_context} key (id/round/maxRounds —
+     * the wire serialization from {@code A2ATContentFacade.contextPayload}). Fallback: the
+     * SDK content-layer's {@code negotiationContext} key, whose {@code buildMetadataContent}
+     * embeds {@code id} only (round defaults to 1). Returns null when neither is usable; the
+     * SDK validate APIs treat a null context as not-a-negotiation-message.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext parseNegotiationContext(
             Map<String, Object> metadata) {
-        Object raw = metadata.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (raw instanceof Map<?, ?> contextMap) {
-            try {
-                Object id = contextMap.get("id");
-                Object round = contextMap.get("round");
-                Object maxRounds = contextMap.get("maxRounds");
-                if (id instanceof String s
-                        && round instanceof Number r
-                        && maxRounds instanceof Number m) {
-                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s, r.intValue(), m.intValue());
-                }
-            } catch (IllegalArgumentException e) {
-                log.debug("[Negotiation-T] Malformed negotiationContext metadata: {}", e.getMessage());
+        Object stateful = metadata.get("negotiation_context");
+        if (stateful instanceof Map<?, ?> stateMap) {
+            net.openan.a2at.sdk.core.model.NegotiationContext ctx =
+                    A2ATContentFacade.contextFromMap(stateMap);
+            if (ctx != null) {
+                return ctx;
             }
         }
-        // Fallback: synthesize from the stateful negotiation_context map. Two shapes:
-        // 1) raw context map {negotiationType, negotiationId, round, status} (from the propose
-        //    metadata), 2) the receiveNegotiation result {needResponse, message, context: {...}}
-        //    stored under the same key after receiveNegotiation succeeds.
-        Object stateful = metadata.get("negotiation_context");
-        if (stateful instanceof Map<?, ?> outer) {
-            Map<?, ?> stateMap = outer;
-            Object inner = outer.get("context");
-            if (inner instanceof Map<?, ?> innerMap && innerMap.get("negotiationId") != null) {
-                stateMap = innerMap;
-            }
-            Object id = stateMap.get("negotiationId") != null
-                    ? stateMap.get("negotiationId")
-                    : stateMap.get("id");
-            Object round = stateMap.get("round");
-            if (id instanceof String s && round instanceof Number r) {
+        Object raw = metadata.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
+        if (raw instanceof Map<?, ?> contextMap) {
+            Object id = contextMap.get("id");
+            if (id instanceof String s) {
                 try {
                     return new net.openan.a2at.sdk.core.model.NegotiationContext(
                             s,
-                            r.intValue(),
+                            1,
                             net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-                } catch (IllegalArgumentException ignored) {
-                    // fall through
+                } catch (IllegalArgumentException e) {
+                    log.debug("[Negotiation-T] Malformed negotiationContext metadata: {}", e.getMessage());
                 }
             }
         }
@@ -265,85 +245,53 @@ class NegotiationTHandler implements ExtensionHandler {
                             result.getMetadata() != null
                                     ? new HashMap<>(result.getMetadata())
                                     : new HashMap<>();
-                    try {
-                        Map<String, Object> contextMap = extractNegotiationContext(metadata);
-                        if (contextMap == null) {
-                            contextMap = metadata;
-                        }
-                        // The negotiation message travels in metadata under the Negotiation-T
-                        // URI key (the parts text is a short placeholder), per the SDK demo
-                        // convention. Validate/receive against that full propose text.
-                        String proposeText = extractNegotiationText(metadata);
-                        if (proposeText == null || proposeText.isEmpty()) {
-                            proposeText = result.getText();
-                        }
-                        Map<String, Object> receiveResult =
-                                a2atClient.receiveNegotiation(proposeText, contextMap);
-                        {
-                            Map<String, Object> rr = receiveResult;
-                            Boolean needResponse = (Boolean) rr.get("needResponse");
-                            if (Boolean.TRUE.equals(needResponse)) {
-                                String negMsg = (String) rr.getOrDefault("message", "");
-                                metadata.put(A2ATExtension.NEGOTIATION_MESSAGE_META_KEY, negMsg);
-                                metadata.put(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY, rr);
-                                log.info(
-                                        "[Negotiation-T] Agent '{}' requested negotiation: {}",
-                                        getAgentName(agentCard),
-                                        negMsg);
-                                // Validate the received negotiation message and extract params
-                                // against the propose template matching the declared type. The
-                                // SDK contract carries the context in the negotiationContext
-                                // metadata key; without it the SDK treats the text as a
-                                // non-negotiation message.
-                                TemplateUri proposeUri = proposeTemplateFor(contextMap);
-                                net.openan.a2at.sdk.core.model.NegotiationContext context =
-                                        parseNegotiationContext(metadata);
-                                try {
-                                    FilledParamData paramData = a2atClient.validateProposePromptAndDataFilling(
+                    // The negotiation message travels in metadata under the Negotiation-T
+                    // URI key (the parts text is a short placeholder), per the SDK demo
+                    // convention.
+                    String proposeText = extractNegotiationText(metadata);
+                    if (proposeText == null || proposeText.isEmpty()) {
+                        proposeText = result.getText();
+                    }
+                    // The agent's reply already signals a pending negotiation: INPUT_REQUIRED
+                    // task state plus a negotiation message in metadata. The engine answers
+                    // directly (no SDK state machine involved — the content layer is stateless
+                    // and the engine owns the session context).
+                    if (proposeText != null && !proposeText.isEmpty()) {
+                        metadata.put(A2ATExtension.NEGOTIATION_MESSAGE_META_KEY, proposeText);
+                        log.info(
+                                "[Negotiation-T] Agent '{}' requested negotiation: {}",
+                                getAgentName(agentCard),
+                                proposeText);
+                        // Validate the received negotiation message and extract params against
+                        // the propose template matching the declared type. The context travels
+                        // in the negotiation_context metadata key; without it the SDK treats
+                        // the text as a non-negotiation message.
+                        TemplateUri proposeUri = proposeTemplateFor(extractNegotiationContext(metadata));
+                        net.openan.a2at.sdk.core.model.NegotiationContext context =
+                                parseNegotiationContext(metadata);
+                        try {
+                            FilledParamData paramData =
+                                    a2atClient.validateProposePromptAndDataFilling(
                                             proposeText, context, negotiationParamSchema(), proposeUri);
-                                    if (paramData != null && paramData.data() != null
-                                            && !paramData.data().isEmpty()) {
-                                        metadata.put(
-                                                A2ATExtension.NEGOTIATION_PARAMS_META_KEY,
-                                                paramData.data());
-                                        log.info(
-                                                "[Negotiation-T] Validated negotiation message"
-                                                        + " for '{}' ({}), extracted {} params",
-                                                getAgentName(agentCard),
-                                                proposeUri.uri(),
-                                                paramData.data().keySet());
-                                    }
-                                } catch (Exception ve) {
-                                    log.warn(
-                                            "[Negotiation-T] validateProposePromptAndDataFilling"
-                                                    + " failed for '{}' ({}): {}",
-                                            getAgentName(agentCard),
-                                            proposeUri.uri(),
-                                            ve.getMessage());
-                                }
+                            if (paramData != null
+                                    && paramData.data() != null
+                                    && !paramData.data().isEmpty()) {
+                                metadata.put(
+                                        A2ATExtension.NEGOTIATION_PARAMS_META_KEY, paramData.data());
+                                log.info(
+                                        "[Negotiation-T] Validated negotiation message"
+                                                + " for '{}' ({}), extracted {} params",
+                                        getAgentName(agentCard),
+                                        proposeUri.uri(),
+                                        paramData.data().keySet());
                             }
-                        }
-                    } catch (Exception e) {
-                        if (e.getMessage() != null
-                                && e.getMessage().contains("Unsupported negotiation type")) {
-                            log.debug(
-                                    "[Negotiation-T] SDK receiveNegotiation has no handler for"
-                                            + " '{}' ({}); using direct extraction",
-                                    getAgentName(agentCard),
-                                    e.getMessage());
-                        } else {
+                        } catch (Exception ve) {
                             log.warn(
-                                    "[Negotiation-T] receiveNegotiation error for '{}': {}; using direct extraction",
+                                    "[Negotiation-T] validateProposePromptAndDataFilling"
+                                            + " failed for '{}' ({}): {}",
                                     getAgentName(agentCard),
-                                    e.getMessage());
-                        }
-                        String fallbackText = extractNegotiationText(metadata);
-                        if (fallbackText != null && !fallbackText.isEmpty()) {
-                            metadata.put(A2ATExtension.NEGOTIATION_MESSAGE_META_KEY, fallbackText);
-                            log.info(
-                                    "[Negotiation-T] Agent '{}' requested negotiation (direct): {}",
-                                    getAgentName(agentCard),
-                                    fallbackText);
+                                    proposeUri.uri(),
+                                    ve.getMessage());
                         }
                     }
                     result.setMetadata(metadata);

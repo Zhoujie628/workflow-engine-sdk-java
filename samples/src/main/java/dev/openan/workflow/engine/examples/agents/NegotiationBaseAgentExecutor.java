@@ -22,7 +22,6 @@ package dev.openan.workflow.engine.examples.agents;
 import net.openan.a2at.sdk.client.A2ATClient;
 import net.openan.a2at.sdk.core.model.FilledParamData;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
-import net.openan.a2at.sdk.negotiation.types.model.NegotiationType;
 import net.openan.a2at.sdk.server.A2ATServer;
 
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
@@ -398,13 +397,17 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         String contextId = ctx.getContextId();
         String negId = java.util.UUID.randomUUID().toString();
         String negText = renderProposeText(negId, input);
-        // Combine the content layer with the stateful SDK runtime per the official demo
-        // pattern: startNegotiation produces the transport context payload, whose context
-        // map travels in the propose metadata so the client-side engine can advance the
-        // state machine (receiveNegotiation/continueNegotiation) with a well-formed context.
-        Map<String, Object> startPayload = startStatefulNegotiation(negText);
+        // The content layer is stateless — the agent owns the session context. Serialize it
+        // into the propose metadata (negotiation_context key) so the client-side engine can
+        // parse it and advance rounds itself, mirroring the official demo pattern.
+        Map<String, Object> contextMap = new LinkedHashMap<>();
+        contextMap.put("id", negId);
+        contextMap.put("round", 1);
+        contextMap.put(
+                "maxRounds",
+                net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
         Map<String, Object> metadata =
-                NegotiationUtils.negotiationResponseMetadata(negText, startPayload);
+                NegotiationUtils.negotiationResponseMetadata(negText, contextMap);
         Message proposeMessage =
                 Message.builder()
                         .messageId(java.util.UUID.randomUUID().toString())
@@ -416,36 +419,14 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                         .build();
         emitter.requiresInput(proposeMessage);
         log.info(
-                "[{}] Requested negotiation via INPUT_REQUIRED status message (context={})",
-                getClass().getSimpleName(),
-                startPayload != null ? "stateful" : "fallback");
-    }
-
-    /**
-     * Starts the SDK negotiation state machine for a propose: returns the {@code
-     * startNegotiation} transport payload when the server facade is available, else null (the
-     * propose then goes out without a context and the client falls back to direct extraction).
-     */
-    private Map<String, Object> startStatefulNegotiation(String negText) {
-        A2ATServer server = a2atServer();
-        if (server == null) {
-            return null;
-        }
-        try {
-            return server.startNegotiation(negotiationType(), negText, Map.of());
-        } catch (Exception e) {
-            log.warn(
-                    "[{}] startNegotiation failed ({}); propose goes without SDK context",
-                    getClass().getSimpleName(),
-                    e.getMessage());
-            return null;
-        }
+                "[{}] Requested negotiation via INPUT_REQUIRED status message (context=id/round/maxRounds)",
+                getClass().getSimpleName());
     }
 
     /**
      * Renders the propose text through the SDK content engine when available: the subclass's
-     * {@link #negotiationType()} picks the template, {@link #buildProposeContent(String)} supplies
-     * the typed content, and the SDK renders deterministically (no LLM). Falls back to
+     * {@link #proposeTemplateUri()} picks the template, {@link #buildProposeContent(String)}
+     * supplies the typed content, and the SDK renders deterministically (no LLM). Falls back to
      * {@link #defaultNegotiationText()} when the SDK client is unavailable or rendering fails.
      */
     private String renderProposeText(String negotiationId, String input) {
@@ -540,19 +521,20 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     // ---- subclass extension points ----
 
     /**
-     * The negotiation type this agent starts. Selects the SDK propose template and the typed
-     * content model expected from {@link #buildProposeContent(String)}. Default: information
-     * negotiation (missing parameters). Override for {@code TARGET} (intent alignment) or {@code
-     * FEASIBILITY} (whether the request can be fulfilled).
+     * The propose template this agent's negotiation starts with. The template URI encodes the
+     * negotiation type (information / target / feasibility) in its URI segment and selects the
+     * typed content model expected from {@link #buildProposeContent(String)}. Default:
+     * information negotiation (missing parameters). Override for target negotiation (intent
+     * alignment) or feasibility negotiation (whether the request can be fulfilled).
      */
-    protected NegotiationType negotiationType() {
-        return NegotiationType.INFORMATION;
+    protected net.openan.a2at.sdk.core.model.TemplateUri proposeTemplateUri() {
+        return StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE;
     }
 
     /**
      * Typed propose content rendered by the SDK content engine. The default returns {@code null}
      * to signal "no typed content"; subclasses override together with {@link
-     * #negotiationType()}:
+     * #proposeTemplateUri()}:
      *
      * <ul>
      *   <li>INFORMATION - {@code InformationProposeContent(items, relationship)}
@@ -566,15 +548,6 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     protected net.openan.a2at.sdk.negotiation.content.NegotiationProposeContent buildProposeContent(
             String input) {
         return null;
-    }
-
-    /** Resolves the SDK propose template URI for {@link #negotiationType()}. */
-    protected net.openan.a2at.sdk.core.model.TemplateUri proposeTemplateUri() {
-        return switch (negotiationType()) {
-            case TARGET -> StandardTemplates.TARGET_NEGOTIATION_PROPOSE;
-            case FEASIBILITY -> StandardTemplates.FEASIBILITY_NEGOTIATION_PROPOSE;
-            case INFORMATION -> StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE;
-        };
     }
 
     /**
