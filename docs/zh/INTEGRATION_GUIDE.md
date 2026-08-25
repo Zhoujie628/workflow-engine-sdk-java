@@ -349,7 +349,7 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
         "description": "协商文本交换",
         "required": false
       },
@@ -406,51 +406,44 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 智能体返回 `INPUT_REQUIRED` 时，引擎自动提取协商文本，调用你的 `onNegotiation()` 获取补充信息，然后发回后续消息。自动循环最多
 `maxNegotiationRounds` 次（默认 3）。
 
-### Authorization-T（前置下发）
+### Authorization-T（独立授权操作）
 
-工作流开始前，向 SPN 智能体下发白名单授权策略。前置操作使用基于同一 transport 的 `ExtensionSender` 门面，而非工作流客户端：
+工作台在需要管理抢通白名单时单独调用，不作为工作流节点。Authorization-T 使用专用
+transport/runtime/context：
 
 ```java
-ExtensionSender sender = new DefaultExtensionSender(transport);
-sender.sendAuthorization(
+ExtensionSender authorizationSender = new DefaultExtensionSender(authorizationTransport);
+authorizationSender.sendExtensionMessageFromData(
     "SPN Domain Agent",
-    "Authorization-T pre-positioning",
-    "任务类型：新增授权，操作：业务抢通，操作类型：光模块更换，..."
-);
+    "Authorization-T 结构化独立操作",
+    authorizationData,
+    authorizationSchema,
+    A2ATExtension.AUTHORIZATION_T).join();
 ```
 
 内部使用 `A2ATExtension.AUTHORIZATION_T`，勿硬编码 URI。SPN 智能体收到后存储策略，后续操作与白名单比对，在策略内直接执行，不在则拒绝。
 
-### Notification-T（前置订阅）
+### Notification-T（独立长连接订阅）
 
-工作流开始前，向 SPN 智能体订阅抢通结果通知：
-
-```java
-sender.sendNotification(
-    "SPN Domain Agent",
-            "Notification-T subscription",
-            "通知主题：service-recovery-execution-result，..."
-);
-```
-
-`A2ATExtension.NOTIFICATION_T` 打开长连接 SSE 流。如需接收后续抢通结果，传入第四个参数 `Consumer<Map<String, Object>>` 回调：
+工作台在需要订阅抢通结果时单独调用，使用与 Task-T、Authorization-T 不同的
+transport/runtime/context：
 
 ```java
-sender.sendNotification(
+NotificationSubscription subscription = notificationSender.openNotificationFromData(
     "SPN Domain Agent",
-            "Notification-T subscription",
-            "通知主题：service-recovery-execution-result，...",
+    "Notification-T subscription",
+    notificationData,
+    notificationSchema,
     event -> {
-        // event 包含 agent, text, metadata, state
-        Object text = event.get("text");
-        if (text != null) {
-            System.out.println("抢通结果: " + text);
+        if ("recovery-result".equals(event.get("artifact_name"))) {
+            persistRecoveryResult(event);
         }
-    }
-);
+    }).join();
+SendMessageResult ack = subscription.acknowledgement().join();
 ```
 
-不传回调（null）时后续事件被丢弃。SPN 智能体通过通知通道上报抢通结果。
+ACK 仅表示订阅已建立。工作台应保留 `NotificationSubscription`，收到预期的
+`recovery-result`、取消或关闭服务时调用幂等 `close()`。单次工作流完成不关闭该通道。
 
 ## 8. HTTPS 配置
 
@@ -475,11 +468,12 @@ HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局�
 
 ## 9. 日志
 
-引擎设有专用 `PROTOCOL` 日志器输出协议层请求/响应。Body 默认输出并按长度截断；`Authorization`、Cookie、API Key、Token、Secret 等敏感 Header 默认脱敏。在 `log4j2.properties` 中配置：
+引擎设有专用 `PROTOCOL` 日志器输出协议层请求/响应摘要。Body 默认禁用；
+`Authorization`、Cookie、API Key、Token、Secret 等敏感 Header 默认脱敏。只能在受控联调环境临时开启 DEBUG 和 body：
 
 ```properties
 logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=info
+logger.PROTOCOL.level=debug
 logger.PROTOCOL.additivity=false
 logger.PROTOCOL.appenderRef=console
 ```

@@ -147,7 +147,7 @@ public class MyControlPoint extends DefaultControlPoint {
 
 `onNegotiation` defaults to a generic clarification. Override only what you need.
 
-**Pre-positioning (Authorization-T / Notification-T)**: Both are established through `ExtensionSender` before a workflow starts, but they have different lifecycles. Authorization-T is a one-shot request that ends after its response. Notification-T is a long-lived subscription on a transport independent of any single workflow; its first event or acknowledgement is returned as `SendMessageResult`, and later events are delivered to the callback until that subscription transport is explicitly closed.
+**Independent operations (Authorization-T / Notification-T)**: Both use `ExtensionSender` at a workbench-selected business time and have no ordering dependency on workflow execution. Authorization-T is a one-shot request whose transport closes after a successful acknowledgement. Notification-T is a long-lived subscription on a transport independent of any single workflow; `openNotificationFromData` returns a `NotificationSubscription`, and later events are delivered to its callback until the expected result arrives, it is canceled, or it is explicitly closed.
 
 **Self-loop steps (SelfLoop)**: When a step is the workflow-executing agent's own task (e.g. merging multiple agents'
 diagnostic results), set `stepType` to `SELF_LOOP`. The engine calls `onSelfTask` locally instead of sending an A2A-T
@@ -353,7 +353,7 @@ AgentCards declare extensions via `capabilities.extensions`:
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
         "description": "Negotiation text exchange",
         "required": false
       },
@@ -411,55 +411,46 @@ In `onTask`, you just call
 When an agent returns `INPUT_REQUIRED`, the engine extracts the negotiation text, calls your `onNegotiation()` for a
 clarification, and sends it back. Auto-loops up to `maxNegotiationRounds` (default 3).
 
-### Authorization-T (pre-positioning)
+### Authorization-T (independent authorization operation)
 
-Before the workflow starts, send a whitelist authorization strategy to SPN agents. Pre-positioning uses the
-`ExtensionSender` facade over the same transport, not the workflow client:
+Invoke this when the workbench needs to manage a recovery whitelist; it is not a workflow node.
+Authorization-T uses a dedicated transport/runtime/context:
 
 ```java
-ExtensionSender sender = new DefaultExtensionSender(transport);
-sender.sendAuthorization(
+ExtensionSender authorizationSender = new DefaultExtensionSender(authorizationTransport);
+authorizationSender.sendExtensionMessageFromData(
     "SPN Domain Agent",
-    "Authorization-T pre-positioning",
-    "Task type: new authorization, operation: service recovery, ..."
-);
+    "Authorization-T structured operation",
+    authorizationData,
+    authorizationSchema,
+    A2ATExtension.AUTHORIZATION_T).join();
 ```
 
 `A2ATExtension.AUTHORIZATION_T` is used internally; never hardcode the URI. The SPN agent stores the strategy and
 compares subsequent operations against the whitelist. Operations within the whitelist are executed; others are rejected.
 
-### Notification-T (pre-positioning)
+### Notification-T (independent long-lived subscription)
 
-Before the workflow starts, subscribe to recovery result notifications:
-
-```java
-sender.sendNotification(
-    "SPN Domain Agent",
-            "Notification-T subscription",
-            "Topic: service-recovery-execution-result, ..."
-);
-```
-
-`A2ATExtension.NOTIFICATION_T` opens a long-lived SSE stream. To receive subsequent recovery results, pass a
-`Consumer<Map<String, Object>>` callback as the fourth parameter:
+Invoke this when the workbench needs recovery-result notifications. It uses a transport/runtime/context
+separate from Task-T and Authorization-T:
 
 ```java
-sender.sendNotification(
+NotificationSubscription subscription = notificationSender.openNotificationFromData(
     "SPN Domain Agent",
-            "Notification-T subscription",
-            "Topic: service-recovery-execution-result, ...",
+    "Notification-T subscription",
+    notificationData,
+    notificationSchema,
     event -> {
-        // event contains agent, text, metadata, state
-        Object text = event.get("text");
-        if (text != null) {
-            System.out.println("Recovery result: " + text);
+        if ("recovery-result".equals(event.get("artifact_name"))) {
+            persistRecoveryResult(event);
         }
-    }
-);
+    }).join();
+SendMessageResult ack = subscription.acknowledgement().join();
 ```
 
-Without a callback (null), subsequent events are dropped. The SPN agent reports recovery results through the
-notification channel.
+The ACK only confirms that the subscription was established. Retain the `NotificationSubscription` and
+call its idempotent `close()` after the expected `recovery-result`, cancellation, or workbench shutdown.
+Normal workflow completion does not close this channel.
 
 ## 8. HTTPS Configuration
 
@@ -485,11 +476,13 @@ so mTLS and `crlPath` cannot be combined with that mode and fail fast instead of
 
 ## 9. Logging
 
-The dedicated `PROTOCOL` logger emits protocol requests and responses. Bodies are enabled by default and truncated to a configurable size. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are redacted by default. Configure the logger in `log4j2.properties`:
+The dedicated `PROTOCOL` logger emits protocol request/response summaries. Bodies are disabled by
+default. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are
+redacted by default. Enable DEBUG and bodies only temporarily in a controlled diagnostic environment:
 
 ```properties
 logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=info
+logger.PROTOCOL.level=debug
 logger.PROTOCOL.additivity=false
 logger.PROTOCOL.appenderRef=console
 ```
@@ -582,13 +575,40 @@ WorkflowEngineClientConfig.builder()
     .build();
 ```
 
-## 14. Troubleshooting: Eastcom Order Mode Concurrent NE Timeout
+## 14. Troubleshooting: Eastcom Order SDK 1.1.18 ByteBuf Leak
+
+### Symptom
+
+Order mode can log the following while the forwarded request itself continues:
+
+```text
+ResourceLeakDetector - LEAK: ByteBuf.release() was not called
+Created at: WrapperHttpClient.lambda$null$9(WrapperHttpClient.java:164)
+```
+
+### Root Cause and Compatibility Fix
+
+`order-shaded-client:1.1.18` allocates the request body from
+`PooledByteBufAllocator.DEFAULT`. Its `ReactorNettyBridgeHandler.write(...)` copies that buffer
+into an RPC protobuf and consumes the Netty write without releasing the source message. This is a
+vendor resource-ownership defect, not an A2A-T parsing failure, and repeated requests can consume
+pooled direct memory.
+
+`EastcomOrder118ByteBufWorkaround` installs a handler immediately before the consuming bridge in
+outbound traversal. It delegates to the bridge first and then calls
+`ReferenceCountUtil.safeRelease(msg)` in `finally`. The workaround neither replaces the vendor jar
+nor disables leak detection. It deliberately fails if the expected 1.1.18 bridge is absent, so a
+vendor upgrade cannot silently cause a double release. Once Eastcom publishes a fixed version,
+upgrade the dependency, remove the workaround, and repeat the Order end-to-end and longevity tests
+with Netty leak detection set to `paranoid`.
+
+## 15. Troubleshooting: Eastcom Order Mode Concurrent NE Timeout
 
 > **Critical pitfall — read before modifying the Order simulator or gateway adapter.**
 
 ### Symptom
 
-In Order mode, when sending Task-T diagnosis tasks to two different NEs concurrently (or after pre-positioning Notification-T to City1, sending Authorization-T to City2), one NE's request fails with `Timeout on blocking read for 10000000000 NANOSECONDS` in `WrapperHttpClient.loadNeResource`.
+In Order mode, when sending Task-T diagnosis tasks to two different NEs concurrently (or while independent Notification-T and Authorization-T channels target different NEs), one NE's request fails with `Timeout on blocking read for 10000000000 NANOSECONDS` in `WrapperHttpClient.loadNeResource`.
 
 ### Root Cause 1: SDK Shared RSocket Connection
 
@@ -640,7 +660,7 @@ The simulator's `connection.setReadTimeout(65_000)` only controls `HttpURLConnec
 | `ExecutePsop.Builder`                                  | Workflow execution entry point                                        |
 | `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.) |
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                         |
-| `ExtensionSender` / `DefaultExtensionSender`           | One-shot pre-positioning (sendAuthorization, sendNotification)        |
+| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
 | `A2ATransport`                                         | Shared wire layer (httpx runtime, auth, SSE consumer)                 |
 | `WorkflowEngineClientConfig`                           | Configuration (SSL, auth, A2A-T, negotiation rounds, custom handlers) |
 | `AuthProvider`                                         | Custom authentication                                                 |

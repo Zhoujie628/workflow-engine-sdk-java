@@ -2,6 +2,11 @@
 
 > 面向工作台研发团队。说明 A2A-T 执行引擎 SDK（a2at-engine-java）与 AgentScope 框架如何在工作台 Agent 化改造中协同定位、划分职责、落地结合，发挥各自最大作用。本文档供双方对方案使用。
 
+> **实现校准（2026-08-25）**：本文的协议 API 以当前执行引擎代码和锁定的
+> A2A-T SDK revision 为准。Authorization-T、Notification-T 是工作台按业务时机发起的独立
+> 协议操作，不是 PSOP 节点；Task-T、Authorization-T、Notification-T 必须使用三套独立的
+> transport/runtime/context。Notification-T 通过 `NotificationSubscription` 管理长连接。
+
 ---
 
 ## 1. 背景与目标
@@ -59,13 +64,15 @@ graph TD
     LOAD["LoadPsop.search() / load()<br/>从编排中心搜索 + 加载工作流"]
     EXEC["ExecutePsop.builder()<br/>高层工作流执行器（加载->执行->事件->持久化）<br/>.psop(workflow)<br/>.agentCards(cards)<br/>.controlPoint(cp) ← 工作台业务决策回调（AgentScope 插入点）<br/>.engineClient(client)<br/>.execute()"]
     WEC["WorkflowEngineClient<br/>出站发送门面（Task-T + 协商循环 + 认证）<br/>sendMessage(agent, msg)"]
-    EXT["ExtensionSender<br/>前置预定位门面（Authorization-T / Notification-T）<br/>prePosition()"]
-    TRANSPORT["A2ATransport<br/>底层传输（共享，两门面复用）"]
+    WB["工作台业务生命周期"]
+    EXT["ExtensionSender<br/>独立协议操作门面（Authorization-T / Notification-T）"]
+    TRANSPORT["A2ATransport<br/>底层实现复用；三类协议实例隔离"]
 
     ORCH --> LOAD
     LOAD --> EXEC
+    WB --> EXEC
+    WB --> EXT
     EXEC --> WEC
-    EXEC --> EXT
     WEC --> TRANSPORT
     EXT --> TRANSPORT
 ```
@@ -83,8 +90,8 @@ graph TD
 |-----------|---------|--------|------|---------|-----------|
 | Task-T | 下发诊断任务 | 工作台 -> OMC | 工作流执行中 | `WorkflowEngineClient` | 任务内容（onTask） |
 | Negotiation-T | 参数补充协商 | OMC <-> 工作台 | OMC 发现缺参数时反向发起 | SDK 自动循环 | 补传内容（onNegotiation） |
-| Authorization-T | 抢通授权 | 工作台 -> OMC | 工作流启动前预定位 | `ExtensionSender` | 授权策略描述 |
-| Notification-T | 抢通结果订阅/上报 | 工作台 -> OMC | 工作流启动前订阅 | `ExtensionSender` | 订阅主题描述 |
+| Authorization-T | 抢通授权 | 工作台 -> OMC | 工作台独立业务时机，一次性请求 | `ExtensionSender` 结构化 API | 授权策略字段与 schema |
+| Notification-T | 抢通结果订阅/上报 | 工作台 -> OMC | 工作台独立业务时机，长连接 | `ExtensionSender` + `NotificationSubscription` | 订阅字段、回调与关闭时机 |
 
 **设计原则：协议机制由 SDK 承担，业务决策由工作台实现。** AgentScope 只替换"业务决策"列，不碰"SDK 承载"列。
 
@@ -260,7 +267,7 @@ sequenceDiagram
 | 工作流 DAG 遍历与状态管理 | **SDK（ExecutePsop / WorkflowExecutor）** | 谁先谁后由 PSOP 驱动 |
 | Task-T 消息收发 + SSE 流式 | **SDK** | 工作台只提供消息内容 |
 | Agent 认证（Bearer 令牌） | **SDK** | 工作台提供 credentials.json |
-| 前置预定位（Authorization-T / Notification-T） | **SDK（ExtensionSender）** | 工作台提供策略描述 |
+| 独立 Authorization-T / Notification-T 协议操作 | **SDK（ExtensionSender）** | 工作台提供结构化数据、业务时机、回调与关闭策略 |
 | 任务消息内容生成 | **AgentScope** | 动态、上下文感知，替代打桩模板 |
 | 本地自处理（汇总/分析） | **AgentScope** | 多步推理 + 工具 + 记忆 |
 | 分支路由决策 | **AgentScope** | 语义理解结果内容后决策 |

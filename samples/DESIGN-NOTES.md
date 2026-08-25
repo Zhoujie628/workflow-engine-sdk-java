@@ -106,21 +106,14 @@ SendMessageResult result = client.sendMessage("Transport Workbench Agent", taskT
 ## 七、SSL 主机名验证
 
 `jdk.internal.httpclient.disableHostnameVerification` 是 JVM 级、JDK 内部且可能被静态缓存的开关。SDK
-不会修改它；只有使用仓库公开 demo 证书的独立样例进程才在入口类、创建任何 `HttpClient` 之前设置：
-
-```java
-// demo 入口类（SpringSpnDemo 等）的 main 方法开头
-static {
-    System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
-}
-```
-
-该设置会影响同一 JVM 的其他 JDK `HttpClient`，不能用于共享进程或生产环境。生产应使用带正确 SAN
-的服务端证书并保持 `sslVerify=true`；需要私有 CA 时配置 `caCertsPath`。
+和示例均不会修改它。该设置会影响同一 JVM 的其他 JDK `HttpClient`，不能用于 Demo、共享进程或
+生产环境。测试证书也必须包含目标主机/IP 的正确 SAN；生产保持 `sslVerify=true`，需要私有 CA 时
+配置 `caCertsPath`。`sslVerify=false` 仅放宽当前客户端实例的证书链校验，仍保留主机名校验。
 
 ## 八、SOLID 原则
 
-- **SRP**：`WorkbenchControlPoint` 只管工作流决策（路由、授权、通知），`SpringWorkbenchExecutor` 只管消息 I/O
+- **SRP**：`WorkbenchControlPoint` 只管 DAG 内任务、汇聚、路由和协商决策；独立授权/订阅由
+  `WorkbenchExtensionLifecycle` 管理；`SpringWorkbenchExecutor` 负责北向任务生命周期
 - **DRY**：`BaseAgentExecutor` 提供共享的 `extractText` / `buildStatusMessage`，3 个 Agent executor 都继承它
 - **无 Unicode 转义**：Java 源文件中的中文字符串直接用字面中文，不用 `\uXXXX`
     - 用 `apply_patch` 写文件（保持 UTF-8），不用 PowerShell here-string（会损坏中文）
@@ -140,5 +133,5 @@ static {
 - `mvn verify` 在已合法安装东信 SDK 的环境中通过
 - `mvn -pl workflow-engine,spring-boot-starter -am verify` 在无供应商私有依赖的公共环境中通过
 - `EmbeddedA2AServerTest` 验证：启动 server → sendMessage → 从 SSE 流提取诊断结果
-- `SpnCrossCityE2ETest` 端到端：2 个 OMC Agent 启动 → 前置预定位 → 3 步工作流全部成功
+- `SpnCrossCityE2ETest` 端到端：2 个 OMC Agent 启动 → 独立授权/订阅通道 → 双地市并行诊断 + 一次汇聚成功
 - `SpringSpnDemo` 端到端（三种传输模式）：Spring 工作台 + 2 个 OMC Agent → Task-T → 跨城诊断工作流执行成功

@@ -1,173 +1,128 @@
-# SpringSpnDemo 完整调用链路
+# SpringSpnDemo 当前调用链路
 
-## 一、启动阶段
+> 校准日期：2026-08-25。以当前源码和锁定的 A2A-T SDK commit
+> `0ef79d37f49a9b7a2dbe16b6d9fd1ccdb6d9538d` 为准。
 
-```mermaid
-graph TD
-    A["SpringSpnDemo.main()<br/>// SpringSpnDemo.java:71"]
-    A --> B["System.setProperty('disableHostnameVerification')"]
-    A --> C["SpringWorkbenchApplication.loadDotEnv()<br/>// 加载 .env → System properties"]
-    A --> D["new SpringSpnDemo().run(args)<br/>// SpringSpnDemo.java:75"]
-```
+## 1. 业务结果
 
-## 二、run() 四阶段启动
+WAIMO 通过 Task-T 向传输工作台下发投诉诊断任务。工作台使用 A2A-T SDK 校验并提取
+诊断参数，搜索/加载 PSOP，向两个地市 OMC 并行下发诊断任务。两路都完成后，
+join 节点只执行一次汇总，工作台把真实汇总文本放入 Task-T artifact 返回 WAIMO。
 
-```mermaid
-graph TD
-    A["run(args)<br/>// SpringSpnDemo.java:82"]
-    A --> B["① resolveTransportMode(args)<br/>// SpringSpnDemo.java:272<br/>优先级: --a2a.transport-mode= &gt; System property &gt; env var &gt; 默认 'order'"]
-    A --> C["② [mock模式] MockGatewayServer.start()<br/>// SpringSpnDemo.java:97<br/>new MockGatewayServer('127.0.0.1', 26400,<br/>Set.of('https://127.0.0.1:26335', 'https://127.0.0.1:26336'))<br/>→ JDK HttpServer 监听 :26400，做 HTTP 反向代理<br/>→ 校验 X-Target-URL 必须在 allowedTargets 白名单内"]
-    A --> D["③ SpringApplication.run(SpringWorkbenchApplication)<br/>// SpringSpnDemo.java:108<br/>→ Spring Boot 启动 HTTPS :26337 (Workbench Agent)<br/>→ 自动装配:<br/>@Component SpringWorkbenchExecutor // Agent 执行器<br/>@Component ClientRuntimeFactory // 运行时工厂<br/>[simulator-enabled=true] EastcomOrderSimulatorServer :26401"]
-    A --> E["④ startOmcAgents()<br/>// SpringSpnDemo.java:114"]
-    E --> F["JdkHttpA2AServer(:26335, SpnDomainAgentCity1Executor)<br/>// 城市1 OMC"]
-    E --> G["JdkHttpA2AServer(:26336, SpnDomainAgentCity2Executor)<br/>// 城市2 OMC"]
-    A --> H["⑤ sendTaskToWorkbench(taskText)<br/>// SpringSpnDemo.java:130 发送 Task-T"]
-```
+Authorization-T 和 Notification-T 不是上述 DAG 的步骤。Spring 工作台生命周期在独立时机
+预置白名单并建立抢通结果订阅。
 
-## 三、北向调用：Demo → Workbench Agent
+## 2. 启动顺序
 
 ```mermaid
-graph TD
-    A["sendTaskToWorkbench(taskText)<br/>// SpringSpnDemo.java:218"]
-    A --> B["加载 transport_workbench_agent.json → AgentCard"]
-    A --> C["new A2ATransport([wbCard], null, config)<br/>// DIRECT 模式（Demo→Workbench 不走网关）"]
-    A --> D["new DefaultWorkflowEngineClient(transport)"]
-    A --> E["client.sendMessage('Transport Workbench Agent', taskText).join()<br/>→ HTTPS POST :26337/a2a/json/message:stream (SSE)"]
+sequenceDiagram
+    participant Demo as SpringSpnDemo
+    participant OMC1 as City1 OMC
+    participant OMC2 as City2 OMC
+    participant WB as Spring Workbench
+    participant Ext as WorkbenchExtensionLifecycle
+
+    Demo->>OMC1: 启动 HTTPS/SSE Agent (:26335)
+    Demo->>OMC2: 启动 HTTPS/SSE Agent (:26336)
+    Demo->>WB: SpringApplication.run (:26337)
+    WB->>Ext: ApplicationReadyEvent
+    Ext->>OMC1: Authorization-T（独立一次通道）
+    Ext->>OMC2: Authorization-T（独立一次通道）
+    Ext->>OMC1: Notification-T（独立长连接通道）
+    Ext->>OMC2: Notification-T（独立长连接通道）
 ```
 
-## 四、Workbench Agent 接收并编排
+`SpringWorkbenchExtensionLifecycle` 为 Authorization-T 和 Notification-T 分别调用
+`ClientRuntimeFactory.create()`，并拒绝两者复用同一 runtime 实例。Authorization transport 在全部
+ACK 成功后关闭；Notification transport 保留到订阅完成、取消或 Spring 容器关闭。
+
+## 3. 北向 WAIMO 请求
+
+`SpringSpnDemo.sendTaskToWorkbench()` 创建专用北向 transport，调用
+`sendMessageFromData` 与 SDK `StandardTemplates.PRIVATE_LINE_COMPLAINT`：
+
+1. SDK schema-aware 管线将原始投诉数据渲染为 Task-T prompt。
+2. A2A Java SDK 通过 `https://127.0.0.1:26337/a2a/json/message:stream` 发送。
+3. Spring starter 的 `A2AController` 交给 `SpringWorkbenchExecutor`。
+4. `WorkbenchTaskInputParser` 根据 metadata 中的规范 Task-T URI 和 `templateUri` 调用
+   A2A-T server validate-and-fill；缺少 SDK 配置或校验失败时显式失败。
+
+schema-aware `fromData` 跳过场景识别，但 slot 映射仍可使用 SDK 配置的 LLM。
+
+## 4. 工作流执行
 
 ```mermaid
-graph TD
-    A["SpringWorkbenchExecutor.execute(ctx, emitter)<br/>// SpringWorkbenchExecutor.java:90"]
-    A --> B["extractText(ctx.getMessage())<br/>// 提取任务文本"]
-    A --> C["ClientRuntimeFactory.create()<br/>// ★ 关键分叉点"]
-    C --> D["mode=DIRECT → return null<br/>// 用默认 A2A HTTP 直连"]
-    C --> E["mode=MOCK → new MockGatewayClientRuntime(mockGatewayUrl)"]
-    C --> F["mode=ORDER → new OrderGatewayClientRuntime(orderConfig)"]
-    A --> G["new WorkbenchOrchestrator(orchUrl, creds, ssl, env, clientRuntime).run(input)"]
+flowchart LR
+    W[WAIMO Task-T] --> P[SDK 校验与输入提取]
+    P --> L[搜索/加载 PSOP]
+    L --> C1[City1 诊断]
+    L --> C2[City2 诊断]
+    C1 --> J[等待两个活跃前驱]
+    C2 --> J
+    J --> M[汇总分析，仅一次]
+    M --> R[Task-T artifact 返回 WAIMO]
 ```
 
-## 五、WorkbenchOrchestrator.run() 编排流水线
+`WorkflowExecutor` 在调度前校验节点、边和环，只等待本次执行已激活的前驱。并行分支的
+结果按稳定顺序合并，join 使用原子状态保证 exact-once。`WorkbenchControlPoint.onSelfTask`
+对两个 OMC 返回做本地汇总；`WorkbenchOrchestrator.buildResultText` 优先取
+`merge_analysis`/`merge` 输出，不用假的“成功”文本代替业务结果。
 
-```mermaid
-graph TD
-    A["WorkbenchOrchestrator.run(messageText)<br/>// WorkbenchOrchestrator.java:127"]
-    A --> B["STAGE 1: loadAgentCards()<br/>// WorkbenchOrchestrator.java:262<br/>从 classpath 读取 3 个 AgentCard JSON:"]
-    B --> B1["spn_domain_agent_city1.json"]
-    B --> B2["spn_domain_agent_city2.json"]
-    B --> B3["transport_workbench_agent.json"]
-    A --> C["STAGE 2: searchPsop() + LoadPsop.load()<br/>// WorkbenchOrchestrator.java:148<br/>→ GET :5001/api/v1/orchestrate/search?intent=...<br/>→ GET :5001/api/v1/orchestrate/psop/{psopId}<br/>→ 返回 Workflow DAG 对象"]
-    A --> D["STAGE 3: new A2ATransport(cards, clientRuntime, config)<br/>// WorkbenchOrchestrator.java:155<br/>★ clientRuntime 就是 ClientRuntimeFactory.create() 的返回值<br/>★ 这决定了后续所有南向调用走哪条路"]
-    A --> E["STAGE 4: ExtensionPrePositioner.prePosition()<br/>// WorkbenchOrchestrator.java:172<br/>对每个非 Workbench Agent:"]
-    E --> E1["sender.sendAuthorization('下发授权放行策略')<br/>// Authorization-T"]
-    E --> E2["sender.sendNotification('订阅业务抢通结果通知')<br/>// Notification-T"]
-    A --> F["STAGE 5: ExecutePsop.builder()...execute().join()<br/>// WorkbenchOrchestrator.java:195<br/>→ WorkflowExecutor 执行 DAG 遍历"]
-```
+示例首先从编排中心搜索并加载 PSOP。若本地编排中心不可用，或其开发证书不满足 Java
+主机名校验，示例会明确记录 `PSOP_FALLBACK` 并装载等价的三节点内存工作流；不会再拿到
+fallback 标识后继续调用失败的远端加载接口。生产集成应配置含正确 SAN 的证书并使用远端
+PSOP，不应把示例 fallback 当作编排中心的容灾实现。
 
-## 六、南向调用：三条路径（核心分叉）
+## 5. 南向传输分支
 
-```mermaid
-graph TD
-    A["A2ATransport.sendMessageAsync(agentName, message, ...)<br/>// A2ATransport.java:286"]
-    A --> D["如果 clientRuntime == null (DIRECT 模式)<br/>→ a2aClientRuntime = DefaultA2AJavaClientRuntime<br/>→ 直接 HTTPS POST 到 AgentCard 的 URL<br/>→ 例: https://127.0.0.1:26335/a2a/json/message:send"]
-    A --> M["如果 clientRuntime == MockGatewayClientRuntime (MOCK 模式)"]
-    M --> M1["OrderGatewayClientRuntime.sendMessage()<br/>// 复用生产逻辑"]
-    M1 --> M2["routeResolver.resolve(agentCard)<br/>// OrderGatewayClientRuntime.java:155<br/>→ ConfiguredAgentGatewayRouteResolver<br/>→ agentName → NE名 → AgentGatewayRoute(ne, interface)"]
-    M1 --> M3["MockOrderHttpSessionClient.login()<br/>// MockOrderHttpSessionClient.java:81"]
-    M1 --> M4["MockOrderHttpSessionClient.init(ne)<br/>// MockOrderHttpSessionClient.java:91"]
-    M1 --> M5["MockOrderHttpSessionClient.executeStreaming()<br/>// MockOrderHttpSessionClient.java:130<br/>→ HTTP POST http://127.0.0.1:26400{uriPath}<br/>Headers: X-Target-URL = targetUrl (OMC真实地址)<br/>Body: A2A SendMessageRequest JSON"]
-    M5 --> M6["MockGatewayServer 收到后<br/>// MockGatewayServer.java:108"]
-    M6 --> M7["校验 X-Target-URL ∈ allowedTargets"]
-    M6 --> M8["开 HTTPS 连接到 targetUrl"]
-    M6 --> M9["管道式转发 SSE 流 → 回传给客户端"]
-    M1 --> M10["GatewayA2AResponseParser.StreamingSession.accept()<br/>// 解析事件"]
-    A --> O["如果 clientRuntime == OrderGatewayClientRuntime (ORDER 模式)"]
-    O --> O1["OrderGatewayClientRuntime.sendMessage()"]
-    O1 --> O2["routeResolver.resolve(agentCard)<br/>→ agentName 'Spn Domain Agent City1' → NE 'city1-omc'<br/>→ agentName 'Spn Domain Agent City2' → NE 'city2-omc'"]
-    O1 --> O3["StreamingOrderHttpSessionClient.login()<br/>// RSocket RPC 登录<br/>→ service.login(Flux.just(loginRequest))<br/>→ 指令平台验证 username/password/clientId/clientSecret"]
-    O1 --> O4["StreamingOrderHttpSessionClient.init(ne, https)<br/>// 绑定 NE<br/>→ service.init(Flux.just(initRequest))<br/>→ 指令平台建立 session → NE 映射"]
-    O1 --> O5["StreamingOrderHttpSessionClient.executeStreaming()<br/>// StreamingOrderHttpSessionClient.java:46<br/>→ service.execute(Flux.just(wireRequest))<br/>→ 指令平台根据 NE 路由，HTTP 转发到目标 OMC Agent<br/>→ 返回 RSocket 流（SSE chunks）<br/>→ .takeUntil(responseSink) 直到终态事件"]
-    O1 --> O6["GatewayA2AResponseParser.StreamingSession.accept()<br/>→ 逐块解析 SSE → protobuf StreamResponse → ClientEvent"]
-    O1 --> O7["StreamingOrderHttpSessionClient.logout()<br/>// 关闭 session"]
-```
+`ClientRuntimeFactory` 支持：
 
-## 七、事件解析链路
+| 模式 | runtime | 用途 |
+|---|---|---|
+| `direct` | `null` → `DefaultA2AJavaClientRuntime` | 工作台直接访问 OMC AgentCard URL |
+| `order` | `OrderGatewayClientRuntime` | 通过东信 Order SDK/指令平台选择地市 NE 并转发到 OMC |
+| `mock` | `MockGatewayClientRuntime` | 仅用于本地 HTTP 适配测试 |
 
-```mermaid
-graph TD
-    A["GatewayA2AResponseParser.StreamingSession<br/>// GatewayA2AResponseParser.java:138<br/>每个 SSE chunk 进来:"]
-    A --> B["accept(chunk)<br/>// GatewayA2AResponseParser.java:155"]
-    B --> B1["检测 SSE 格式 (data:, event:, id:, retry:)"]
-    B --> B2["追加到 frameBuffer"]
-    B --> B3["找到 \n\n (完整 SSE frame 分隔符)"]
-    B --> B4["drainFrames()<br/>// GatewayA2AResponseParser.java:202"]
-    B4 --> B5["提取 data: 行的 JSON 内容"]
-    B4 --> B6["ProtoJsonUtils.merge(json, StreamResponse.newBuilder())<br/>→ protobuf 反序列化为 StreamResponse"]
-    B4 --> B7["判断事件类型:"]
-    B7 --> B8["hasMessage() → MessageEvent<br/>// GatewayA2AResponseParser.java:225"]
-    B7 --> B9["hasTask() → TaskEvent<br/>// GatewayA2AResponseParser.java:238"]
-    B7 --> B10["hasTaskUpdate() → TaskUpdateEvent<br/>// GatewayA2AResponseParser.java:251"]
-    B4 --> B11["提取 taskState:<br/>COMPLETED / FAILED / CANCELED /<br/>REJECTED / INPUT_REQUIRED / AUTH_REQUIRED → terminal"]
-    B4 --> B12["events.add(event) + 返回 isTerminal"]
-    A --> C["流结束时:"]
-    C --> D["complete()<br/>// GatewayA2AResponseParser.java:275"]
-    D --> E["flush 剩余 partial frame"]
-```
+默认为 `order`。三种运行时仅改变线路，不改变 A2A/A2A-T metadata、任务状态、
+Negotiation-T 轮次或业务回调契约。Order 模式的每个 agent/context 会话独立，两地市并行
+诊断不得共享可变 NE 路由状态；Negotiation-T follow-up 复用同一对话。
 
-## 八、DAG 执行：PSOP 遍历
+`EASTCOM_ORDER_SIMULATOR_ENABLED=true` 只在 `order` 模式启动本地东信协议模拟器；
+`direct` 模式不会占用模拟器端口，也不会意外经过东信 SDK。
 
-```mermaid
-graph TD
-    A["ExecutePsop.execute()<br/>// ExecutePsop.java:62"]
-    A --> B["WorkflowExecutor.execute()<br/>// WorkflowExecutor.java:128"]
-    B --> C["找到入度=0 的步骤 → 并行执行"]
-    B --> D["STEP 'diagnosis_city1' + 'diagnosis_city2' (并行)"]
-    D --> E["WorkbenchControlPoint.onTask(step)<br/>// WorkbenchControlPoint.java:67"]
-    E --> E1["构建城市特定任务消息"]
-    E --> E2["engineClient.sendMessage(agentName, taskMsg)<br/>→ A2ATransport → [网关路径] → OMC Agent"]
-    E --> F["OMC Agent 侧 (SpnDomainAgentCity1Executor):"]
-    F --> F1["首次: needsNegotiation()=true → INPUT_REQUIRED"]
-    F --> F2["Workbench 收到 → NegotiationStrategy 补充参数 → 重发"]
-    F --> F3["executeBusiness(): LLM 诊断<br/>City1: port-7 DOWN, -28dBm → 故障<br/>City2: 正常, -17dBm → 无故障"]
-    F --> F4["selfTriggerRecovery(): 检查 Authorization-T 白名单 → 抢通"]
-    B --> G["STEP 'merge_analysis' (依赖前两步)"]
-    G --> H["WorkbenchControlPoint.onSelfTask()<br/>// WorkbenchControlPoint.java:121<br/>→ LLM 合并两城诊断结果 → 定位故障城市"]
-    B --> I["ExecutionResult → buildResultText() → 返回给 Demo"]
-```
+## 6. Negotiation-T
 
-## 九、三种模式对比
+OMC 仅在 Task-T 缺少必填参数或存在业务语义错误时发起协商。LLM/配置/网络故障会
+直接失败，不伪装成参数协商。OMC 用 typed propose 渲染 SDK prompt，工作台校验
+`templateUri` 和 `negotiationContext={id,round,maxRounds}`，再用 typed accept/reject/abort 回复。
+引擎不使用已从 SDK 删除的旧状态机接口，不存在原始文本 fallback。
 
-| 模式 | 南向调用路径 |
-|------|-------------|
-| DIRECT | Workbench ──HTTPS──→ OMC Agent (直连)<br>clientRuntime = null |
-| MOCK | Workbench → OrderGatewayClientRuntime<br>→ MockOrderHttpSessionClient<br>→ HTTP POST MockGatewayServer(:26400)<br>→ X-Target-URL 校验 + HTTPS 反代 → OMC Agent |
-| ORDER | Workbench → OrderGatewayClientRuntime<br>→ StreamingOrderHttpSessionClient<br>→ RSocket RPC → 指令平台<br>→ 平台根据 NE 路由 HTTP 转发 → OMC Agent |
+主投诉工作流给两个地市都下发完整诊断输入，因此正常主链路不会人为制造缺参来触发
+Negotiation-T；协商能力由独立协议用例覆盖。
 
-## 十、关键类文件索引
+## 7. Authorization-T 与 Notification-T
 
-| 类名 | 文件路径 | 职责 |
-|------|----------|------|
-| SpringSpnDemo | samples/.../demo/SpringSpnDemo.java | Demo 入口，启动各组件 |
-| SpringWorkbenchApplication | samples/.../SpringWorkbenchApplication.java | Spring Boot 启动类 |
-| SpringWorkbenchExecutor | samples/.../workbench/SpringWorkbenchExecutor.java | Workbench Agent 执行器 |
-| ClientRuntimeFactory | samples/.../gateway/ClientRuntimeFactory.java | 运行时工厂（DIRECT/MOCK/ORDER） |
-| EastcomOrderSimulatorConfiguration | samples/.../gateway/EastcomOrderSimulatorConfiguration.java | 模拟器 Spring 配置 |
-| WorkbenchOrchestrator | samples/.../workbench/WorkbenchOrchestrator.java | 编排流水线 |
-| ExtensionPrePositioner | samples/.../extension/ExtensionPrePositioner.java | 扩展预置（Auth/Notif） |
-| WorkbenchControlPoint | samples/.../workbench/WorkbenchControlPoint.java | DAG 步骤分发 |
-| NegotiationStrategy | samples/.../negotiation/NegotiationStrategy.java | 协商策略 |
-| OrderGatewayClientRuntime | samples/.../gateway/OrderGatewayClientRuntime.java | 指令平台客户端 |
-| MockGatewayClientRuntime | samples/.../gateway/MockGatewayClientRuntime.java | Mock 网关客户端 |
-| StreamingOrderHttpSessionClient | samples/.../gateway/StreamingOrderHttpSessionClient.java | RSocket 流式会话 |
-| MockOrderHttpSessionClient | samples/.../gateway/MockOrderHttpSessionClient.java | Mock HTTP 会话 |
-| GatewayA2AResponseParser | samples/.../gateway/GatewayA2AResponseParser.java | SSE/protobuf 事件解析 |
-| AgentGatewayRoute | samples/.../gateway/AgentGatewayRoute.java | 路由模型 |
-| ConfiguredAgentGatewayRouteResolver | samples/.../gateway/ConfiguredAgentGatewayRouteResolver.java | 配置化路由解析 |
-| MockGatewayServer | samples/.../gateway/MockGatewayServer.java | Mock 网关 HTTP 反代 |
-| EastcomOrderSimulatorServer | samples/.../gateway/EastcomOrderSimulatorServer.java | RSocket 模拟器 |
-| JdkHttpA2AServer | samples/.../server/JdkHttpA2AServer.java | OMC Agent HTTPS 服务器 |
-| A2ATransport | workflow-engine/.../client/A2ATransport.java | A2A 传输层 |
-| WorkflowExecutor | workflow-engine/.../core/WorkflowExecutor.java | DAG 执行引擎 |
-| ExecutePsop | workflow-engine/.../runner/ExecutePsop.java | PSOP 运行器 |
-| LoadPsop | workflow-engine/.../registry/LoadPsop.java | PSOP 加载/搜索 |
+`ExtensionPrePositioner` 对每个 OMC：
+
+1. 用 `sendExtensionMessageFromData` 渲染并发送白名单；ACK 必须为
+   `TASK_STATE_COMPLETED`，否则启动失败。
+2. 用 `openNotificationFromData` 建立长连接；ACK 必须为 `WORKING` 或 `COMPLETED`。
+3. OMC 诊断给出抢通方案后，只在 SDK 已验证的白名单精确命中业务场景/处置类型/
+   操作名称/有效期时自动执行。没有白名单时 fail-closed。
+4. 执行结果通过 Notification-T `recovery-result` artifact 上报。
+5. `WorkbenchExtensionLifecycle` 先从本地订阅表移除并关闭句柄，再通知外部 observer；
+   observer 异常不影响流关闭。
+6. 本地 Order 模拟器识别完整 SSE frame 中的 `recovery-result` 后结束该转发，确保关流
+   也传递到 OMC；没有抢通结果的订阅继续保持到显式取消或工作台关闭。
+
+Authorization-T 模板支持新增、修改、删除、查询。示例 OMC 用一条内存白名单演示：
+新增/修改替换当前策略，删除清空，查询不修改状态。生产集成方应在业务回调中持久化、
+按策略标识精确修改/删除并返回查询 artifact。
+
+## 8. 关闭顺序
+
+1. Spring context 关闭时，`SpringWorkbenchExtensionLifecycle` 关闭剩余订阅和 Notification transport。
+2. 单次 `WorkbenchOrchestrator` 在 `finally` 中关闭 Task-T transport。
+3. Demo 关闭 Spring context、两个 OMC server，以及当前模式启用的本地 gateway/simulator。
+
+正常工作流完成不能作为 Notification-T 订阅关闭条件。
