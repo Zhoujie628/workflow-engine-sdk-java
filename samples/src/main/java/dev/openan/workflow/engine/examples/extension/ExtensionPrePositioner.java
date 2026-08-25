@@ -20,7 +20,9 @@
 package dev.openan.workflow.engine.examples.extension;
 
 import dev.openan.workflow.engine.client.ExtensionSender;
+import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.examples.demo.SpnCasePrompts;
+import dev.openan.workflow.engine.model.SendMessageResult;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -30,17 +32,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.concurrent.TimeUnit;
+import net.openan.a2at.sdk.core.model.StandardTemplates;
 
 /**
- * Pre-positions Authorization-T and Notification-T to downstream agents.
+ * Initializes independent Authorization-T and Notification-T operations for downstream agents.
  *
- * <p>Single responsibility: send the two pre-positioning control messages (one-shot whitelist
- * policy + long-lived result subscription) to each non-workbench agent. The workbench extension
- * lifecycle calls this once; individual workflow tasks do not own or repeat these operations.
+ * <p>Single responsibility: send a one-shot whitelist operation and open a long-lived result
+ * subscription for each non-workbench agent on separate channels. The historical class name is
+ * retained for sample source compatibility; individual workflow tasks do not own these operations.
  */
 public class ExtensionPrePositioner {
 
     private static final Logger log = LoggerFactory.getLogger(ExtensionPrePositioner.class);
+    private static final int AUTHORIZATION_VALIDATION_ATTEMPTS = 3;
 
     private final Map<String, Object> authData;
     private final Map<String, Object> authSchema;
@@ -49,11 +53,13 @@ public class ExtensionPrePositioner {
 
     public ExtensionPrePositioner() {
         // Structured-data track: the raw policy / subscription fields; the SDK renders the
-        // Authorization-T and Notification-T prompts deterministically (spec cases 7.5/7.8).
+        // Authorization-T and Notification-T prompts through the SDK schema-aware pipelines
+        // (spec cases 7.5/7.8; slot extraction may use the SDK-configured LLM).
         this.authData = SpnCasePrompts.addAuthorizationData();
-        this.authSchema = SpnCasePrompts.authorizationSchema();
+        this.authSchema = SdkSlotSchemaLoader.loadConfigured(
+                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
         this.notifData = SpnCasePrompts.subscribeServiceRecoveryData();
-        this.notifSchema = SpnCasePrompts.serviceRecoverySchema();
+        this.notifSchema = SdkSlotSchemaLoader.loadConfigured(StandardTemplates.SERVICE_RECOVERY);
     }
 
     /**
@@ -63,8 +69,9 @@ public class ExtensionPrePositioner {
      * through the Notification-T SSE stream (e.g. recovery results) are forwarded to the
      * callback. The callback receives a Map with keys: agent, text, metadata, state.
      */
-    public void prePosition(
-            ExtensionSender sender,
+    public List<NotificationSubscription> prePosition(
+            ExtensionSender authorizationSender,
+            ExtensionSender notificationSender,
             List<AgentCard> agentCards,
             Consumer<Map<String, Object>> notificationCallback) {
         long allStarted = System.nanoTime();
@@ -78,6 +85,7 @@ public class ExtensionPrePositioner {
                 "[PrePosition] START targetAgents={}, notificationCallback={}",
                 targetCount,
                 notificationCallback != null);
+        java.util.ArrayList<NotificationSubscription> subscriptions = new java.util.ArrayList<>();
         for (AgentCard card : agentCards) {
             String name = card.name();
             if (name.contains("Workbench")) {
@@ -86,16 +94,8 @@ public class ExtensionPrePositioner {
             long agentStarted = System.nanoTime();
             try {
                 long operationStarted = System.nanoTime();
-               log.info("[PrePosition] SEND extension=Authorization-T, agent={}", name);
-               var authResult =
-                        sender.sendExtensionMessageFromData(
-                                        name,
-                                        "新增动网操作授权",
-                                        authData,
-                                        authSchema,
-                                        dev.openan.workflow.engine.client.A2ATExtension
-                                                .AUTHORIZATION_T)
-                                .join();
+                log.info("[PrePosition] SEND extension=Authorization-T, agent={}", name);
+                SendMessageResult authResult = sendAuthorization(authorizationSender, name);
                 log.info(
                         "[PrePosition] ACK extension=Authorization-T, agent={}, state={}, "
                                 + "responseChars={}, elapsedMs={}",
@@ -103,17 +103,30 @@ public class ExtensionPrePositioner {
                         authResult.getTaskState(),
                         authResult.getText() != null ? authResult.getText().length() : 0,
                         elapsedMillis(operationStarted));
+                requireState(
+                        authResult,
+                        "Authorization-T",
+                        name,
+                        "TASK_STATE_COMPLETED");
 
                 operationStarted = System.nanoTime();
                 log.info("[PrePosition] SEND extension=Notification-T, agent={}", name);
-                var notificationResult =
-                        sender.sendNotificationFromData(
+                NotificationSubscription subscription =
+                        notificationSender.openNotificationFromData(
                                         name,
                                         "订阅业务抢通事件",
                                         notifData,
                                         notifSchema,
                                         notificationCallback)
                                 .join();
+                subscriptions.add(subscription);
+                var notificationResult = subscription.acknowledgement().join();
+                requireState(
+                        notificationResult,
+                        "Notification-T",
+                        name,
+                        "TASK_STATE_WORKING",
+                        "TASK_STATE_COMPLETED");
                 log.info(
                         "[PrePosition] ACK extension=Notification-T, agent={}, state={}, "
                                 + "responseChars={}, elapsedMs={}",
@@ -142,14 +155,65 @@ public class ExtensionPrePositioner {
                 "[PrePosition] DONE targetAgents={}, elapsedMs={}",
                 targetCount,
                 elapsedMillis(allStarted));
+        return List.copyOf(subscriptions);
     }
 
-    /** Pre-position without Notification-T event callback. */
-    public void prePosition(ExtensionSender sender, List<AgentCard> agentCards) {
-        prePosition(sender, agentCards, null);
+    private SendMessageResult sendAuthorization(ExtensionSender sender, String agentName) {
+        SendMessageResult result = null;
+        for (int attempt = 1; attempt <= AUTHORIZATION_VALIDATION_ATTEMPTS; attempt++) {
+            result = sender.sendExtensionMessageFromData(
+                            agentName,
+                            "新增动网操作授权",
+                            authData,
+                            authSchema,
+                            dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
+                    .join();
+            boolean retryableValidationFailure =
+                    "TASK_STATE_FAILED".equals(result.getTaskState())
+                            && "Authorization-T validation failed".equals(result.getText());
+            if (!retryableValidationFailure || attempt == AUTHORIZATION_VALIDATION_ATTEMPTS) {
+                return result;
+            }
+            log.warn(
+                    "[PrePosition] RETRY extension=Authorization-T, agent={}, attempt={}/{}, reason=validator_mismatch",
+                    agentName,
+                    attempt + 1,
+                    AUTHORIZATION_VALIDATION_ATTEMPTS);
+        }
+        return result;
+    }
+
+    /** Pre-position through explicitly isolated Authorization-T and Notification-T senders. */
+    public List<NotificationSubscription> prePosition(
+            ExtensionSender authorizationSender,
+            ExtensionSender notificationSender,
+            List<AgentCard> agentCards) {
+        return prePosition(authorizationSender, notificationSender, agentCards, null);
     }
 
     private static long elapsedMillis(long startedNanos) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+    }
+
+    private static void requireState(
+            dev.openan.workflow.engine.model.SendMessageResult result,
+            String extension,
+            String agent,
+            String... allowedStates) {
+        String state = result != null ? result.getTaskState() : null;
+        boolean accepted =
+                state != null
+                        && java.util.Arrays.stream(allowedStates)
+                                .anyMatch(state::contains);
+        if (!accepted) {
+            throw new IllegalStateException(
+                    extension
+                            + " independent protocol operation failed for '"
+                            + agent
+                            + "': state="
+                            + state
+                            + ", response="
+                            + (result != null ? result.getText() : "null"));
+        }
     }
 }

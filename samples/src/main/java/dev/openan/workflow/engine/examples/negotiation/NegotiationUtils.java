@@ -74,11 +74,12 @@ public final class NegotiationUtils {
      * context and advance rounds itself — the content layer is stateless and the caller owns
      * the session state (SDK guide §1.10).
      */
-    public static final String NEGOTIATION_CONTEXT_KEY = "negotiation_context";
+    public static final String NEGOTIATION_CONTEXT_KEY =
+            net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
 
     /**
      * Builds Negotiation-T propose metadata carrying the session context: the rendered propose
-     * text under the extension URI plus the {@code negotiation_context} key holding the
+     * text under the extension URI plus the canonical {@code negotiationContext} key holding the
      * engine-format context map ({@code id}/{@code round}/{@code maxRounds}).
      *
      * @param negotiationText rendered propose text

@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.LinkedHashMap;
@@ -372,7 +373,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
     }
 
     private void handleExchange(HttpExchange exchange, RestHandler restHandler) throws IOException {
-        String fullPath = exchange.getRequestURI().getPath();
+        String fullPath = exchange.getRequestURI().getRawPath();
         String method = exchange.getRequestMethod();
         String path =
                 pathPrefix.isEmpty() || !fullPath.startsWith(pathPrefix)
@@ -398,31 +399,59 @@ public class JdkHttpA2AServer implements AutoCloseable {
                 return;
             }
             // Task routes (?? A2A: ??/??/??)
-            if ("GET".equalsIgnoreCase(method) && path.startsWith("/tasks/") && !path.contains(":")) {
-                String taskId = path.substring("/tasks/".length());
-                if (taskId.contains("?")) taskId = taskId.substring(0, taskId.indexOf("?"));
+            String taskId = taskIdFromPath(path, null);
+            if ("GET".equalsIgnoreCase(method) && taskId != null) {
                 var resp = restHandler.getTask(buildCallContext(exchange), "", taskId, null);
                 sendJson(exchange, resp.getStatusCode(), resp.getBody());
                 return;
             }
-            if ("POST".equalsIgnoreCase(method) && path.contains(":cancel")) {
-                String taskId = path.substring("/tasks/".length(), path.indexOf(":cancel"));
+            taskId = taskIdFromPath(path, ":cancel");
+            if ("POST".equalsIgnoreCase(method) && taskId != null) {
                 var resp = restHandler.cancelTask(buildCallContext(exchange), "", readBody(exchange), taskId);
                 sendJson(exchange, resp.getStatusCode(), resp.getBody());
                 return;
             }
-            if ("POST".equalsIgnoreCase(method) && path.contains(":subscribe")) {
-                String taskId = path.substring("/tasks/".length(), path.indexOf(":subscribe"));
+            taskId = taskIdFromPath(path, ":subscribe");
+            if ("POST".equalsIgnoreCase(method) && taskId != null) {
                 handleSubscribe(exchange, restHandler, taskId);
                 return;
             }
             exchange.sendResponseHeaders(404, -1);
+        } catch (IllegalArgumentException e) {
+            sendJson(exchange, 400, Map.of("error", Map.of("code", 400, "message", e.getMessage())));
         } catch (Exception e) {
             log.error("[{}] Handler error: {}", agentName, e.getMessage(), e);
             sendJson(
                     exchange, 500, Map.of("error", Map.of("code", 500, "message", e.getMessage())));
         } finally {
             exchange.close();
+        }
+    }
+
+    /** Parses exactly one encoded task-id path segment and rejects ambiguous task routes. */
+    static String taskIdFromPath(String path, String operationSuffix) {
+        String prefix = "/tasks/";
+        if (path == null || !path.startsWith(prefix)) {
+            return null;
+        }
+        String encoded = path.substring(prefix.length());
+        if (operationSuffix != null) {
+            if (!encoded.endsWith(operationSuffix)) {
+                return null;
+            }
+            encoded = encoded.substring(0, encoded.length() - operationSuffix.length());
+        } else if (encoded.contains(":")) {
+            return null;
+        }
+        if (encoded.isEmpty() || encoded.contains("/")) {
+            return null;
+        }
+        try {
+            // URLDecoder follows form semantics where '+' means space. In a URI path segment an
+            // unescaped '+' is literal, so protect it before decoding percent escapes.
+            return URLDecoder.decode(encoded.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid encoded task id", e);
         }
     }
 

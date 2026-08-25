@@ -28,24 +28,29 @@ import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
 
 import net.openan.a2at.sdk.core.model.MetadataContent;
 import net.openan.a2at.sdk.server.A2ATServer;
-import net.openan.a2at.sdk.server.model.PromptComplianceResult;
+import net.openan.a2at.sdk.core.model.A2ATConfig;
+import net.openan.a2at.sdk.core.model.FilledParamData;
+import net.openan.a2at.sdk.core.model.StandardTemplates;
+import net.openan.a2at.sdk.core.model.TemplateUri;
+import net.openan.a2at.sdk.core.validation.ContentValidationException;
 import java.nio.file.Path;
 import org.a2aproject.sdk.spec.TextPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
-import dev.openan.workflow.engine.examples.agents.NegotiationBaseAgentExecutor;
+import dev.openan.workflow.engine.client.A2ATExtension;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 /**
- * Handles pre-positioned Authorization-T / Notification-T messages on the agent server side.
+ * Handles independent Authorization-T / Notification-T messages on the agent server side.
  *
  * <p>This is a <b>separate concern</b> from Negotiation-T. Pre-positioned extensions are sent by
- * the orchestrator <i>before</i> the workflow starts (via {@code
- * WorkflowEngineClient.sendExtensionMessage}) to establish whitelists and subscriptions. When an
+ * the workbench independently from workflow execution (via {@link
+ * dev.openan.workflow.engine.client.ExtensionSender}) to establish whitelists and subscriptions. When an
  * agent receives one, it must:
  *
  * <ol>
@@ -59,17 +64,48 @@ import dev.openan.workflow.engine.examples.agents.NegotiationBaseAgentExecutor;
  */
 public class PrePositionedExtensionHandler {
     private static final Logger log = LoggerFactory.getLogger(PrePositionedExtensionHandler.class);
-    private volatile String authorizationPolicy;
-    private volatile String notificationSubscription;
+    private final AuthorizationPromptValidator authorizationValidator;
+    private final NotificationPromptValidator notificationValidator;
+    private volatile AuthorizationPolicy authorizationPolicy;
+    private volatile NotificationPolicy notificationSubscription;
     private volatile A2ATServer a2atServer;
+    private volatile String validationLanguage = "zh-CN";
 
-    private A2ATServer a2atServer() {
+    /** Validation seam for deterministic integration tests; production uses {@link A2ATServer}. */
+    @FunctionalInterface
+    public interface AuthorizationPromptValidator {
+        FilledParamData validate(String prompt, Map<String, Object> schema, TemplateUri templateUri);
+    }
+
+    /** Validation seam for deterministic Notification-T integration tests. */
+    @FunctionalInterface
+    public interface NotificationPromptValidator {
+        FilledParamData validate(String prompt, Map<String, Object> schema, TemplateUri templateUri);
+    }
+
+    public PrePositionedExtensionHandler() {
+        this(null, null);
+    }
+
+    public PrePositionedExtensionHandler(AuthorizationPromptValidator authorizationValidator) {
+        this(authorizationValidator, null);
+    }
+
+    public PrePositionedExtensionHandler(
+            AuthorizationPromptValidator authorizationValidator,
+            NotificationPromptValidator notificationValidator) {
+        this.authorizationValidator = authorizationValidator;
+        this.notificationValidator = notificationValidator;
+    }
+
+    private synchronized A2ATServer a2atServer() {
         if (a2atServer != null) return a2atServer;
-        if (Boolean.getBoolean("a2at.llm.disabled")) return null;
-        String env = System.getProperty("A2AT_ENV_PATH", System.getenv("A2AT_ENV_PATH"));
+        String env = EnvResolver.resolveEnvPath();
         if (env == null || env.isBlank()) return null;
         try {
-            a2atServer = new A2ATServer(Path.of(env));
+            Path envPath = Path.of(env);
+            validationLanguage = A2ATConfig.load(envPath).prompt().language();
+            a2atServer = new A2ATServer(envPath);
             return a2atServer;
         } catch (Exception e) {
             log.warn("A2ATServer init failed: {}", e.getMessage());
@@ -87,13 +123,11 @@ public class PrePositionedExtensionHandler {
         if (msg == null || msg.metadata() == null) {
             return null;
         }
-        for (String key : msg.metadata().keySet()) {
-            if (key.contains("Authorization-T")) {
-                return "Authorization-T";
-            }
-            if (key.contains("Notification-T")) {
-                return "Notification-T";
-            }
+        if (msg.metadata().containsKey(A2ATExtension.AUTHORIZATION_T.uri())) {
+            return A2ATExtension.AUTHORIZATION_T.uri();
+        }
+        if (msg.metadata().containsKey(A2ATExtension.NOTIFICATION_T.uri())) {
+            return A2ATExtension.NOTIFICATION_T.uri();
         }
         return null;
     }
@@ -118,47 +152,22 @@ public class PrePositionedExtensionHandler {
         emitter.emitEvent(event);
     }
 
-    /** The pre-positioned Authorization-T whitelist policy text, or null. */
-    public String getAuthorizationPolicy() {
+    /** The SDK-validated Authorization-T whitelist, or null when none has been accepted. */
+    public AuthorizationPolicy getAuthorizationPolicy() {
         return authorizationPolicy;
     }
 
-    /** The pre-positioned Notification-T subscription text, or null. */
-    public String getNotificationSubscription() {
+    /** The SDK-validated Notification-T subscription, or null. */
+    public NotificationPolicy getNotificationSubscription() {
         return notificationSubscription;
     }
 
-    /**
-     * Parameter JSON Schema for the Authorization-T validate-and-fill pipeline: the whitelist
-     * policy fields the agent wants extracted from a rendered authorization prompt.
-     */
-    private static Map<String, Object> buildAuthParamSchema() {
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("授权策略的操作类型", Map.of("type", "string"));
-        properties.put("动网操作的授权策略列表", Map.of("type", "string"));
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        return schema;
+    private Map<String, Object> validationSchema(TemplateUri templateUri) {
+        return SdkSlotSchemaLoader.load(templateUri, validationLanguage);
     }
 
     /**
-     * Parameter JSON Schema for the Notification-T validate-and-fill pipeline: the subscription
-     * fields extracted from a rendered subscribe-incident prompt.
-     */
-    private static Map<String, Object> buildNotificationParamSchema() {
-        // Slots of the SDK's Notification-T service-recovery template (订阅条件 + 上报通知数据格式).
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("订阅条件", Map.of("type", "string"));
-        properties.put("上报通知数据格式", Map.of("type", "string"));
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        return schema;
-    }
-
-    /**
-     * Handle a pre-positioned message: store the payload, emit an ACK artifact, and complete the
+     * Handle an independent extension message: store the payload, emit an ACK artifact, and complete the
      * task.
      *
      * @param agentTag short agent class name for logging
@@ -167,90 +176,49 @@ public class PrePositionedExtensionHandler {
             RequestContext ctx, AgentEmitter emitter, String extKeyword, String agentTag) {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
-        String payloadText =
-                ctx.getMessage().metadata().entrySet().stream()
-                        .filter(e -> e.getKey().contains(extKeyword))
-                        .map(Map.Entry::getValue)
-                        .findFirst()
-                        .map(v -> v instanceof String s ? s : String.valueOf(v))
-                        .orElse("");
-        // Extract templateUri from metadata if present (sent by SDK prompt generation)
-        String templateUri = null;
-        if (ctx.getMessage().metadata() != null) {
-            Object tu = ctx.getMessage().metadata().get(MetadataContent.TEMPLATE_URI_METADATA_KEY);
-            if (tu instanceof String s) templateUri = s;
+        Object payload = ctx.getMessage().metadata().get(extKeyword);
+        if (!(payload instanceof String payloadText) || payloadText.isBlank()) {
+            reject(emitter, contextId, taskId, "Extension payload must be a non-empty string");
+            return;
         }
-        if (extKeyword.contains("Authorization")) {
-            authorizationPolicy = payloadText;
-            // Full validate-and-fill pipeline: rule gate + LLM semantic validation + param
-            // extraction, falling back to the lightweight compliance check.
-            A2ATServer server = a2atServer();
-            if (server != null) {
-                try {
-                    net.openan.a2at.sdk.core.model.FilledParamData filled =
-                            server.validateAuthPromptAndDataFilling(
-                                    payloadText,
-                                    buildAuthParamSchema(),
-                                    net.openan.a2at.sdk.core.model.StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
-                    log.info(
-                            "[{}] Authorization-T validateAuthPromptAndDataFilling passed, templateUri={}, params={}",
-                            agentTag,
-                            templateUri,
-                            filled.data() != null ? filled.data().keySet() : java.util.Set.of());
-                } catch (Exception ve) {
-                    log.warn(
-                            "[{}] Authorization-T validate-and-fill rejected ({}); falling back to compliance check",
-                            agentTag,
-                            ve.getMessage());
-                    try {
-                        PromptComplianceResult result = server.checkTaskPrompt(payloadText);
-                        if (result.success()) {
-                            log.info("[{}] Authorization-T prompt compliance check passed, templateUri={}",
-                                    agentTag, templateUri);
-                        } else {
-                            log.warn("[{}] Authorization-T prompt compliance check failed: code={}, message={}",
-                                    agentTag,
-                                    result.failure() != null ? result.failure().code() : "unknown",
-                                    result.failure() != null ? result.failure().message() : "unknown");
-                        }
-                    } catch (Exception e) {
-                        log.warn("[{}] Authorization-T compliance check error: {}", agentTag, e.getMessage());
-                    }
-                }
+        // Extract templateUri from metadata if present (sent by SDK prompt generation)
+        Object templateUri = null;
+        if (ctx.getMessage().metadata() != null) {
+            templateUri = ctx.getMessage().metadata().get(MetadataContent.TEMPLATE_URI_METADATA_KEY);
+        }
+        if (A2ATExtension.AUTHORIZATION_T.uri().equals(extKeyword)) {
+            try {
+                FilledParamData filled = validateAuthorization(payloadText, templateUri);
+                applyAuthorization(filled.data(), templateUri, agentTag);
+            } catch (Exception validationError) {
+                log.warn(
+                        "[{}] Authorization-T rejected; existing policy unchanged: {}",
+                        agentTag,
+                        validationFailureSummary(validationError));
+                reject(emitter, contextId, taskId, "Authorization-T validation failed");
+                return;
             }
-        } else if (extKeyword.contains("Notification")) {
-            notificationSubscription = payloadText;
-            A2ATServer server = a2atServer();
-            if (server != null) {
-                try {
-                    net.openan.a2at.sdk.core.model.FilledParamData filled =
-                            server.validateNotificationPromptAndDataFilling(
-                                    payloadText,
-                                    buildNotificationParamSchema(),
-                                    net.openan.a2at.sdk.core.model.StandardTemplates
-                                            .SERVICE_RECOVERY);
-                    log.info(
-                            "[{}] Notification-T validateNotificationPromptAndDataFilling"
-                                    + " passed, templateUri={}, params={}",
-                            agentTag,
-                            templateUri,
-                            filled.data() != null ? filled.data().keySet() : java.util.Set.of());
-                } catch (Exception ve) {
-                    log.warn(
-                            "[{}] Notification-T validate-and-fill rejected ({}); keeping payload as subscription",
-                            agentTag,
-                            ve.getMessage());
-                }
-            } else {
-                log.info("[{}] Notification-T received, templateUri={}", agentTag, templateUri);
+        } else if (A2ATExtension.NOTIFICATION_T.uri().equals(extKeyword)) {
+            try {
+                acceptNotification(payloadText, templateUri, agentTag);
+            } catch (Exception validationError) {
+                log.warn(
+                        "[{}] Notification-T rejected; existing subscription unchanged: {}",
+                        agentTag,
+                        validationFailureSummary(validationError));
+                reject(emitter, contextId, taskId, "Notification-T validation failed");
+                return;
             }
+        } else {
+            reject(emitter, contextId, taskId, "Unsupported A2A-T extension URI");
+            return;
         }
         log.info(
                 "[{}] Pre-positioned {} received, payload length={}",
                 agentTag,
                 extKeyword,
                 payloadText.length());
-        String ackText = extKeyword + " pre-positioning acknowledged";
+        String ackText = extKeyword + " operation acknowledged";
         List<Part<?>> parts = List.of(new TextPart(ackText));
         emitter.addArtifact(parts, "result", agentTag + " ack", Map.of(), false, true);
         emitStatus(
@@ -258,9 +226,224 @@ public class PrePositionedExtensionHandler {
                 TaskState.TASK_STATE_COMPLETED,
                 contextId,
                 taskId,
-                extKeyword + " pre-positioned successfully",
+                extKeyword + " operation applied successfully",
                 Map.of());
         emitter.complete(BaseAgentExecutor.buildStatusMessage(contextId, taskId, "Completed"));
-        log.info("[{}] {} pre-positioning completed", agentTag, extKeyword);
+        log.info("[{}] {} operation completed", agentTag, extKeyword);
+    }
+
+    synchronized void applyAuthorization(
+            Map<String, Object> validatedData, Object templateUri, String agentTag) {
+        String operation = AuthorizationPolicy.operationFromValidated(validatedData);
+        switch (operation) {
+            case AuthorizationPolicy.ADD, AuthorizationPolicy.MODIFY -> {
+                AuthorizationPolicy candidate = AuthorizationPolicy.fromValidated(validatedData);
+                authorizationPolicy = candidate;
+                log.info(
+                        "[{}] Authorization-T accepted, templateUri={}, operation={}, rules={}",
+                        agentTag,
+                        templateUri,
+                        operation,
+                        candidate.rules().size());
+            }
+            case AuthorizationPolicy.DELETE -> {
+                // This sample models one active whitelist per OMC agent. A production callback
+                // should use the validated selector/list to delete matching persisted policies.
+                AuthorizationPolicy.requirePolicyList(validatedData);
+                authorizationPolicy = null;
+                log.info(
+                        "[{}] Authorization-T accepted, templateUri={}, operation={}, active policy cleared",
+                        agentTag,
+                        templateUri,
+                        operation);
+            }
+            case AuthorizationPolicy.QUERY ->
+                    // Query is side-effect free. The current sample returns the normal protocol ACK;
+                    // an integration callback can render its persisted policies in the artifact.
+                    log.info(
+                            "[{}] Authorization-T accepted, templateUri={}, operation={}, activeRules={}",
+                            agentTag,
+                            templateUri,
+                            operation,
+                            authorizationPolicy == null ? 0 : authorizationPolicy.rules().size());
+            default -> throw new IllegalArgumentException(
+                    "Unsupported Authorization-T operation: " + operation);
+        }
+    }
+
+    private FilledParamData validateAuthorization(String prompt, Object receivedTemplateUri) {
+        FilledParamData filled;
+        if (authorizationValidator != null) {
+            filled = Objects.requireNonNull(
+                    authorizationValidator.validate(
+                            prompt,
+                            validationSchema(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
+                            StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
+                    "Authorization validator returned null");
+        } else {
+            requireTemplateUri(
+                    receivedTemplateUri, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+            A2ATServer server = a2atServer();
+            if (server == null) {
+                throw new IllegalStateException("A2A-T server validator is unavailable");
+            }
+            filled = server.validateAuthPromptAndDataFilling(
+                    prompt,
+                    validationSchema(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
+                    StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+        }
+        requireExtractedSectionsMatch(
+                prompt,
+                filled.data(),
+                AuthorizationPolicy.OPERATION_TYPE_FIELD,
+                AuthorizationPolicy.POLICY_LIST_FIELD);
+        return filled;
+    }
+
+    /** Validates and stores a Notification-T subscription before the server opens its SSE loop. */
+    public NotificationPolicy acceptNotification(
+            String prompt, Object receivedTemplateUri, String agentTag) {
+        FilledParamData filled;
+        if (notificationValidator != null) {
+            filled = Objects.requireNonNull(
+                    notificationValidator.validate(
+                            prompt,
+                            validationSchema(StandardTemplates.SERVICE_RECOVERY),
+                            StandardTemplates.SERVICE_RECOVERY),
+                    "Notification validator returned null");
+        } else {
+            requireTemplateUri(receivedTemplateUri, StandardTemplates.SERVICE_RECOVERY);
+            A2ATServer server = a2atServer();
+            if (server == null) {
+                throw new IllegalStateException("A2A-T server validator is unavailable");
+            }
+            filled = server.validateNotificationPromptAndDataFilling(
+                    prompt,
+                    validationSchema(StandardTemplates.SERVICE_RECOVERY),
+                    StandardTemplates.SERVICE_RECOVERY);
+        }
+        requireExtractedSectionsMatch(
+                prompt,
+                filled.data(),
+                NotificationPolicy.CONDITION_FIELD,
+                NotificationPolicy.REPORT_FORMAT_FIELD);
+        NotificationPolicy candidate = NotificationPolicy.fromValidated(filled.data());
+        notificationSubscription = candidate;
+        log.info(
+                "[{}] Notification-T accepted, templateUri={}, conditionChars={}, reportFormatChars={}",
+                agentTag,
+                receivedTemplateUri,
+                candidate.condition().length(),
+                candidate.reportFormat().length());
+        return candidate;
+    }
+
+    static void requireExtractedSectionsMatch(
+            String renderedPrompt, Map<String, Object> extractedData, String... slotNames) {
+        Objects.requireNonNull(renderedPrompt, "Rendered A2A-T prompt is required");
+        Objects.requireNonNull(extractedData, "SDK extracted parameters are required");
+        for (String slotName : slotNames) {
+            String renderedValue = sectionValue(renderedPrompt, slotName);
+            Object extractedValue = extractedData.get(slotName);
+            String extractedText = extractedValue instanceof String text ? text : "";
+            if (!normalizeSlotValue(renderedValue).equals(normalizeSlotValue(extractedText))) {
+                throw new IllegalArgumentException(
+                        "SDK extracted value does not match rendered prompt section: " + slotName);
+            }
+        }
+    }
+
+    private static String sectionValue(String prompt, String slotName) {
+        String[] lines = prompt.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+        String expectedHeading = "## " + slotName;
+        for (int index = 0; index < lines.length; index++) {
+            if (!expectedHeading.equals(lines[index].strip())) {
+                continue;
+            }
+            StringBuilder value = new StringBuilder();
+            for (int valueIndex = index + 1; valueIndex < lines.length; valueIndex++) {
+                String line = lines[valueIndex];
+                if (line.strip().startsWith("## ")) {
+                    break;
+                }
+                if (!line.isBlank()) {
+                    if (!value.isEmpty()) {
+                        value.append('\n');
+                    }
+                    value.append(line.strip());
+                }
+            }
+            return value.toString();
+        }
+        throw new IllegalArgumentException(
+                "Rendered A2A-T prompt is missing section: "
+                        + slotName
+                        + "; headings="
+                        + java.util.Arrays.stream(lines)
+                                .map(String::strip)
+                                .filter(line -> line.startsWith("## "))
+                                .toList());
+    }
+
+    private static String normalizeSlotValue(String value) {
+        return value == null ? "" : value.strip().replaceAll("\\s+", " ");
+    }
+
+    private static void requireTemplateUri(Object actualValue, TemplateUri expected) {
+        String actual = null;
+        if (actualValue instanceof TemplateUri template) {
+            actual = template.uri();
+        } else if (actualValue instanceof String text) {
+            actual = text;
+        } else if (actualValue instanceof Map<?, ?> map) {
+            Object uri = map.get("uri");
+            if (uri instanceof String text) {
+                actual = text;
+            } else {
+                Object extension = map.get("extensionName");
+                Object segments = map.get("pathSegments");
+                Object version = map.get("templateVersion");
+                if (extension instanceof String extensionName
+                        && segments instanceof List<?> pathSegments
+                        && version instanceof String templateVersion) {
+                    actual = String.join(
+                            "/",
+                            java.util.stream.Stream.concat(
+                                            java.util.stream.Stream.of(extensionName),
+                                            java.util.stream.Stream.concat(
+                                                    pathSegments.stream().map(String::valueOf),
+                                                    java.util.stream.Stream.of(templateVersion)))
+                                    .toList());
+                }
+            }
+        }
+        if (!expected.uri().equals(actual)) {
+            throw new IllegalArgumentException(
+                    "Unexpected template URI: expected=" + expected.uri() + ", actual=" + actual);
+        }
+    }
+
+    private static String validationFailureSummary(Exception error) {
+        if (error instanceof ContentValidationException validationError) {
+            return "code="
+                    + validationError.getCode()
+                    + ", slotErrors="
+                    + validationError.errors()
+                    + ", partialParamKeys="
+                    + validationError.params().keySet();
+        }
+        return error.getClass().getSimpleName() + ": " + error.getMessage();
+    }
+
+    private static void reject(
+            AgentEmitter emitter, String contextId, String taskId, String publicMessage) {
+        emitStatus(
+                emitter,
+                TaskState.TASK_STATE_FAILED,
+                contextId,
+                taskId,
+                publicMessage,
+                Map.of());
+        emitter.fail(BaseAgentExecutor.buildStatusMessage(contextId, taskId, publicMessage));
     }
 }

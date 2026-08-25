@@ -19,6 +19,7 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
+import dev.openan.workflow.engine.examples.extension.PrePositionedExtensionHandler;
 import dev.openan.workflow.engine.examples.util.LlmHelper;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
@@ -35,7 +36,7 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  *
  * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}). City2 side is
  * NORMAL. Diagnosis/recovery text is LLM-generated when the A2A-T .env is configured, else
- * deterministic. Authorization-T and Notification-T are pre-positioned before the workflow starts.
+ * deterministic. Authorization-T and Notification-T are initiated on independent channels.
  */
 public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity2Executor.class);
@@ -45,6 +46,14 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
             "1. 诊断结果：成功\n"
                     + "2. 诊断结果详情：城市2OMC端口状态正常，光功率-17dBm(正常范围)，无异常告警，故障不在此地市\n"
                     + "3. 修复建议：城市2无需修复";
+
+    public SpnDomainAgentCity2Executor() {
+        super();
+    }
+
+    public SpnDomainAgentCity2Executor(PrePositionedExtensionHandler extensionHandler) {
+        super(extensionHandler);
+    }
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();

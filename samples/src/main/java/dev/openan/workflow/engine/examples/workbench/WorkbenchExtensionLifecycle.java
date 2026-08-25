@@ -7,6 +7,7 @@ package dev.openan.workflow.engine.examples.workbench;
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.DefaultExtensionSender;
+import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 
 import org.a2aproject.sdk.spec.AgentCard;
@@ -15,12 +16,13 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import dev.openan.workflow.engine.examples.extension.ExtensionPrePositioner;
 /**
- * Owns workbench-scoped pre-positioning resources.
+ * Owns workbench-scoped Authorization-T and Notification-T resources outside the workflow DAG.
  *
  * <p>Authorization-T is sent once and its request session is released after its response.
  * Notification-T streams remain owned by this lifecycle until {@link #close()} is called by the
@@ -35,7 +37,9 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
     private final Consumer<Map<String, Object>> notificationCallback;
 
-    private A2ATransport transport;
+    private final Map<String, NotificationSubscription> subscriptions =
+            new ConcurrentHashMap<>();
+    private A2ATransport notificationTransport;
 
     public WorkbenchExtensionLifecycle(
             String credentialsPath,
@@ -51,45 +55,66 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     }
 
     public synchronized void start() {
-        if (transport != null) {
+        if (notificationTransport != null) {
             log.info(
                     "[ExtensionLifecycle] START_SKIPPED reason=already_active, contextId={}",
-                    transport.getContextId());
+                    notificationTransport.getContextId());
             return;
         }
 
         List<AgentCard> agentCards = new WorkbenchAgentCatalog().load();
-        A2AJavaClientRuntime runtime = runtimeSupplier != null ? runtimeSupplier.get() : null;
-        A2ATransport candidate =
+        A2AJavaClientRuntime authorizationRuntime =
+                runtimeSupplier != null ? runtimeSupplier.get() : null;
+        A2AJavaClientRuntime notificationRuntime =
+                runtimeSupplier != null ? runtimeSupplier.get() : null;
+        if (authorizationRuntime != null && authorizationRuntime == notificationRuntime) {
+            throw new IllegalStateException(
+                    "Runtime supplier must create independent Authorization-T and Notification-T instances");
+        }
+        WorkflowEngineClientConfig config =
+                WorkflowEngineClientConfig.builder()
+                        .sslVerify(sslVerify)
+                        .a2atEnvPath(a2atEnvPath)
+                        .credentialsConfigPath(credentialsPath)
+                        .build();
+        A2ATransport authorizationTransport =
                 new A2ATransport(
                         agentCards,
-                        runtime,
-                        WorkflowEngineClientConfig.builder()
-                                .sslVerify(sslVerify)
-                                .a2atEnvPath(a2atEnvPath)
-                                .credentialsConfigPath(credentialsPath)
-                                .build());
+                        authorizationRuntime,
+                        config);
+        A2ATransport notificationCandidate =
+                new A2ATransport(agentCards, notificationRuntime, config);
         long started = System.nanoTime();
         log.info(
-                "[ExtensionLifecycle] START contextId={}, runtime={}, scope=workbench",
-                candidate.getContextId(),
-                runtime != null ? runtime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime");
+                "[ExtensionLifecycle] START authorizationContextId={}, notificationContextId={}, scope=workbench",
+                authorizationTransport.getContextId(),
+                notificationCandidate.getContextId());
         try {
-            new ExtensionPrePositioner()
+            List<NotificationSubscription> opened =
+                    new ExtensionPrePositioner()
                     .prePosition(
-                            new DefaultExtensionSender(candidate),
+                            new DefaultExtensionSender(authorizationTransport),
+                            new DefaultExtensionSender(notificationCandidate),
                             agentCards,
-                            notificationCallback);
-            transport = candidate;
+                            this::handleNotification);
+            opened.forEach(subscription -> subscriptions.put(
+                    subscription.agentName(), subscription));
+            authorizationTransport.close();
+            notificationTransport = notificationCandidate;
             log.info(
-                    "[ExtensionLifecycle] ACTIVE contextId={}, notificationScope=workbench, elapsedMs={}",
-                    candidate.getContextId(),
+                    "[ExtensionLifecycle] ACTIVE contextId={}, subscriptions={}, notificationScope=workbench, elapsedMs={}",
+                    notificationCandidate.getContextId(),
+                    subscriptions.size(),
                     elapsedMillis(started));
         } catch (RuntimeException e) {
-            candidate.close();
+            subscriptions.values().forEach(NotificationSubscription::close);
+            subscriptions.clear();
+            authorizationTransport.close();
+            notificationCandidate.close();
             log.error(
-                    "[ExtensionLifecycle] START_FAILED contextId={}, errorType={}, message={}",
-                    candidate.getContextId(),
+                    "[ExtensionLifecycle] START_FAILED authorizationContextId={}, notificationContextId={}, errorType={}, message={}",
+                    authorizationTransport.getContextId(),
+                    notificationCandidate.getContextId(),
                     e.getClass().getSimpleName(),
                     e.getMessage(),
                     e);
@@ -98,23 +123,51 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     }
 
     public synchronized boolean isActive() {
-        return transport != null;
+        return notificationTransport != null;
     }
 
     @Override
     public synchronized void close() {
-        A2ATransport active = transport;
-        transport = null;
+        A2ATransport active = notificationTransport;
+        notificationTransport = null;
         if (active == null) {
             return;
         }
         log.info(
                 "[ExtensionLifecycle] CLOSE_START contextId={}, reason=workbench_shutdown",
                 active.getContextId());
+        // Let the transport own cancellation and wait for the underlying stream threads before
+        // the Order simulator or web container can be stopped.
         active.close();
+        subscriptions.clear();
         log.info(
                 "[ExtensionLifecycle] CLOSE_DONE contextId={}, reason=workbench_shutdown",
                 active.getContextId());
+    }
+
+    private void handleNotification(Map<String, Object> data) {
+        if ("recovery-result".equals(data.get("artifact_name"))) {
+            String agent = String.valueOf(data.get("agent"));
+            NotificationSubscription completed = subscriptions.remove(agent);
+            if (completed != null) {
+                log.info(
+                        "[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, events={}, action=close-stream",
+                        agent,
+                        completed.contextId(),
+                        completed.heartbeat().eventCount());
+                completed.close();
+            }
+        }
+        if (notificationCallback != null) {
+            try {
+                notificationCallback.accept(data);
+            } catch (RuntimeException callbackError) {
+                log.warn(
+                        "[ExtensionLifecycle] Notification observer failed: {}",
+                        callbackError.getMessage(),
+                        callbackError);
+            }
+        }
     }
 
     private static long elapsedMillis(long startedNanos) {

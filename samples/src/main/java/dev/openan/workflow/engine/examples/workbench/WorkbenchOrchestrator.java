@@ -27,8 +27,12 @@ import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.model.ExecutionResult;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.StepType;
+import dev.openan.workflow.engine.model.Task;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
+import dev.openan.workflow.engine.model.WorkflowStep;
 import dev.openan.workflow.engine.registry.LoadPsop;
 import dev.openan.workflow.engine.runner.ExecutePsop;
 
@@ -86,7 +90,23 @@ public class WorkbenchOrchestrator {
         this.clientRuntime = clientRuntime;
     }
 
-    private static String buildResultText(ExecutionResult result) {
+    static String buildResultText(ExecutionResult result) {
+        if (result.isSuccess()) {
+            for (String preferredStep : List.of("merge_analysis", "merge")) {
+                String output = outputText(result.getStepOutputs().get(preferredStep));
+                if (!output.isBlank()) {
+                    return output;
+                }
+            }
+            if (result.getHistory() != null) {
+                for (int i = result.getHistory().size() - 1; i >= 0; i--) {
+                    Object output = result.getHistory().get(i).get("output");
+                    if (output != null && !String.valueOf(output).isBlank()) {
+                        return String.valueOf(output);
+                    }
+                }
+            }
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("Workflow execution ")
                 .append(result.isSuccess() ? "succeeded" : "failed")
@@ -106,6 +126,17 @@ public class WorkbenchOrchestrator {
             sb.append("Error: ").append(result.getError());
         }
         return sb.toString();
+    }
+
+    private static String outputText(Map<String, Object> output) {
+        if (output == null || output.isEmpty()) {
+            return "";
+        }
+        return output.values().stream()
+                .filter(value -> value != null && !String.valueOf(value).isBlank())
+                .map(String::valueOf)
+                .distinct()
+                .collect(java.util.stream.Collectors.joining("\n\n"));
     }
 
     /** Run the full orchestration pipeline and return the result text. */
@@ -131,8 +162,9 @@ public class WorkbenchOrchestrator {
 
         stageStarted = System.nanoTime();
         log.info("[Orchestrator] STAGE_START stage=search-load-psop");
-        String psopId = searchPsop(messageText);
-        Workflow workflow = LoadPsop.load(orchUrl, psopId, null, sslVerify);
+        ResolvedWorkflow resolvedWorkflow = resolveWorkflow(messageText);
+        String psopId = resolvedWorkflow.psopId();
+        Workflow workflow = resolvedWorkflow.workflow();
         log.info(
                 "[Orchestrator] STAGE_DONE stage=search-load-psop, psopId={}, workflow={}, "
                         + "steps={}, elapsedMs={}",
@@ -207,6 +239,9 @@ public class WorkbenchOrchestrator {
                     result.isSuccess(),
                     resultText.length(),
                     elapsedMillis(runStarted));
+            if (!result.isSuccess()) {
+                throw new IllegalStateException(resultText);
+            }
             return resultText;
         } catch (Exception e) {
             log.error(
@@ -227,7 +262,7 @@ public class WorkbenchOrchestrator {
         return new WorkbenchAgentCatalog().load();
     }
 
-    private String searchPsop(String messageText) {
+    private ResolvedWorkflow resolveWorkflow(String messageText) {
         try {
             List<WorkflowSearchResult> results =
                     LoadPsop.search(orchUrl, messageText, 3, null, sslVerify);
@@ -237,14 +272,71 @@ public class WorkbenchOrchestrator {
                         "[Orchestrator] Found PSOP: {} (score={})",
                         psopId,
                         results.get(0).getScore());
-                return psopId;
+                return new ResolvedWorkflow(
+                        psopId, LoadPsop.load(orchUrl, psopId, null, sslVerify));
             }
+            log.warn("[Orchestrator] PSOP search returned no candidates");
         } catch (Exception e) {
             log.warn("[Orchestrator] PSOP search failed, using fallback: {}", e.getMessage());
         }
         log.warn("[Orchestrator] PSOP_FALLBACK psopId={}", FALLBACK_PSOP_ID);
-        return FALLBACK_PSOP_ID;
+        return new ResolvedWorkflow(FALLBACK_PSOP_ID, fallbackWorkflow());
     }
+
+    static Workflow fallbackWorkflow() {
+        WorkflowStep city1 =
+                WorkflowStep.builder()
+                        .name("diagnosis_city1")
+                        .layer(0)
+                        .subtasks(List.of(
+                                Task.builder()
+                                        .agent("SPN Domain Agent City1")
+                                        .description("SPN专线故障诊断")
+                                        .build()))
+                        .next(List.of(JumpCondition.builder()
+                                .step("merge_analysis")
+                                .condition("")
+                                .build()))
+                        .build();
+        WorkflowStep city2 =
+                WorkflowStep.builder()
+                        .name("diagnosis_city2")
+                        .layer(0)
+                        .subtasks(List.of(
+                                Task.builder()
+                                        .agent("SPN Domain Agent City2")
+                                        .description("SPN专线故障诊断")
+                                        .build()))
+                        .next(List.of(JumpCondition.builder()
+                                .step("merge_analysis")
+                                .condition("")
+                                .build()))
+                        .build();
+        WorkflowStep merge =
+                WorkflowStep.builder()
+                        .name("merge_analysis")
+                        .layer(1)
+                        .stepType(StepType.SELF_LOOP)
+                        .contextFrom(List.of("diagnosis_city1", "diagnosis_city2"))
+                        .subtasks(List.of(
+                                Task.builder()
+                                        .agent("Workbench")
+                                        .description("汇总两地市OMC诊断结论")
+                                        .build()))
+                        .next(List.of(JumpCondition.builder()
+                                .step("endNode")
+                                .condition("")
+                                .build()))
+                        .build();
+        return Workflow.builder()
+                .id(FALLBACK_PSOP_ID)
+                .name("SPN跨地市专线投诉诊断")
+                .description("两个地市并行诊断后由工作台本地汇总")
+                .steps(List.of(city1, city2, merge))
+                .build();
+    }
+
+    private record ResolvedWorkflow(String psopId, Workflow workflow) {}
 
     private EventCallback createLogCallback() {
         return new EventCallback() {

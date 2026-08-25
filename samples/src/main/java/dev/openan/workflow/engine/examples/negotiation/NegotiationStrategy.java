@@ -29,10 +29,9 @@ import java.util.concurrent.CompletableFuture;
  * Negotiation clarification strategy for the SPN cross-city workbench.
  *
  * <p>Single responsibility: when a downstream agent returns INPUT_REQUIRED (Negotiation-T),
- * generate a clarification text that supplements the missing parameters. The returned text is
- * fed to the engine's SDK content layer, which renders the structured Accept message (the raw
- * text is also kept as the fallback message body). Uses LLM when the A2A-T .env is configured,
- * with a deterministic fallback.
+ * generate typed clarification data that supplements the missing parameters. The returned
+ * {@code data:{...}} value selects the latest SDK's deterministic typed Accept renderer; it is
+ * never treated as a hand-written protocol prompt.
  *
  * <p>The Accept payload follows the SDK scenario data for the private-line complaint case:
  * the two parameters the agent negotiated for (接入端口名称, 投诉分类), filled with the values
@@ -47,10 +46,9 @@ public class NegotiationStrategy implements dev.openan.workflow.engine.control.N
 
     private static final String FILLED_COMPLAINT_CATEGORY = "专线质差";
 
-    private final String a2atEnvPath;
-
     public NegotiationStrategy(String a2atEnvPath) {
-        this.a2atEnvPath = a2atEnvPath;
+        // Kept in the constructor contract so applications can use one strategy factory for
+        // environment-aware implementations. This deterministic strategy needs no LLM itself.
     }
 
     /**
@@ -65,18 +63,14 @@ public class NegotiationStrategy implements dev.openan.workflow.engine.control.N
     public CompletableFuture<String> resolve(
             String agentName, String negotiationText, Map<String, Object> receiveResult) {
         log.info("[NegotiationStrategy] agent={}: {}", agentName, negotiationText);
-        // Negotiation-T resolution (Accept), mirroring spec case 7.3 step 3. The engine's SDK
-        // content layer renders the structured Accept template from this text; the session
-        // context travels in the negotiationContext metadata key, so no context echoing here.
+        // The data: contract is consumed by DefaultWorkflowEngineClient and rendered with
+        // generateNegotiationAcceptPromptFromData. The negotiationContext remains metadata.
         String accept =
-                "同意补充以下信息：\n"
-                        + "1. 接入端口名称："
+                "data:{\"接入端口名称\":\""
                         + FILLED_PORT_NAME
-                        + "\n"
-                        + "2. 投诉分类："
+                        + "\",\"投诉分类\":\""
                         + FILLED_COMPLAINT_CATEGORY
-                        + "\n"
-                        + "信息已完整，可以启动诊断。";
+                        + "\"}";
         log.info("[NegotiationStrategy] Accept generated for agent={}", agentName);
         return CompletableFuture.completedFuture(accept);
     }

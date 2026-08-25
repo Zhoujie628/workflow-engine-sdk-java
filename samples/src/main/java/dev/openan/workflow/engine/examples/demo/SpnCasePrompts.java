@@ -22,6 +22,7 @@ package dev.openan.workflow.engine.examples.demo;
 import dev.openan.workflow.engine.client.A2ATExtension;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,8 +30,9 @@ import java.util.Map;
  *
  * <p>Holds the raw structured fields (not the rendered prompt): the demo passes these to the
  * engine's fromData track ({@code WorkflowEngineClient.sendMessageFromData}) and the A2A-T SDK
- * renders the Task-T prompt deterministically from the data + schema. This mirrors the official
- * SDK sample pattern — callers hand over business data, never a pre-rendered prompt.
+ * renders the Task-T prompt from the data + schema. This bypasses scenario recognition but the
+ * SDK's schema-aware slot extraction may invoke its configured LLM. Callers hand over business
+ * data, never a pre-rendered protocol prompt.
  *
  * <p>The prompt-fixture variants (blank object / unknown port) for the protocol verification
  * cases are expressed as data too: the same schema with different values.
@@ -67,6 +69,11 @@ public final class SpnCasePrompts {
         schema.put("type", "object");
         schema.put("properties", properties);
         return schema;
+    }
+
+    /** Required business fields returned by Task-T validation for this scenario. */
+    public static List<String> privateLineComplaintSchemaProperties() {
+        return List.of("任务对象", "任务上下文");
     }
 
     /** Well-formed complaint (spec case 7.1): known faulty port in City1. */
