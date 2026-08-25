@@ -512,16 +512,26 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                         if (eventSink != null) {
                             try { eventSink.accept(event); } catch (Exception ignored) {}
                         }
-                        if (!future.isDone()) {
-                            String state = A2ATransport.extractResponseTaskState(events);
-                            String text = A2ATransport.extractResponseText(events);
+                        if (isTerminal(event) && !future.isDone()) {
+                            List<ClientEvent> snapshot;
+                            synchronized (events) {
+                                snapshot = List.copyOf(events);
+                            }
                             future.complete(SendMessageResult.builder()
-                                    .text(text)
-                                    .taskState(state)
+                                    .text(A2ATransport.extractResponseText(snapshot))
+                                    .task(A2ATransport.extractResponseTask(snapshot))
+                                    .taskState(A2ATransport.extractResponseTaskState(snapshot))
+                                    .metadata(A2ATransport.extractResponseMetadata(snapshot))
                                     .build());
                         }
                     }),
-                    null,
+                    error -> future.completeExceptionally(
+                            new RuntimeException(
+                                    "A2A subscribeToTask stream failed for "
+                                            + agentCard.name()
+                                            + ": "
+                                            + error.getMessage(),
+                                    error)),
                     callContext);
         } catch (A2AClientException e) {
             return java.util.concurrent.CompletableFuture.failedFuture(

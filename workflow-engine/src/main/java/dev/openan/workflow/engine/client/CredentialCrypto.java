@@ -93,7 +93,9 @@ public final class CredentialCrypto {
             System.err.println("Error: " + e.getMessage());
             System.exit(1);
         }
-    }/**
+    }
+
+    /**
      * Decrypt a credential value if it has the {@code enc:} prefix. Values without the prefix are
      * returned as-is (plaintext fallback).
      *
@@ -102,10 +104,15 @@ public final class CredentialCrypto {
      * @throws IllegalStateException when an encrypted value cannot be decrypted
      */
     public static String decryptIfNeeded(String value) {
+        return decryptIfNeeded(value, null);
+    }
+
+    /** Decrypts with an optional instance-scoped key read from a configured SDK env file. */
+    static String decryptIfNeeded(String value, String configuredKeyHex) {
         if (value == null || !value.startsWith(PREFIX)) {
             return value;
         }
-        String keyHex = resolveKey();
+        String keyHex = resolveKey(configuredKeyHex);
         if (keyHex == null || keyHex.isBlank()) {
             throw new IllegalStateException(
                     "Encrypted credential found but "
@@ -174,17 +181,29 @@ public final class CredentialCrypto {
      * @return the hex key string, or null if not found
      */
     private static String resolveKey() {
+        return resolveKey(null);
+    }
+
+    private static String resolveKey(String configuredKeyHex) {
+        if (configuredKeyHex != null && !configuredKeyHex.isBlank()) {
+            return configuredKeyHex;
+        }
         String key = System.getenv(ENV_KEY);
         if (key != null && !key.isBlank()) {
             return key;
         }
-        return System.getProperty(ENV_KEY);
+        key = System.getProperty(ENV_KEY);
+        if (key != null && !key.isBlank()) {
+            return key;
+        }
+        return null;
     }
 
     private static byte[] hexToBytes(String hex) {
         int len = hex.length();
         if (len != 64) {
-            throw new IllegalArgumentException("A2AT_CRED_KEY must contain 64 hexadecimal characters");
+            throw new IllegalArgumentException(
+                    "A2AT_CRED_KEY must contain 64 hexadecimal characters");
         }
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
@@ -194,8 +213,7 @@ public final class CredentialCrypto {
                 throw new IllegalArgumentException(
                         "A2AT_CRED_KEY must contain hexadecimal characters only");
             }
-            data[i / 2] =
-                    (byte) ((high << 4) + low);
+            data[i / 2] = (byte) ((high << 4) + low);
         }
         return data;
     }

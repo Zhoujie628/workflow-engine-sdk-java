@@ -66,12 +66,12 @@ public final class A2ATContentFacade {
     }
 
     // ------------------------------------------------------------------
-    // Message generation: propose phase (from typed data, no LLM)
+    // Task/Authorization/Notification generation from schema-aware data (may use LLM)
     // ------------------------------------------------------------------
 
     /**
-     * Renders a Task-T prompt from structured data and a schema. Deterministic slot filling, no
-     * scenario recognition, no LLM call.
+     * Renders a Task-T prompt from structured data and a schema. Scenario recognition is bypassed;
+     * the SDK's schema-aware slot extractor may still invoke the configured LLM.
      *
      * @param data structured task input (string-to-object map)
      * @param schema schema describing the meaning of each data field; must not be empty
@@ -84,8 +84,8 @@ public final class A2ATContentFacade {
     }
 
     /**
-     * Renders an Authorization-T prompt from structured data and a schema. Deterministic, no LLM
-     * call.
+     * Renders an Authorization-T prompt from structured data and a schema. The SDK's schema-aware
+     * slot extractor may invoke the configured LLM.
      *
      * @param data structured authorization input
      * @param schema schema describing the data fields; must not be empty
@@ -99,8 +99,8 @@ public final class A2ATContentFacade {
     }
 
     /**
-     * Renders a Notification-T prompt from structured data and a schema. Deterministic, no LLM
-     * call.
+     * Renders a Notification-T prompt from structured data and a schema. The SDK's schema-aware
+     * slot extractor may invoke the configured LLM.
      *
      * @param data structured notification input
      * @param schema schema describing the data fields; must not be empty
@@ -228,7 +228,7 @@ public final class A2ATContentFacade {
 
     /**
      * Builds the transport serialization of a negotiation session context: the {@code
-     * negotiation_context} metadata value carrying {@code id} / {@code round} / {@code
+     * negotiationContext} metadata value carrying {@code id} / {@code round} / {@code
      * maxRounds}.
      *
      * <p>The content layer is stateless by design — session identity and round tracking stay
@@ -237,7 +237,7 @@ public final class A2ATContentFacade {
      * NegotiationContext.nextRound()}.
      *
      * @param context the engine-held session context
-     * @return wire map for the {@code negotiation_context} metadata key
+     * @return wire map for the canonical {@code negotiationContext} metadata key
      */
     public static Map<String, Object> contextPayload(NegotiationContext context) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -248,33 +248,25 @@ public final class A2ATContentFacade {
     }
 
     /**
-     * Parses a negotiation session context from its {@code negotiation_context} wire
-     * serialization. Accepts both the engine format ({@code id}/{@code round}/{@code
-     * maxRounds}) and the legacy state-machine format ({@code negotiationId}/{@code round},
-     * optionally nested under a {@code context} key from removed receive payloads) for
-     * cross-version tolerance. Returns null when the map carries no usable identity.
+     * Parses a negotiation session context from its canonical {@code negotiationContext} wire
+     * serialization ({@code id}/{@code round}/{@code maxRounds}).
      *
-     * @param map the metadata value under the {@code negotiation_context} key
+     * @param map the metadata value under the {@code negotiationContext} key
      * @return the session context, or null when malformed
      */
     public static NegotiationContext contextFromMap(Map<?, ?> map) {
         if (map == null) {
             return null;
         }
-        Map<?, ?> effective = map;
-        Object inner = map.get("context");
-        if (inner instanceof Map<?, ?> innerMap && innerMap.get("id") != null) {
-            effective = innerMap;
-        }
-        Object id = effective.get("id") != null ? effective.get("id") : effective.get("negotiationId");
-        Object round = effective.get("round");
+        Object id = map.get("id");
+        Object round = map.get("round");
         if (id instanceof String s && round instanceof Number r && r.intValue() > 0) {
-            Object maxRounds = effective.get("maxRounds");
-            int max = maxRounds instanceof Number m && m.intValue() > 0
-                    ? m.intValue()
-                    : NegotiationContext.DEFAULT_MAX_ROUNDS;
+            Object maxRounds = map.get("maxRounds");
+            if (!(maxRounds instanceof Number m) || m.intValue() <= 0) {
+                return null;
+            }
             try {
-                return new NegotiationContext(s, r.intValue(), max);
+                return new NegotiationContext(s, r.intValue(), m.intValue());
             } catch (IllegalArgumentException ignored) {
                 // fall through
             }

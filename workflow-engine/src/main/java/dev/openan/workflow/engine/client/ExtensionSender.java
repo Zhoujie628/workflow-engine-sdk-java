@@ -26,20 +26,21 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
- * One-shot pre-positioning facade over a shared {@link A2ATransport}.
+ * Facade for protocol operations that are independent of workflow DAG execution.
  *
- * <p>Single responsibility: send Authorization-T, establish Notification-T subscriptions, or send
- * another pre-positioning extension before a workflow starts. It bypasses Task-T prompt
- * generation and the Negotiation-T auto-loop. The returned future carries the first response;
- * later Notification-T events flow through the subscription callback.
+ * <p>Single responsibility: send Authorization-T operations and establish Notification-T
+ * subscriptions. These operations may happen before, during, or after a workflow according to the
+ * workbench business lifecycle. They bypass Task-T prompt generation and the Negotiation-T
+ * auto-loop. The returned future carries the first response; later Notification-T events flow
+ * through the subscription callback.
  *
- * <p>Kept separate from {@link WorkflowEngineClient} so a caller that only wants to pre-position is
- * not forced to hold a workflow-machinery facade.
+ * <p>Kept separate from {@link WorkflowEngineClient} so protocol channels and lifecycles cannot be
+ * accidentally coupled to a workflow task.
  */
 public interface ExtensionSender {
 
     /**
-     * Send a one-shot extension message for pre-positioning.
+     * Send a one-shot independent extension message.
      *
      * @param agentName target agent name
      * @param instruction short instruction text (becomes message parts)
@@ -52,7 +53,7 @@ public interface ExtensionSender {
             String naturalLanguageInput,
             A2ATExtension extension);
 
-    /** Convenience for Authorization-T pre-positioning. */
+    /** Natural-language compatibility convenience for a one-shot Authorization-T operation. */
     default CompletableFuture<SendMessageResult> sendAuthorization(
             String agentName, String instruction, String naturalLanguageInput) {
         return sendExtensionMessage(
@@ -60,8 +61,9 @@ public interface ExtensionSender {
     }
 
     /**
-     * Structured-data send: renders the extension prompt deterministically from typed data via
-     * the SDK's fromData pipeline (no LLM), then sends as a one-shot pre-positioning message.
+     * Structured-data send: renders the extension prompt from typed data via the SDK's
+     * schema-aware fromData pipeline. Scenario recognition is bypassed, but slot mapping may
+     * invoke the configured LLM. Rendering failures are never sent as raw extension metadata.
      *
      * <p>Callers holding structured business data (e.g. an authorization policy as fields, not
      * prose) should prefer this over the natural-language variants.
@@ -74,35 +76,43 @@ public interface ExtensionSender {
      *     fromData rendering here
      * @return future completing with the first response
      */
-    default CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
+    CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
             String agentName,
             String instruction,
             Map<String, Object> data,
             Map<String, Object> schema,
-            A2ATExtension extension) {
-        throw new UnsupportedOperationException("sendExtensionMessageFromData not implemented");
-    }
+            A2ATExtension extension);
 
     /**
      * Structured-data Notification-T subscription: renders the service-recovery subscription
-     * prompt deterministically from typed data (no LLM), then opens the long-lived stream.
+     * prompt from typed data through the SDK schema-aware pipeline, then opens the long-lived
+     * stream. Slot mapping may invoke the configured LLM.
      * Subsequent events pushed by the agent flow to {@code eventCallback}.
      */
-    default CompletableFuture<SendMessageResult> sendNotificationFromData(
+    CompletableFuture<SendMessageResult> sendNotificationFromData(
             String agentName,
             String instruction,
             Map<String, Object> data,
             Map<String, Object> schema,
-            Consumer<Map<String, Object>> eventCallback) {
-        throw new UnsupportedOperationException("sendNotificationFromData not implemented");
-    }
+            Consumer<Map<String, Object>> eventCallback);
+
+    /**
+     * Opens a structured-data Notification-T subscription and exposes its full stream lifecycle.
+     * Callers should retain and close the returned handle after the expected notification arrives.
+     */
+    CompletableFuture<NotificationSubscription> openNotificationFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            Consumer<Map<String, Object>> eventCallback);
 
     /**
      * Establish a Notification-T subscription.
      *
-     * <p>The returned future completes on the first acknowledgement or event. Subsequent events
-     * pushed by the agent must be forwarded to {@code eventCallback}; implementations cannot
-     * silently discard it.
+     * <p>The returned future completes on the first status-bearing acknowledgement (normally
+     * {@code TASK_STATE_WORKING}), not on an artifact-only event. Subsequent events pushed by the
+     * agent must be forwarded to {@code eventCallback}; implementations cannot silently discard it.
      */
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName,
@@ -110,7 +120,14 @@ public interface ExtensionSender {
             String naturalLanguageInput,
             Consumer<Map<String, Object>> eventCallback);
 
-    /** Convenience for Notification-T pre-positioning (no event callback). */
+    /** Opens a Notification-T subscription and returns an explicit close/health handle. */
+    CompletableFuture<NotificationSubscription> openNotification(
+            String agentName,
+            String instruction,
+            String naturalLanguageInput,
+            Consumer<Map<String, Object>> eventCallback);
+
+    /** Natural-language compatibility convenience for a Notification-T subscription. */
     default CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction, String naturalLanguageInput) {
         return sendNotification(agentName, instruction, naturalLanguageInput, null);

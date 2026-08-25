@@ -42,9 +42,10 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Logs complete A2A protocol messages (headers + body) for protocol-level verification against real
- * network captures. Uses a dedicated "PROTOCOL" logger so output can be independently enabled or
- * suppressed via logging configuration.
+ * Logs A2A protocol messages for controlled protocol-level diagnostics. Uses a dedicated
+ * "PROTOCOL" logger so output can be independently enabled or suppressed. Full payloads are only
+ * emitted at DEBUG and body logging is opt-in because Task-T and extension metadata can contain
+ * customer or network data.
  *
  * <p>Request side: serializes {@link MessageSendParams} to pretty-printed JSON. Sensitive headers
  * are redacted unless {@code WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=true} is explicitly
@@ -96,12 +97,12 @@ final class ProtocolLogger {
             String endpoint,
             MessageSendParams params,
             Map<String, String> headers) {
-        if (!log.isInfoEnabled()) {
+        if (!log.isDebugEnabled()) {
             return;
         }
         try {
             String bodyJson = formatBody(mapper.writeValueAsString(params));
-            log.info(
+            log.debug(
                     ">>> [{}] REQUEST to {}\n=== Headers ===\n{}\n=== Body ===\n{}",
                     agentName,
                     endpoint,
@@ -119,18 +120,19 @@ final class ProtocolLogger {
      * @param event the received client event
      */
     static void logResponseEvent(String agentName, ClientEvent event) {
-        if (!log.isInfoEnabled()) {
+        if (!log.isDebugEnabled()) {
             return;
         }
         try {
             Object payload = extractPayload(event);
             String eventType = event.getClass().getSimpleName();
             if (payload == null) {
-                log.info("<<< [{}] RESPONSE [{}]: (no serializable payload)", agentName, eventType);
+                log.debug(
+                        "<<< [{}] RESPONSE [{}]: (no serializable payload)", agentName, eventType);
                 return;
             }
             String json = formatBody(mapper.writeValueAsString(payload));
-            log.info("<<< [{}] RESPONSE [{}]\n{}", agentName, eventType, json);
+            log.debug("<<< [{}] RESPONSE [{}]\n{}", agentName, eventType, json);
         } catch (Exception e) {
             log.warn("<<< [{}] Failed to serialize response event: {}", agentName, e.getMessage());
         }
@@ -187,7 +189,7 @@ final class ProtocolLogger {
     }
 
     private static String formatBody(String body) {
-        if (!booleanSetting(INCLUDE_BODY, true)) return "(body logging disabled)";
+        if (!booleanSetting(INCLUDE_BODY, false)) return "(body logging disabled)";
         int maxChars = intSetting(MAX_BODY_CHARS, DEFAULT_MAX_BODY_CHARS);
         if (body.length() <= maxChars) return body;
         return body.substring(0, maxChars)

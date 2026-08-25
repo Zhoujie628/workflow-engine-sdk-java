@@ -45,16 +45,19 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
- * Default {@link ExtensionSender} built on a shared {@link A2ATransport}.
+ * Default {@link ExtensionSender} built on a caller-owned {@link A2ATransport}.
  *
- * <p>Owns extension prompt-generation dispatch (Task-T via the A2A-T SDK; Negotiation-T /
- * Authorization-T / Notification-T reserved for future SDK support). All wire-level work delegates
- * to the transport.
+ * <p>Uses the A2A-T SDK to render Authorization-T and Notification-T metadata. All wire-level work
+ * delegates to the transport. The facade does not close that transport; the caller owns it.
  */
 public record DefaultExtensionSender(A2ATransport transport)
         implements ExtensionSender, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultExtensionSender.class);
+
+    public DefaultExtensionSender {
+        java.util.Objects.requireNonNull(transport, "transport");
+    }
 
     @Override
     public CompletableFuture<SendMessageResult> sendExtensionMessage(
@@ -62,29 +65,33 @@ public record DefaultExtensionSender(A2ATransport transport)
             String instruction,
             String naturalLanguageInput,
             A2ATExtension extension) {
+        CompletableFuture<SendMessageResult> invalid =
+                validateRequest(agentName, instruction, naturalLanguageInput, extension);
+        if (invalid != null) return invalid;
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             log.error("[ExtensionSender] Agent not found: {}", agentName);
             return CompletableFuture.failedFuture(
                     new RuntimeException("Agent not found: " + agentName));
         }
+        if (!supports(agentCard, extension)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "Agent '" + agentName + "' does not declare " + extension.uri()));
+        }
         return CompletableFuture.supplyAsync(
                         () -> generateExtensionPrompt(extension, naturalLanguageInput))
                 .thenCompose(
                         mc -> {
-                            String value;
-                            Map<String, Object> metadata = new HashMap<>();
-                            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
-                                value = mc.promptText();
-                                metadata.putAll(mc.buildMetadataContent());
-                            } else {
-                                value = naturalLanguageInput;
-                                metadata.put(extension.uri(), value);
-                                log.info(
-                                        "[ExtensionSender] SDK prompt generation unavailable for {} ({}), using input as metadata",
-                                        agentName,
-                                        extension.displayName());
+                            if (mc == null || mc.promptText() == null || mc.promptText().isEmpty()) {
+                                return CompletableFuture.failedFuture(
+                                        new IllegalStateException(
+                                                "A2A-T SDK prompt generation failed for "
+                                                        + extension.displayName()));
                             }
+                            String value = mc.promptText();
+                            Map<String, Object> metadata = new HashMap<>();
+                            metadata.putAll(mc.buildMetadataContent());
                             log.info(
                                     "[ExtensionSender] sendExtensionMessage to {}: extension={}, metadataValue={} chars",
                                     agentName,
@@ -130,6 +137,14 @@ public record DefaultExtensionSender(A2ATransport transport)
             Map<String, Object> data,
             Map<String, Object> schema,
             A2ATExtension extension) {
+        if (agentName == null || agentName.isBlank() || instruction == null || instruction.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("agentName and instruction must not be blank"));
+        }
+        if (data == null || schema == null || schema.isEmpty()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("fromData requires non-null data and a non-empty schema"));
+        }
         if (extension != A2ATExtension.AUTHORIZATION_T
                 && extension != A2ATExtension.NOTIFICATION_T) {
             return CompletableFuture.failedFuture(
@@ -142,6 +157,11 @@ public record DefaultExtensionSender(A2ATransport transport)
             log.error("[ExtensionSender] Agent not found: {}", agentName);
             return CompletableFuture.failedFuture(
                     new RuntimeException("Agent not found: " + agentName));
+        }
+        if (!supports(agentCard, extension)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "Agent '" + agentName + "' does not declare " + extension.uri()));
         }
         return CompletableFuture.supplyAsync(() -> generateExtensionPromptFromData(extension, data, schema))
                 .thenCompose(
@@ -186,7 +206,7 @@ public record DefaultExtensionSender(A2ATransport transport)
                         });
     }
 
-    /** Deterministic fromData rendering for Authorization-T / Notification-T. */
+    /** SDK schema-aware fromData rendering for Authorization-T / Notification-T. */
     private MetadataContent generateExtensionPromptFromData(
             A2ATExtension extension, Map<String, Object> data, Map<String, Object> schema) {
         net.openan.a2at.sdk.client.A2ATClient a2atClient = transport.getA2atClient();
@@ -216,11 +236,39 @@ public record DefaultExtensionSender(A2ATransport transport)
             String instruction,
             String naturalLanguageInput,
             Consumer<Map<String, Object>> eventCallback) {
+        return openNotification(agentName, instruction, naturalLanguageInput, eventCallback)
+                .thenCompose(NotificationSubscription::acknowledgement);
+    }
+
+    @Override
+    public CompletableFuture<NotificationSubscription> openNotification(
+            String agentName,
+            String instruction,
+            String naturalLanguageInput,
+            Consumer<Map<String, Object>> eventCallback) {
+        if (agentName == null
+                || agentName.isBlank()
+                || instruction == null
+                || instruction.isBlank()
+                || naturalLanguageInput == null
+                || naturalLanguageInput.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "agentName, instruction and naturalLanguageInput must not be blank"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             log.error("[ExtensionSender] Agent not found: {}", agentName);
             return CompletableFuture.failedFuture(
                     new RuntimeException("Agent not found: " + agentName));
+        }
+        if (!supports(agentCard, A2ATExtension.NOTIFICATION_T)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "Agent '"
+                                    + agentName
+                                    + "' does not declare "
+                                    + A2ATExtension.NOTIFICATION_T.uri()));
         }
         return CompletableFuture.supplyAsync(
                         () ->
@@ -228,15 +276,14 @@ public record DefaultExtensionSender(A2ATransport transport)
                                         A2ATExtension.NOTIFICATION_T, naturalLanguageInput))
                 .thenCompose(
                         mc -> {
-                            String value;
-                            Map<String, Object> metadata = new HashMap<>();
-                            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
-                                value = mc.promptText();
-                                metadata.putAll(mc.buildMetadataContent());
-                            } else {
-                                value = naturalLanguageInput;
-                                metadata.put(A2ATExtension.NOTIFICATION_T.uri(), value);
+                            if (mc == null || mc.promptText() == null || mc.promptText().isEmpty()) {
+                                return CompletableFuture.failedFuture(
+                                        new IllegalStateException(
+                                                "A2A-T SDK prompt generation failed for Notification-T"));
                             }
+                            String value = mc.promptText();
+                            Map<String, Object> metadata = new HashMap<>();
+                            metadata.putAll(mc.buildMetadataContent());
                             return sendNotificationMetadata(
                                     agentCard, agentName, instruction, metadata, eventCallback, value);
                         });
@@ -249,11 +296,41 @@ public record DefaultExtensionSender(A2ATransport transport)
             Map<String, Object> data,
             Map<String, Object> schema,
             Consumer<Map<String, Object>> eventCallback) {
+        return openNotificationFromData(agentName, instruction, data, schema, eventCallback)
+                .thenCompose(NotificationSubscription::acknowledgement);
+    }
+
+    @Override
+    public CompletableFuture<NotificationSubscription> openNotificationFromData(
+            String agentName,
+            String instruction,
+            Map<String, Object> data,
+            Map<String, Object> schema,
+            Consumer<Map<String, Object>> eventCallback) {
+        if (agentName == null
+                || agentName.isBlank()
+                || instruction == null
+                || instruction.isBlank()
+                || data == null
+                || schema == null
+                || schema.isEmpty()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "fromData notification requires agentName, instruction, data and schema"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             log.error("[ExtensionSender] Agent not found: {}", agentName);
             return CompletableFuture.failedFuture(
                     new RuntimeException("Agent not found: " + agentName));
+        }
+        if (!supports(agentCard, A2ATExtension.NOTIFICATION_T)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "Agent '"
+                                    + agentName
+                                    + "' does not declare "
+                                    + A2ATExtension.NOTIFICATION_T.uri()));
         }
         return CompletableFuture.supplyAsync(
                         () ->
@@ -283,7 +360,7 @@ public record DefaultExtensionSender(A2ATransport transport)
     }
 
     /** Shared Notification-T stream-open path used by both the text and fromData tracks. */
-    private CompletableFuture<SendMessageResult> sendNotificationMetadata(
+    private CompletableFuture<NotificationSubscription> sendNotificationMetadata(
             AgentCard agentCard,
             String agentName,
             String instruction,
@@ -299,51 +376,30 @@ public record DefaultExtensionSender(A2ATransport transport)
                 agentName,
                 renderedValue.length(),
                 eventCallback != null);
-        return transport.sendNotificationStream(
-                agentCard,
-                agentName,
-                instruction,
-                transport.getContextId(),
-                metadata,
-                eventSink);
+        return CompletableFuture.completedFuture(
+                transport.openNotificationStream(
+                        agentCard,
+                        agentName,
+                        instruction,
+                        transport.getContextId(),
+                        metadata,
+                        eventSink));
     }
 
     private void forwardNotificationEvent(
             ClientEvent event, String agentName, Consumer<Map<String, Object>> callback) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("agent", agentName);
-        if (event instanceof TaskUpdateEvent tue) {
-            if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue) {
-                data.put("state", sue.status().state().name());
-                data.put("is_final", sue.isFinal());
-                StringBuilder text = new StringBuilder();
-                A2ATransport.extractTextFromMessage(sue.status().message(), text);
-                if (!text.isEmpty()) data.put("text", text.toString());
-                if (sue.metadata() != null && !sue.metadata().isEmpty())
-                    data.put("metadata", sue.metadata());
-            } else if (tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent ae) {
-                StringBuilder text = new StringBuilder();
-                for (Part<?> part : ae.artifact().parts()) {
-                    if (part instanceof TextPart tp) text.append(tp.text());
-                }
-                data.put("artifact_name", ae.artifact().name());
-                data.put("append", ae.append());
-                if (!text.isEmpty()) data.put("text", text.toString());
-                if (ae.metadata() != null && !ae.metadata().isEmpty())
-                    data.put("metadata", ae.metadata());
-            }
-        } else if (event instanceof MessageEvent me) {
-            Message msg = me.getMessage();
-            StringBuilder text = new StringBuilder();
-            A2ATransport.extractTextFromMessage(msg, text);
-            data.put("role", msg.role().name());
-            if (!text.isEmpty()) data.put("text", text.toString());
-            if (msg.metadata() != null && !msg.metadata().isEmpty())
-                data.put("metadata", msg.metadata());
-        }
+        Map<String, Object> data = ClientEventMapper.toMap(event, agentName);
         if (!data.isEmpty()) {
             log.info("[ExtensionSender] Notification-T callback for {}: {} keys", agentName, data.keySet());
-            callback.accept(data);
+            try {
+                callback.accept(data);
+            } catch (RuntimeException callbackError) {
+                log.warn(
+                        "[ExtensionSender] Notification-T callback failed for {}: {}",
+                        agentName,
+                        callbackError.getMessage(),
+                        callbackError);
+            }
         }
     }
 
@@ -359,7 +415,7 @@ public record DefaultExtensionSender(A2ATransport transport)
      * string.
      *
      * <p>Notification-T defaults to the service-recovery template (业务抢通事件订阅) — the
-     * subscription the workbench pre-positions in this scenario; pass an explicit template via
+     * subscription the workbench opens in this scenario; pass an explicit template via
      * the fromData variant when subscribing to something else (e.g. SUBSCRIBE_INCIDENT).
      *
      * @return {@link MetadataContent} with prompt text and template URI, or null if SDK unavailable
@@ -386,6 +442,34 @@ public record DefaultExtensionSender(A2ATransport transport)
                     e.getMessage());
             return null;
         }
+    }
+
+    private static boolean supports(AgentCard card, A2ATExtension extension) {
+        return A2ATransport.extractExtensionUris(card).contains(extension.uri());
+    }
+
+    private static CompletableFuture<SendMessageResult> validateRequest(
+            String agentName,
+            String instruction,
+            String naturalLanguageInput,
+            A2ATExtension extension) {
+        if (agentName == null
+                || agentName.isBlank()
+                || instruction == null
+                || instruction.isBlank()
+                || naturalLanguageInput == null
+                || naturalLanguageInput.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "agentName, instruction and naturalLanguageInput must not be blank"));
+        }
+        if (extension != A2ATExtension.AUTHORIZATION_T
+                && extension != A2ATExtension.NOTIFICATION_T) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "ExtensionSender supports Authorization-T and Notification-T only"));
+        }
+        return null;
     }
 
     @Override

@@ -32,34 +32,28 @@ import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
  * <ul>
  *   <li>{@link #TASK_T} - structured task prompt generation (in-workflow)
  *   <li>{@link #NEGOTIATION_T} - negotiation auto-loop (in-workflow)
- *   <li>{@link #AUTHORIZATION_T} - whitelist pre-positioning (before workflow)
- *   <li>{@link #NOTIFICATION_T} - result subscription pre-positioning (before workflow)
+ *   <li>{@link #AUTHORIZATION_T} - independent whitelist authorization operation
+ *   <li>{@link #NOTIFICATION_T} - independent result subscription
  * </ul>
  *
- * <p>{@code DATA-NEGOTIATION-T/v1} is intentionally absent -- it is an SDK-internal metadata key
- * for negotiation context, not a user-declared extension.
  */
 public enum A2ATExtension {
 
     /** Structured task prompt. Handled automatically during workflow execution. */
-    TASK_T("https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1"),
+    TASK_T(ExtensionUriConstants.TASK_T_EXTENSION_URI),
 
     /** Negotiation text exchange. Handled automatically via auto-loop. */
     NEGOTIATION_T(ExtensionUriConstants.NEGOTIATION_T_EXTENSION_URI),
 
     /** Authorization whitelist. Pre-positioned before workflow starts. */
-    AUTHORIZATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1"),
+    AUTHORIZATION_T(ExtensionUriConstants.AUTHORIZATION_T_EXTENSION_URI),
 
     /** Result notification subscription. Pre-positioned before workflow starts. */
-    NOTIFICATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1");
+    NOTIFICATION_T(ExtensionUriConstants.NOTIFICATION_T_EXTENSION_URI);
 
-    /**
-     * Internal metadata key under which {@code NegotiationTHandler} stores the SDK receive
-     * payload (needResponse/message/context). Engine-internal, not an A2A-T protocol key.
-     */
-    public static final String NEGOTIATION_CONTEXT_META_KEY = "negotiation_context";
+    /** Canonical SDK metadata key carrying {@code id}/{@code round}/{@code maxRounds}. */
+    public static final String NEGOTIATION_CONTEXT_META_KEY =
+            net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
 
     /**
      * Internal metadata key under which {@code NegotiationTHandler} stores the extracted
@@ -77,7 +71,7 @@ public enum A2ATExtension {
      * Engine-internal metadata key carrying structured task input (a string-to-object map) for
      * the SDK's {@code generateTaskPromptFromDataWithSchema} pipeline. When present in the
      * caller-supplied metadata, {@code TaskTHandler} renders the Task-T prompt from the data
-     * deterministically instead of running scenario recognition on the message text. Consumed
+     * through the schema-aware path instead of running scenario recognition on the message text. Consumed
      * (removed) before the A2A message goes on the wire; the rendered prompt travels under the
      * Task-T extension URI.
      */

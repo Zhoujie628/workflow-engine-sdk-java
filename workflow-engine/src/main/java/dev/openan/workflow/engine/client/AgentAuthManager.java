@@ -47,6 +47,8 @@ class AgentAuthManager {
 
     private final Map<String, Map<String, Map<String, Object>>> config;
     private final HttpClient credentialHttpClient;
+    private final CredentialHttpTransport credentialHttpTransport;
+    private final String credentialEncryptionKey;
     private final Map<String, AgentCredentialService> services = new ConcurrentHashMap<>();
 
     /** Create with a config map (agent name -> scheme name -> scheme config). */
@@ -58,9 +60,33 @@ class AgentAuthManager {
     public AgentAuthManager(
             Map<String, Map<String, Map<String, Object>>> config,
             HttpClient credentialHttpClient) {
+        this(config, credentialHttpClient, null);
+    }
+
+    AgentAuthManager(
+            Map<String, Map<String, Map<String, Object>>> config,
+            HttpClient credentialHttpClient,
+            String credentialEncryptionKey) {
+        this(config, credentialHttpClient, null, credentialEncryptionKey);
+    }
+
+    AgentAuthManager(
+            Map<String, Map<String, Map<String, Object>>> config,
+            CredentialHttpTransport credentialHttpTransport,
+            String credentialEncryptionKey) {
+        this(config, null, credentialHttpTransport, credentialEncryptionKey);
+    }
+
+    private AgentAuthManager(
+            Map<String, Map<String, Map<String, Object>>> config,
+            HttpClient credentialHttpClient,
+            CredentialHttpTransport credentialHttpTransport,
+            String credentialEncryptionKey) {
         this.config = config != null ? config : new HashMap<>();
         this.credentialHttpClient = credentialHttpClient;
-        validateEncryptedCredentials(this.config);
+        this.credentialHttpTransport = credentialHttpTransport;
+        this.credentialEncryptionKey = credentialEncryptionKey;
+        validateEncryptedCredentials(this.config, credentialEncryptionKey);
         if (!this.config.isEmpty()) {
             log.info(
                     "[Auth] Loaded credentials for {} agent(s): {}",
@@ -77,6 +103,20 @@ class AgentAuthManager {
     /** Create from a JSON file and use the supplied client for login requests. */
     public AgentAuthManager(String configPath, HttpClient credentialHttpClient) {
         this(loadFromFile(configPath), credentialHttpClient);
+    }
+
+    AgentAuthManager(
+            String configPath,
+            HttpClient credentialHttpClient,
+            String credentialEncryptionKey) {
+        this(loadFromFile(configPath), credentialHttpClient, credentialEncryptionKey);
+    }
+
+    AgentAuthManager(
+            String configPath,
+            CredentialHttpTransport credentialHttpTransport,
+            String credentialEncryptionKey) {
+        this(loadFromFile(configPath), credentialHttpTransport, credentialEncryptionKey);
     }
 
     /** Create with no credentials (auth disabled). */
@@ -147,7 +187,12 @@ class AgentAuthManager {
                         return null;
                     }
                     log.info("[Auth] Created credential service for agent: {}", name);
-                    return new AgentCredentialService(name, agentCreds, credentialHttpClient);
+                    return new AgentCredentialService(
+                            name,
+                            agentCreds,
+                            credentialHttpClient,
+                            credentialHttpTransport,
+                            credentialEncryptionKey);
                 });
     }
 
@@ -156,12 +201,13 @@ class AgentAuthManager {
         return config.get(agentName);
     }
 
-    private static void validateEncryptedCredentials(Map<?, ?> values) {
+    private static void validateEncryptedCredentials(
+            Map<?, ?> values, String credentialEncryptionKey) {
         for (Object value : values.values()) {
             if (value instanceof Map<?, ?> nested) {
-                validateEncryptedCredentials(nested);
+                validateEncryptedCredentials(nested, credentialEncryptionKey);
             } else if (value instanceof String text && text.startsWith("enc:")) {
-                CredentialCrypto.decryptIfNeeded(text);
+                CredentialCrypto.decryptIfNeeded(text, credentialEncryptionKey);
             }
         }
     }
