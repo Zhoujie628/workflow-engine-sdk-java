@@ -46,7 +46,11 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.time.Duration;
 import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -71,13 +75,12 @@ public class A2AController {
 
     private final RestHandler restHandler;
     private final RequestHandler requestHandler;
-    private final String pathPrefix;
+    private final AtomicInteger activeStreams = new AtomicInteger();
+    private final Object streamCompletionMonitor = new Object();
 
-    public A2AController(
-            RestHandler restHandler, RequestHandler requestHandler, A2AProperties properties) {
+    public A2AController(RestHandler restHandler, RequestHandler requestHandler) {
         this.restHandler = restHandler;
         this.requestHandler = requestHandler;
-        this.pathPrefix = properties.getPathPrefix();
     }
 
     @PostMapping("${a2at.server.path-prefix}/message:send")
@@ -97,7 +100,7 @@ public class A2AController {
             value = "${a2at.server.path-prefix}/message:stream",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseBodyEmitter streamMessage(HttpServletRequest req, @RequestBody String body) {
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
+        ResponseBodyEmitter emitter = track(new ResponseBodyEmitter(0L));
         try {
             SendMessageRequest.Builder builder = SendMessageRequest.newBuilder();
             JsonFormat.parser().merge(body, builder);
@@ -123,10 +126,10 @@ public class A2AController {
                         public void onNext(StreamingEventKind item) {
                             try {
                                 StreamResponse sr = ProtoUtils.ToProto.streamResponse(item);
-                                    String compact =
-                                            JsonFormat.printer()
-                                                    .omittingInsignificantWhitespace()
-                                                    .print(sr);
+                                String compact =
+                                        JsonFormat.printer()
+                                                .omittingInsignificantWhitespace()
+                                                .print(sr);
                                 String sse =
                                         String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
                                                 + "data:"
@@ -160,7 +163,7 @@ public class A2AController {
         return emitter;
     }
 
-    @GetMapping("/tasks/{id}")
+    @GetMapping("${a2at.server.path-prefix}/tasks/{id}")
     public ResponseEntity<String> getTask(
             HttpServletRequest req,
             @PathVariable("id") String taskId) {
@@ -175,7 +178,7 @@ public class A2AController {
                 .body(resp.getBody());
     }
 
-    @PostMapping("/tasks/{id}:cancel")
+    @PostMapping("${a2at.server.path-prefix}/tasks/{id}:cancel")
     public ResponseEntity<String> cancelTask(
             HttpServletRequest req,
             @PathVariable("id") String taskId,
@@ -192,12 +195,12 @@ public class A2AController {
     }
 
     @PostMapping(
-            value = "/tasks/{id}:subscribe",
+            value = "${a2at.server.path-prefix}/tasks/{id}:subscribe",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseBodyEmitter subscribeToTask(
             HttpServletRequest req,
             @PathVariable("id") String taskId) {
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
+        ResponseBodyEmitter emitter = track(new ResponseBodyEmitter(0L));
         try {
             var ctx = buildContext(req);
             var resp = restHandler.subscribeToTask(ctx, "", taskId);
@@ -246,14 +249,77 @@ public class A2AController {
         }
         return emitter;
     }
+
+    /**
+     * Waits until every SSE response has left the Servlet asynchronous context. This is mainly
+     * useful for deterministic application shutdown; receiving the terminal A2A event can precede
+     * the container's response-completion callback by a few milliseconds.
+     *
+     * @return {@code true} when all streams drained before the timeout
+     */
+    public boolean awaitStreamsDrained(Duration timeout) {
+        if (timeout == null || timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must not be null or negative");
+        }
+        long deadline = System.nanoTime() + timeout.toNanos();
+        synchronized (streamCompletionMonitor) {
+            while (activeStreams.get() > 0) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(streamCompletionMonitor, remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public int activeStreamCount() {
+        return activeStreams.get();
+    }
+
+    private ResponseBodyEmitter track(ResponseBodyEmitter emitter) {
+        activeStreams.incrementAndGet();
+        AtomicBoolean completed = new AtomicBoolean();
+        Runnable finish =
+                () -> {
+                    if (completed.compareAndSet(false, true)) {
+                        activeStreams.decrementAndGet();
+                        synchronized (streamCompletionMonitor) {
+                            streamCompletionMonitor.notifyAll();
+                        }
+                    }
+                };
+        emitter.onCompletion(finish);
+        emitter.onTimeout(finish);
+        emitter.onError(ignored -> finish.run());
+        return emitter;
+    }
+
     private ServerCallContext buildContext(HttpServletRequest req) {
         Map<String, Object> state = new LinkedHashMap<>();
         Map<String, String> headers = new LinkedHashMap<>();
-        java.util.Collections.list(req.getHeaderNames())
-                .forEach(h -> headers.put(h.toLowerCase(Locale.ROOT), req.getHeader(h)));
+        if (req.getHeaderNames() != null) {
+            java.util.Collections.list(req.getHeaderNames())
+                    .forEach(h -> headers.put(h.toLowerCase(Locale.ROOT), req.getHeader(h)));
+        }
         state.put("headers", headers);
         String ext = req.getHeader("A2A-Extensions");
-        Set<String> exts = (ext == null || ext.isBlank()) ? Set.of() : Set.of(ext.split(","));
+        Set<String> exts;
+        if (ext == null || ext.isBlank()) {
+            exts = Set.of();
+        } else {
+            java.util.LinkedHashSet<String> parsed = new java.util.LinkedHashSet<>();
+            for (String value : ext.split(",")) {
+                if (!value.isBlank()) parsed.add(value.strip());
+            }
+            exts = java.util.Collections.unmodifiableSet(parsed);
+        }
         // OMC spec uses A2A-Version; SDK also supports A2A-Protocol-Version alias
         String ver = req.getHeader("A2A-Version");
         if (ver == null || ver.isBlank()) {
