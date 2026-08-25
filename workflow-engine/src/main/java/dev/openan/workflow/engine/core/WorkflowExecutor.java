@@ -40,12 +40,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -142,17 +144,19 @@ public class WorkflowExecutor {
                             .build());
         }
         Deque<Integer> pending = new ConcurrentLinkedDeque<>();
+        Set<Integer> scheduled = ConcurrentHashMap.newKeySet();
         Set<Integer> activated = ConcurrentHashMap.newKeySet();
         for (int i = 0; i < workflow.getSteps().size(); i++) {
             var s = workflow.getSteps().get(i);
             if (contextBuilder.getStepPredecessors(s.getName()).isEmpty()) {
                 pending.add(i);
+                scheduled.add(i);
                 activated.add(i);
             }
         }
         Set<Integer> executed = ConcurrentHashMap.newKeySet();
-        boolean[] failed = {false};
-        return executeSteps(pending, executed, activated, failed)
+        AtomicBoolean failed = new AtomicBoolean();
+        return executeSteps(pending, scheduled, executed, activated, failed)
                 .thenApply(
                         v -> {
                             emit(EventType.WORKFLOW_COMPLETE, Map.of());
@@ -161,10 +165,10 @@ public class WorkflowExecutor {
                                     workflow.getName(),
                                     executionHistory.size());
                             return ExecutionResult.builder()
-                                    .success(!failed[0])
+                                    .success(!failed.get())
                                     .history(new ArrayList<>(executionHistory))
                                     .stepOutputs(new HashMap<>(stepOutputs))
-                                    .error(failed[0] ? "Step execution failed" : null)
+                                    .error(failed.get() ? "Step execution failed" : null)
                                     .build();
                         })
                 .exceptionally(
@@ -182,10 +186,11 @@ public class WorkflowExecutor {
 
     private CompletableFuture<Void> executeSteps(
             Deque<Integer> pending,
+            Set<Integer> scheduled,
             Set<Integer> executed,
             Set<Integer> activated,
-            boolean[] failed) {
-        if (pending.isEmpty() || failed[0]) {
+            AtomicBoolean failed) {
+        if (pending.isEmpty() || failed.get()) {
             return CompletableFuture.completedFuture(null);
         }
 
@@ -258,18 +263,18 @@ public class WorkflowExecutor {
         for (int idx : readySteps) {
             executed.add(idx);
             var step = workflow.getSteps().get(idx);
-            stepFutures.add(executeStep(step, executed, activated, pending, failed));
+            stepFutures.add(executeStep(step, scheduled, activated, pending, failed));
         }
         return CompletableFuture.allOf(stepFutures.toArray(new CompletableFuture[0]))
-                .thenCompose(v -> executeSteps(pending, executed, activated, failed));
+                .thenCompose(v -> executeSteps(pending, scheduled, executed, activated, failed));
     }
 
     private CompletableFuture<Void> executeStep(
             WorkflowStep step,
-            Set<Integer> executed,
+            Set<Integer> scheduled,
             Set<Integer> activated,
             Deque<Integer> pending,
-            boolean[] failed) {
+            AtomicBoolean failed) {
         emit(EventType.STEP_START, Map.of("step", step.getName()));
         log.info("--- Executing step: {} ---", step.getName());
         return executeSubtasks(step)
@@ -285,7 +290,7 @@ public class WorkflowExecutor {
                                                 step.getName(),
                                                 "results",
                                                 result.results()));
-                                failed[0] = true;
+                                failed.set(true);
                                 return CompletableFuture.completedFuture(null);
                             }
                             emit(
@@ -296,9 +301,8 @@ public class WorkflowExecutor {
                                             nextIndices -> {
                                                 for (int i = nextIndices.size() - 1; i >= 0; i--) {
                                                     int nxt = nextIndices.get(i);
-                                                    if (!executed.contains(nxt)
-                                                            && !pending.contains(nxt)) {
-                                                        activated.add(nxt);
+                                                    activated.add(nxt);
+                                                    if (scheduled.add(nxt)) {
                                                         pending.addFirst(nxt);
                                                     }
                                                 }
@@ -355,7 +359,12 @@ public class WorkflowExecutor {
     }
 
     private record StepResult(
-            String taskDesc, String output, boolean success, Map<String, Object> results) {}
+            String taskDesc,
+            String agentName,
+            int subtaskIndex,
+            String output,
+            boolean success,
+            Map<String, Object> results) {}
 
     private CompletableFuture<StepResult> executeSubtasks(WorkflowStep step) {
         String contextMessage = contextBuilder.buildContext(step, stepOutputs);
@@ -419,16 +428,45 @@ public class WorkflowExecutor {
     }
 
     private StepResult collectAllSuccess(List<CompletableFuture<StepResult>> futures) {
-        Map<String, Object> results = new HashMap<>();
+        List<StepResult> completedResults = new ArrayList<>();
         boolean anyFailed = false;
         for (var f : futures) {
             var r = f.join();
-            results.put(r.taskDesc(), r.output());
+            completedResults.add(r);
             if (!r.success()) {
                 anyFailed = true;
             }
         }
-        return new StepResult(null, null, !anyFailed, results);
+        return new StepResult(
+                null, null, -1, null, !anyFailed, collectTaskResults(completedResults));
+    }
+
+    /** Keeps every subtask result even when descriptions repeat within one parallel step. */
+    private static Map<String, Object> collectTaskResults(List<StepResult> completedResults) {
+        Map<String, Long> descriptionCounts =
+                completedResults.stream()
+                        .filter(result -> result.taskDesc() != null)
+                        .collect(
+                                Collectors.groupingBy(
+                                        StepResult::taskDesc,
+                                        LinkedHashMap::new,
+                                        Collectors.counting()));
+        Map<String, Object> results = new LinkedHashMap<>();
+        for (StepResult result : completedResults) {
+            if (result.taskDesc() == null) continue;
+            boolean duplicate = descriptionCounts.getOrDefault(result.taskDesc(), 0L) > 1;
+            String key =
+                    duplicate
+                            ? result.taskDesc()
+                                    + " ["
+                                    + result.agentName()
+                                    + "#"
+                                    + result.subtaskIndex()
+                                    + "]"
+                            : result.taskDesc();
+            results.put(key, result.output());
+        }
+        return results;
     }
 
     private StepResult processTaskResponse(
@@ -453,12 +491,14 @@ public class WorkflowExecutor {
         }
         String output =
                 response.isSuccess()
-                        ? response.getOutput()
+                        ? (response.getOutput() != null ? response.getOutput() : "")
                         : (response.getError() != null ? response.getError() : "");
         executionHistory.add(
                 Map.of(
                         "step",
                         step.getName(),
+                        "subtask_index",
+                        subtaskIndex,
                         "task",
                         task.getDescription(),
                         "agent",
@@ -472,13 +512,21 @@ public class WorkflowExecutor {
                 Map.of(
                         "step",
                         step.getName(),
+                        "subtask_index",
+                        subtaskIndex,
                         "agent",
                         task.getAgent(),
                         "task",
                         task.getDescription(),
                         "output",
                         output));
-        return new StepResult(task.getDescription(), output, response.isSuccess(), null);
+        return new StepResult(
+                task.getDescription(),
+                task.getAgent(),
+                subtaskIndex,
+                output,
+                response.isSuccess(),
+                null);
     }
 
     private StepResult processTaskError(
@@ -495,15 +543,21 @@ public class WorkflowExecutor {
                         task.getAgent(),
                         "status",
                         TaskStatus.FAILED.getValue()));
+        String errorMessage =
+                e.getMessage() != null && !e.getMessage().isBlank()
+                        ? e.getMessage()
+                        : e.getClass().getSimpleName();
         log.error(
                 "[Executor] Task {} -> {}: exception: {}",
                 task.getDescription(),
                 task.getAgent(),
-                e.getMessage());
+                errorMessage);
         executionHistory.add(
                 Map.of(
                         "step",
                         step.getName(),
+                        "subtask_index",
+                        subtaskIndex,
                         "task",
                         task.getDescription(),
                         "agent",
@@ -511,8 +565,14 @@ public class WorkflowExecutor {
                         "status",
                         "failed",
                         "output",
-                        e.getMessage()));
-        return new StepResult(task.getDescription(), e.getMessage(), false, null);
+                        errorMessage));
+        return new StepResult(
+                task.getDescription(),
+                task.getAgent(),
+                subtaskIndex,
+                errorMessage,
+                false,
+                null);
     }
 
     /**
@@ -522,7 +582,8 @@ public class WorkflowExecutor {
      */
     private CompletableFuture<StepResult> anySuccess(List<CompletableFuture<StepResult>> futures) {
         if (futures.isEmpty()) {
-            return CompletableFuture.completedFuture(new StepResult(null, null, true, Map.of()));
+            return CompletableFuture.completedFuture(
+                    new StepResult(null, null, -1, null, true, Map.of()));
         }
         CompletableFuture<StepResult> result = new CompletableFuture<>();
         int total = futures.size();
@@ -543,38 +604,52 @@ public class WorkflowExecutor {
                                     }
                                 }
                                 // Collect results from completed futures
-                                Map<String, Object> results = new HashMap<>();
+                                List<StepResult> completedResults = new ArrayList<>();
                                 for (CompletableFuture<StepResult> cf : futures) {
                                     if (cf.isDone() && !cf.isCompletedExceptionally()) {
                                         try {
                                             var r = cf.join();
                                             if (r != null && r.taskDesc() != null) {
-                                                results.put(r.taskDesc(), r.output());
+                                                completedResults.add(r);
                                             }
                                         } catch (Exception ignored) {
                                             // Cancellation race, skip
                                         }
                                     }
                                 }
-                                result.complete(new StepResult(null, null, true, results));
+                                result.complete(
+                                        new StepResult(
+                                                null,
+                                                null,
+                                                -1,
+                                                null,
+                                                true,
+                                                collectTaskResults(completedResults)));
                             } else if (!success) {
                                 failedCount[0]++;
                                 if (completed[0] == total && !result.isDone()) {
                                     // All failed
-                                    Map<String, Object> results = new HashMap<>();
+                                    List<StepResult> completedResults = new ArrayList<>();
                                     for (CompletableFuture<StepResult> cf : futures) {
                                         if (cf.isDone() && !cf.isCompletedExceptionally()) {
                                             try {
                                                 var r = cf.join();
                                                 if (r != null && r.taskDesc() != null) {
-                                                    results.put(r.taskDesc(), r.output());
+                                                    completedResults.add(r);
                                                 }
                                             } catch (Exception ignored) {
                                                 // Cancellation race, skip
                                             }
                                         }
                                     }
-                                    result.complete(new StepResult(null, null, false, results));
+                                    result.complete(
+                                            new StepResult(
+                                                    null,
+                                                    null,
+                                                    -1,
+                                                    null,
+                                                    false,
+                                                    collectTaskResults(completedResults)));
                                 }
                             }
                         }
