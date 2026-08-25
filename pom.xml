@@ -52,7 +52,9 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <a2a.java.sdk.version>1.0.0.Beta1</a2a.java.sdk.version>
-        <a2a.t.sdk.version>1.0.0</a2a.t.sdk.version>
+        <!-- Unreleased A2A-T SDK: immutable local version built from the pinned revision. -->
+        <a2a.t.sdk.version>1.0.0-0ef79d3</a2a.t.sdk.version>
+        <a2a.t.sdk.git.revision>0ef79d37f49a9b7a2dbe16b6d9fd1ccdb6d9538d</a2a.t.sdk.git.revision>
         <lombok.version>1.18.38</lombok.version>
         <jackson.version>2.21.1</jackson.version>
         <slf4j.version>2.0.17</slf4j.version>

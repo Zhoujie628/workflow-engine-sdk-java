@@ -35,7 +35,7 @@
         <dependency>
             <groupId>net.openan.a2a-t.sdk</groupId>
             <artifactId>a2a-t-server</artifactId>
-            <version>1.0.0</version>
+            <version>${a2a.t.sdk.version}</version>
         </dependency>
         <!-- Protobuf JSON formatting (for serializing A2A messages to JSON in gateway adapter) -->
         <dependency>
