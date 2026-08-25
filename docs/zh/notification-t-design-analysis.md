@@ -1,6 +1,6 @@
 # Notification-T / Authorization-T 设计分析
 
-> **已归档。** 本历史分析已整合到 [DESIGN.md](DESIGN.md) 的第 4 节 (A2A-T 扩展模型) 和第 7 节 (交互时序)。下方描述的前置预定位流程现在位于 `ExtensionSender`（见 DESIGN.md "共享传输层与双门面"），不再在 `WorkflowEngineClient` 上。仅保留供参考。
+> **已归档。** 本历史分析已整合到 [DESIGN.md](DESIGN.md) 的第 4 节（A2A-T 扩展模型）和第 7 节（交互时序）。下方“前置预定位/共享通道”表述已经过时：当前 Authorization-T、Notification-T 由 `ExtensionSender` 在独立业务时机发起，并与 Task-T 及彼此使用不同 transport/runtime/context。仅保留供历史参考。
 
 ---
 

@@ -137,24 +137,25 @@ CompletableFuture<SendMessageResult> sendMessageFromData(
 | `templateUri` | `TemplateUri`         | Target template; null uses the SDK default (PRIVATE_LINE_COMPLAINT)|
 
 **Choosing a track**: when the caller holds structured data (e.g. complaint-ticket fields) prefer
-this method — the SDK renders the Task-T prompt deterministically via
-`generateTaskPromptFromDataWithSchema` (no scenario recognition, no LLM call). With free-form
+this method — the SDK uses the schema-aware
+`generateTaskPromptFromDataWithSchema` pipeline. It bypasses scenario recognition, but slot
+mapping may still invoke the SDK-configured LLM. With free-form
 natural-language input use `sendMessage` (the SDK scenario-recognition pipeline). Both tracks run
 through the full Negotiation-T auto-loop, auth, and extension-header injection.
 
 `ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
-provides the same structured-data track for Authorization-T / Notification-T pre-positioning.
+provides the same structured-data track for independent Authorization-T operations;
+`openNotificationFromData` is the preferred structured Notification-T subscription API.
 
 #### Negotiation auto-loop behavior
 
 - **Trigger**: the response metadata carries the Negotiation-T extension key (the agent opened a
-  negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`) and the message metadata carries
-  `negotiation_context` (the negotiation context produced by the agent-side `startNegotiation`).
-- **Each round**: the SDK `receiveNegotiation` parses the request →
-  `validateProposePromptAndDataFilling` validates the propose against its template and extracts
-  parameters → `ControlPoint.onNegotiation` produces a clarification → the SDK content layer
-  renders the follow-up message → the SDK state machine advances (`continueNegotiation`,
-  AGREED / REJECTED) → send to the agent → recurse on the next round.
+  negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`) together with SDK-generated
+  `templateUri` and `negotiationContext={id,round,maxRounds}`. Missing fields fail closed.
+- **Each round**: `validateProposePromptAndDataFilling` validates and extracts the Propose →
+  `ControlPoint.onNegotiation` decides → the SDK content layer renders Accept / Reject / Abort →
+  Accept is checked with `validateAcceptPromptAndDataFilling` before sending → the engine copies
+  and advances the stateless `NegotiationContext` → send → recurse.
 - **Clarification conventions** (the onNegotiation return value):
   - `data:{...json...}` — deterministic fromData Accept rendering (no LLM call; the JSON body is
     the filled-parameter map)
@@ -163,10 +164,9 @@ provides the same structured-data track for Authorization-T / Notification-T pre
 - **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
   via the SDK abort template (best effort — delivery failures are logged only), a
   `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
-- **Negotiation context**: the agent carries the `startNegotiation` payload's context
-  (negotiationType / negotiationId / round / status) in the message metadata's
-  `negotiation_context` key; the engine parses it and passes it to the receive / validate /
-  continue APIs.
+- **Negotiation context**: the latest SDK removed `startNegotiation`, `receiveNegotiation`, and
+  `continueNegotiation`. The engine accepts only canonical `negotiationContext` with
+  `{id, round, maxRounds}` and does not read legacy `negotiation_context` metadata.
 
 #### Template queries
 
@@ -184,8 +184,9 @@ Use the SDK's `StandardTemplates` constants for template URIs (e.g.
 
 ### ExtensionSender
 
-Pre-positioning facade over the same `A2ATransport`. Sends one-shot Authorization-T requests, establishes long-lived
-Notification-T subscriptions, and sends other one-shot extensions before a workflow starts. It bypasses Task-T prompt
+Independent-protocol facade over caller-owned, dedicated `A2ATransport` instances. It sends one-shot
+Authorization-T requests and establishes long-lived Notification-T subscriptions at independent
+business times; neither operation is a workflow DAG node. It bypasses Task-T prompt
 generation and the Negotiation-T auto-loop; later Notification-T events are delivered through the subscription callback.
 
 ```java
@@ -203,7 +204,7 @@ public interface ExtensionSender {
             String agentName, String instruction, String naturalLanguageInput);
 
     // Interface contract: Notification-T (long-lived SSE + event callback)
-    CompletableFuture<SendMessageResult> sendNotification(
+    CompletableFuture<NotificationSubscription> openNotification(
             String agentName, String instruction,
             String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
 }
@@ -213,9 +214,14 @@ public interface ExtensionSender {
 |------------------------|-----------------|-------------------------------------------------|
 | `agentName`            | `String`        | Target agent name (must match `AgentCard.name`) |
 | `instruction`          | `String`        | Short instruction text; becomes `parts[].text` in the A2A message body |
-| `naturalLanguageInput` | `String`        | Natural-language extension metadata. Task-T is structured by the A2A-T SDK; Authorization-T and Notification-T currently use this value directly |
+| `naturalLanguageInput` | `String`        | Natural-language track input; production should prefer the SDK-rendered structured-data methods |
 | `extension`            | `A2ATExtension` | Extension enum (never hardcode URIs)            |
-| `eventCallback`        | `Consumer<Map<String, Object>>` | Optional SSE event callback (`sendNotification` only). Recovery results pushed by the agent are received here in real time; the Map contains `agent`, `text`, `metadata`, `state`. Null drops subsequent events |
+| `eventCallback`        | `Consumer<Map<String, Object>>` | Optional SSE event callback. The stable Map includes `event_kind`, `agent`, `task_id` and event-specific state/artifact fields |
+
+`NotificationSubscription` separates the initial ACK (`acknowledgement()`) from stream completion
+(`completion()`), and exposes `heartbeat()`, `isHealthy(maximumIdle)`, and idempotent `close()`.
+Task, Authorization, and Notification must use different transport/runtime instances. Completing a
+workflow must not close a Notification-T subscription.
 
 **Wire format**: The resulting A2A message sent to the agent has `parts[].text = instruction` and `metadata = { "<extension-URI>": "<extension value>" }`. For example, Authorization-T produces:
 
@@ -316,13 +322,13 @@ message-generation / validation / template-query surface, one method per `A2ATCl
 |-------|---------|-------|
 | fromData generation | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | deterministic rendering from typed data, no LLM |
 | fromText generation | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | free text + one LLM extraction step |
-| Runtime state machine | `startNegotiation` / `receiveNegotiation` / `continueNegotiation` | SDK negotiation round progression |
+| Stateless context | `MetadataContent.buildMetadataContent` / `NegotiationContext` | carry and advance `{id, round, maxRounds}` |
 | Validate and fill | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | rule gate + LLM semantic validation + param merge; requires a `NegotiationContext` (null = not a negotiation message) |
 | Template queries | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | catalog enumeration and lookup |
 | Utility | `toMetadata(MetadataContent)` | generated message → A2A metadata map (with `templateUri`, `negotiationContext` keys) |
 
-Pass template URIs via `StandardTemplates` constants. Failures throw `A2ATError` subtypes;
-callers are expected to catch and degrade.
+Pass template URIs via `StandardTemplates` constants. Failures throw `A2ATError` subtypes and must
+fail closed: callers must never degrade by placing raw text under an A2A-T extension URI.
 
 ### A2AJavaClientRuntime
 
@@ -677,16 +683,12 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 | Extension       | URI                                                                                       |
 |-----------------|-------------------------------------------------------------------------------------------|
 | Task-T          | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1`          |
-| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T`      |
+| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1`  |
 | Authorization-T | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1` |
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
 
-> **Note:** `DATA-NEGOTIATION-T/v1` is **not** an A2A-T extension. It is an
-> SDK-internal metadata key used by the A2A-T SDK negotiation module to carry
-> structured context (`negotiationType`, `round`, `negotiationId`,
-> `status`) alongside the Negotiation-T text. It is not declared on
-> AgentCard, not handled by ExtensionHandler, and not advertised in the
-> `A2A-Extensions` header.
+Canonical negotiation metadata is `templateUri` plus
+`negotiationContext={id,round,maxRounds}`. Legacy state-machine keys are not accepted.
 
 ---
 

@@ -54,7 +54,7 @@ public class MyControlPoint implements ControlPoint {
 }
 ```
 
-`onNegotiation` 有默认实现，返回通用澄清文本。授权和通知是预置操作，通过 `ExtensionSender` 在工作流启动前发送，不在 `ControlPoint` 上。
+`onNegotiation` 有默认实现，返回通用澄清文本。授权和通知是独立协议操作，由工作台在业务时机通过各自专用的 `ExtensionSender`/transport 发起；它们不在 `ControlPoint` 上，也不是工作流 DAG 节点。
 
 ## 4. 通过 Builder 执行（推荐）
 
@@ -245,11 +245,12 @@ A2AT_LANGUAGE=zh-CN
 A2AT_CRED_KEY=<32字节hex>
 ```
 
-`a2atEnvPath` 为 null 时，Task-T 提示词生成跳过。
+`a2atEnvPath` 为 null 时，非结构化 `sendMessage` 只发送普通 A2A 文本，不宣称为
+Task-T；结构化 Task-T、Authorization-T、Notification-T 和 Negotiation-T 都会显式失败。
 
-**测试中禁用 LLM 层**：设置系统属性 `a2at.llm.disabled=true`，示例 agent 将完全跳过
-A2ATClient/A2ATServer 初始化 — 协商降级为默认文本，不发起任何 LLM 调用。示例测试套件
-用它在无外部依赖环境下运行。
+**离线测试**：测试资源中的 `.env` 通过 SDK SPI 指定 `OfflineA2ATLlmClient`，使真实
+A2ATClient/A2ATServer 生成、校验和参数填充管线可在无外网时可重复运行。不存在
+“禁用 SDK 后发送默认协商文本”的生产降级路径。
 
 ## 10. 集成模式
 

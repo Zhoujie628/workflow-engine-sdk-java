@@ -10,18 +10,45 @@ The engine handles all protocol mechanics: A2A message transport, SSE streaming,
 
 ## Features
 
-- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (auto negotiation loop), Authorization-T (pre-positioned whitelist), Notification-T (long-lived SSE subscription)
+- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (stateless auto negotiation loop), Authorization-T (independent whitelist operation), Notification-T (independent long-lived SSE subscription)
 - **Negotiation Content Layer**: SDK-template rendering for propose / accept / reject / abort messages (typed-data and free-text variants), validate-and-fill param extraction across all three negotiation types (information / target / feasibility), round-exhaustion abort flow
 - **Template Queries**: runtime enumeration of all A2A-T prompt templates (`getPrompts` / `getNegotiationPrompts` / `getPrompt`)
 - **DAG Workflow Execution**: Parallel dispatch, self-loop steps, conditional routing
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
 - **HTTPS/TLS**: Configurable trust store, self-signed cert support for development
-- **Protocol Logging**: Full request/response header and body dumps for debugging
+- **Protocol Logging**: Sanitized request/response summaries; protocol bodies are logged only with explicit opt-in
+
+The SPN sample treats the protocol document as an input, not as executable truth. The pinned A2A-T
+SDK templates, slot schemas, canonical URIs, and validation results are authoritative. Protocol
+generation and validation fail closed; raw text is never sent under an A2A-T URI as a fallback.
+
+In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the workbench. The workbench loads the PSOP,
+dispatches two city-specific OMC diagnoses in parallel, joins both branches exactly once, and
+returns the real merged result. Outbound OMC calls support both `direct` and Eastcom `order` modes
+(`order` is the production-oriented default). Task-T, Authorization-T, and Notification-T each use
+an independent transport/runtime/context. Authorization and Notification are independently
+triggered workbench operations rather than DAG nodes; Notification keeps an explicit long-lived
+subscription until the recovery result, cancellation, or shutdown.
 
 ## Quick Start
 
 ### 1. Add Maven dependency
+
+This revision intentionally targets an A2A-T SDK build that has not yet been published to Maven
+Central. Install the pinned SDK revision first (do not use an older locally cached `1.0.0`):
+
+```bash
+git clone https://github.com/Zhoujie628/a2a-t-sdk-java.git
+cd a2a-t-sdk-java
+git checkout 0ef79d37f49a9b7a2dbe16b6d9fd1ccdb6d9538d
+mvn -B -Drevision=1.0.0-0ef79d3 -DskipTests \
+  -pl a2a-t-client,a2a-t-server -am install
+```
+
+The engine POM and CI both pin that commit and immutable commit-derived version, preventing Maven from
+silently resolving an older, API-incompatible jar. See the
+[A2A-T SDK dependency guide](docs/zh/A2AT-SDK-DEPENDENCY.md) for Windows commands and upgrade steps.
 
 ```xml
 <dependency>
