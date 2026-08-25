@@ -32,7 +32,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-/** Keeps Authorization-T/Notification-T pre-positioning independent from individual tasks. */
+/** Keeps Authorization-T/Notification-T protocol lifecycles independent from individual tasks. */
 @Component
 public final class SpringWorkbenchExtensionLifecycle {
     private static final Logger log =
