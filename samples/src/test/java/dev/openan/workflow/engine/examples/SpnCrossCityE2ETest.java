@@ -15,11 +15,15 @@ import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultExtensionSender;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.ExtensionSender;
+import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
+import dev.openan.workflow.engine.examples.demo.SpnCasePrompts;
+import dev.openan.workflow.engine.examples.extension.PrePositionedExtensionHandler;
+import dev.openan.workflow.engine.examples.testsupport.OfflineA2ATLlmClient;
 import dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint;
 import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.model.ExecutionResult;
@@ -32,22 +36,30 @@ import dev.openan.workflow.engine.runner.ExecutePsop;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * End-to-end business integration test for the SPN cross-city diagnosis workflow. Starts two real
  * SPN agents (JdkHttpA2AServer + A2A-T protocol over HTTPS+SSE), pre-positions Authorization-T and
  * Notification-T, runs a 3-step workflow (diagnose x2 + SelfLoop merge), and asserts the full
- * business path: negotiation -> diagnosis -> whitelist self-recovery -> Notification-T report ->
- * local merge (no A2A-T to self).
+ * business path: parallel diagnosis -> whitelist self-recovery -> Notification-T report -> local
+ * merge (no A2A-T to self). The diagnosis tasks carry complete input parameters; Negotiation-T is
+ * covered by its independent protocol case and is not part of this workflow.
  *
- * <p>LLM is disabled so agent outputs are deterministic fallback text.
+ * <p>The A2A-T client/server paths use an offline structured-LLM provider, so the real SDK
+ * generation and validation pipelines run without network access. The demo's unrelated business
+ * prose LLM remains disabled by the Maven test profile.
  */
 class SpnCrossCityE2ETest {
 
@@ -56,9 +68,20 @@ class SpnCrossCityE2ETest {
 
     private final OmcAgentLauncher omc = new OmcAgentLauncher();
     private DefaultWorkflowEngineClient client;
-    private ExtensionSender sender;
+    private ExtensionSender authorizationSender;
+    private ExtensionSender notificationSender;
+    private A2ATransport taskTransport;
+    private A2ATransport authorizationTransport;
+    private A2ATransport notificationTransport;
+    private final List<NotificationSubscription> subscriptions = new CopyOnWriteArrayList<>();
     private int port1;
     private int port2;
+    private String sdkEnvPath;
+
+    @BeforeAll
+    static void registerMockProvider() {
+        OfflineA2ATLlmClient.install();
+    }
 
     private static AgentCard cardFor(String name, int port) {
         Map<String, Object> card =
@@ -76,7 +99,27 @@ class SpnCrossCityE2ETest {
                                         "extendedAgentCard",
                                         false,
                                         "extensions",
-                                        List.of()),
+                                        List.of(
+                                                Map.of(
+                                                        "uri",
+                                                        "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1",
+                                                        "required",
+                                                        false),
+                                                Map.of(
+                                                        "uri",
+                                                        "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
+                                                        "required",
+                                                        false),
+                                                Map.of(
+                                                        "uri",
+                                                        "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1",
+                                                        "required",
+                                                        false),
+                                                Map.of(
+                                                        "uri",
+                                                        "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1",
+                                                        "required",
+                                                        false))),
                         "defaultInputModes", List.of("text/plain"),
                         "defaultOutputModes", List.of("text/plain"),
                         "skills",
@@ -106,27 +149,42 @@ class SpnCrossCityE2ETest {
 
     @BeforeEach
     void setUp() throws Exception {
-        System.setProperty("a2at.llm.disabled", "true");
+        sdkEnvPath = OfflineA2ATLlmClient.envPath();
+        System.setProperty("a2at.env.path", sdkEnvPath);
         port1 = 28200 + (int) (Math.random() * 500);
         port2 = port1 + 1;
         AgentCard c1 = cardFor("SPN Domain Agent City1", port1);
         AgentCard c2 = cardFor("SPN Domain Agent City2", port2);
-        omc.startFromCard(mapper.convertValue(c1, Map.class), new SpnDomainAgentCity1Executor());
-        omc.startFromCard(mapper.convertValue(c2, Map.class), new SpnDomainAgentCity2Executor());
+        omc.startFromCard(
+                mapper.convertValue(c1, Map.class),
+                new SpnDomainAgentCity1Executor(new PrePositionedExtensionHandler()));
+        omc.startFromCard(
+                mapper.convertValue(c2, Map.class),
+                new SpnDomainAgentCity2Executor(new PrePositionedExtensionHandler()));
         Thread.sleep(600);
-        A2ATransport transport =
-                new A2ATransport(
-                        List.of(c1, c2),
-                        null,
-                        WorkflowEngineClientConfig.builder().sslVerify(false).build());
-        client = new DefaultWorkflowEngineClient(transport);
-        sender = new DefaultExtensionSender(transport);
+        WorkflowEngineClientConfig config =
+                WorkflowEngineClientConfig.builder()
+                        .sslVerify(false)
+                        .a2atEnvPath(sdkEnvPath)
+                        .build();
+        taskTransport = new A2ATransport(List.of(c1, c2), null, config);
+        authorizationTransport = new A2ATransport(List.of(c1, c2), null, config);
+        notificationTransport = new A2ATransport(List.of(c1, c2), null, config);
+        client = new DefaultWorkflowEngineClient(taskTransport);
+        authorizationSender = new DefaultExtensionSender(authorizationTransport);
+        notificationSender = new DefaultExtensionSender(notificationTransport);
     }
 
     @AfterEach
     void tearDown() {
+        subscriptions.forEach(NotificationSubscription::close);
+        subscriptions.clear();
         if (client != null) client.close();
+        if (taskTransport != null) taskTransport.close();
+        if (authorizationTransport != null) authorizationTransport.close();
+        if (notificationTransport != null) notificationTransport.close();
         omc.close();
+        System.clearProperty("a2at.env.path");
     }
 
     private Workflow crossCityWorkflow() {
@@ -175,24 +233,48 @@ class SpnCrossCityE2ETest {
     }
 
     @Test
-    void fullBusinessPathNegotiationDiagnosisRecoveryAndSelfLoopMerge() {
+    void fullBusinessPathDiagnosisRecoveryAndSelfLoopMerge() {
+        assertNotEquals(taskTransport.getContextId(), authorizationTransport.getContextId());
+        assertNotEquals(taskTransport.getContextId(), notificationTransport.getContextId());
+        assertNotEquals(authorizationTransport.getContextId(), notificationTransport.getContextId());
         // Pre-position Authorization-T + Notification-T to both SPN agents
-        sender.sendAuthorization("SPN Domain Agent City1", "下发授权放行策略", "任务类型新增授权，操作名称业务抢通").join();
-        sender.sendNotification(
-                        "SPN Domain Agent City1",
-                        "订阅业务抢通结果通知",
-                        "通知主题为service-recovery-execution-result")
-                .join();
-        sender.sendAuthorization("SPN Domain Agent City2", "下发授权放行策略", "任务类型新增授权，操作名称业务抢通").join();
-        sender.sendNotification(
-                        "SPN Domain Agent City2",
-                        "订阅业务抢通结果通知",
-                        "通知主题为service-recovery-execution-result")
-                .join();
+        for (String agent : List.of("SPN Domain Agent City1", "SPN Domain Agent City2")) {
+            authorizationSender
+                    .sendExtensionMessageFromData(
+                            agent,
+                            "下发授权放行策略",
+                            SpnCasePrompts.addAuthorizationData(),
+                            SpnCasePrompts.authorizationSchema(),
+                            dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
+                    .join();
+        }
+
+        CountDownLatch recoveryNotification = new CountDownLatch(1);
+        AtomicReference<String> recoveryNotificationText = new AtomicReference<>();
+        java.util.function.Consumer<Map<String, Object>> notificationCallback =
+                event -> {
+                    if ("recovery-result".equals(event.get("artifact_name"))) {
+                        recoveryNotificationText.set(String.valueOf(event.get("text")));
+                        recoveryNotification.countDown();
+                    }
+                };
+        for (String agent : List.of("SPN Domain Agent City1", "SPN Domain Agent City2")) {
+            NotificationSubscription subscription =
+                    notificationSender.openNotificationFromData(
+                                    agent,
+                                    "订阅业务抢通结果通知",
+                                    SpnCasePrompts.subscribeServiceRecoveryData(),
+                                    SpnCasePrompts.serviceRecoverySchema(),
+                                    notificationCallback)
+                            .join();
+            subscription.acknowledgement().join();
+            subscriptions.add(subscription);
+        }
 
         Map<String, Object> allOutputs = new ConcurrentHashMap<>();
         AtomicBoolean sawRecovery = new AtomicBoolean(false);
         AtomicBoolean sawSelfLoop = new AtomicBoolean(false);
+        AtomicBoolean sawNegotiation = new AtomicBoolean(false);
         EventCallback cb =
                 new EventCallback() {
                     @Override
@@ -212,11 +294,14 @@ class SpnCrossCityE2ETest {
                                 && "Workbench".equals(data.get("agent"))) {
                             sawSelfLoop.set(true);
                         }
+                        if (EventType.NEGOTIATION_REQUEST.equals(type)) {
+                            sawNegotiation.set(true);
+                        }
                         allOutputs.put(type + ":" + data.get("agent"), data);
                     }
                 };
 
-        WorkbenchControlPoint cp = new WorkbenchControlPoint(null);
+        WorkbenchControlPoint cp = new WorkbenchControlPoint(sdkEnvPath);
         ExecutionResult result =
                 ExecutePsop.builder()
                         .psop(crossCityWorkflow())
@@ -231,15 +316,46 @@ class SpnCrossCityE2ETest {
 
         assertTrue(result.isSuccess(), "Workflow must succeed: " + result.getError());
         assertFalse(result.getHistory().isEmpty());
+        assertEquals(3, result.getHistory().size(), "two diagnoses plus one merge must execute");
+        long mergeExecutions =
+                result.getHistory().stream()
+                        .filter(entry -> "merge_analysis".equals(entry.get("step")))
+                        .count();
+        assertEquals(1, mergeExecutions, "cross-city diagnoses must be merged exactly once");
+        assertFalse(
+                sawNegotiation.get(),
+                "The complete-input diagnosis workflow must not trigger Negotiation-T");
         // Self-loop merge step executed locally (no A2A-T to self)
         assertTrue(sawSelfLoop.get(), "Self-loop merge must run via onSelfTask");
         // SPN agents reported recovery via Notification-T channel
         assertTrue(
                 sawRecovery.get(), "SPN must self-trigger recovery and report via Notification-T");
+        assertTrue(
+                await(recoveryNotification, 5),
+                "Recovery result must arrive on the isolated Notification-T stream");
+        assertTrue(
+                recoveryNotificationText.get() != null
+                        && recoveryNotificationText.get().contains("业务抢通方案执行结果：成功"),
+                "Whitelist authorization must produce a successful recovery notification: "
+                        + recoveryNotificationText.get());
+        subscriptions.forEach(NotificationSubscription::close);
+        assertTrue(
+                subscriptions.stream().noneMatch(NotificationSubscription::isActive),
+                "Notification-T streams must close after the recovery result is received");
         // Merge output contains fault localization
         Map<String, Object> mergeOut = result.getStepOutputs().get("merge_analysis");
         assertNotNull(mergeOut, "merge_analysis output must exist");
         String mergeText = String.valueOf(mergeOut.values().iterator().next());
         assertTrue(mergeText.contains("城市1"), "Merge must locate fault in City1: " + mergeText);
     }
+
+    private static boolean await(CountDownLatch latch, long seconds) {
+        try {
+            return latch.await(seconds, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
 }
