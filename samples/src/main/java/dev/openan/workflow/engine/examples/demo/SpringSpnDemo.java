@@ -25,13 +25,16 @@ import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
+import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
 import dev.openan.workflow.engine.examples.gateway.MockGatewayServer;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
+import dev.openan.workflow.engine.examples.workbench.SpringWorkbenchExtensionLifecycle;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import dev.openan.workflow.engine.spring.A2AController;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -43,8 +46,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
-import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
 
 /**
  * Demo entry point for the SPN cross-city diagnosis.
@@ -76,7 +77,6 @@ public class SpringSpnDemo {
     private MockGatewayServer gateway;
 
     public static void main(String[] args) throws Exception {
-        System.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
         SpringWorkbenchApplication.loadDotEnv();
         new SpringSpnDemo().run(args);
     }
@@ -138,7 +138,9 @@ public class SpringSpnDemo {
                     WB_AGENT_NAME,
                     SpnCasePrompts.TASK_TEXT.length());
             log.debug("[Demo] Workbench task text={}", SpnCasePrompts.TASK_TEXT);
-            String response = sendTaskToWorkbench();
+            SendMessageResult result = sendTaskToWorkbench();
+            requireCompleted(result);
+            String response = result.getText();
             log.info(
                     "[Demo] STAGE_DONE stage=send-workbench-task, responseChars={}, elapsedMs={}",
                     response != null ? response.length() : 0,
@@ -165,6 +167,30 @@ public class SpringSpnDemo {
                     gateway != null);
             if (ctx != null) {
                 try {
+                    boolean drained =
+                            ctx.getBean(A2AController.class)
+                                    .awaitStreamsDrained(java.time.Duration.ofSeconds(2));
+                    if (!drained) {
+                        log.warn(
+                                "[Demo] SSE_DRAIN_TIMEOUT activeStreams={}, timeoutSeconds=2",
+                                ctx.getBean(A2AController.class).activeStreamCount());
+                    } else {
+                        log.info("[Demo] SSE_DRAIN_DONE activeStreams=0");
+                    }
+                } catch (Exception e) {
+                    log.warn("[Demo] Failed to drain SSE responses: {}", e.getMessage(), e);
+                }
+                try {
+                    // Drain outbound Notification-T calls before Spring starts stopping Tomcat and
+                    // the optional Order simulator. The bean's @PreDestroy call is idempotent.
+                    ctx.getBean(SpringWorkbenchExtensionLifecycle.class).close();
+                } catch (Exception e) {
+                    log.warn(
+                            "[Demo] Failed to close workbench extension lifecycle: {}",
+                            e.getMessage(),
+                            e);
+                }
+                try {
                     ctx.close();
                 } catch (Exception e) {
                     log.warn("[Demo] Failed to close Spring context: {}", e.getMessage(), e);
@@ -189,10 +215,10 @@ public class SpringSpnDemo {
      * Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1.
      *
      * <p>Structured-data track: the demo hands over the raw complaint data + schema and the
-     * A2A-T SDK renders the Task-T prompt deterministically (no hand-written prompt text, no
-     * LLM call) — the same pattern as the official SDK sample.
+     * A2A-T SDK renders the Task-T prompt through its schema-aware fromData pipeline (no
+     * hand-written prompt and no scenario-recognition call; slot extraction may use the SDK LLM).
      */
-    private String sendTaskToWorkbench() throws Exception {
+    private SendMessageResult sendTaskToWorkbench() throws Exception {
         long started = System.nanoTime();
         AgentCard wbCard =
                 OmcAgentLauncher.cardFromResource("agentcard/transport_workbench_agent.json");
@@ -234,10 +260,22 @@ public class SpringSpnDemo {
                     result.getTaskState(),
                     result.getText() != null ? result.getText().length() : 0,
                     elapsedMillis(started));
-            return result.getText();
+            return result;
         } finally {
             client.close();
             transport.close();
+        }
+    }
+
+    static void requireCompleted(SendMessageResult result) {
+        if (result == null
+                || result.getTaskState() == null
+                || !result.getTaskState().contains("TASK_STATE_COMPLETED")) {
+            throw new IllegalStateException(
+                    "Workbench task failed: state="
+                            + (result != null ? result.getTaskState() : "null")
+                            + ", response="
+                            + (result != null ? result.getText() : "null"));
         }
     }
 

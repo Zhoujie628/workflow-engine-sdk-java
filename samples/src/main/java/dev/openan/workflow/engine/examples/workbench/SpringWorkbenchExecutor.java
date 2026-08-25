@@ -53,6 +53,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
 
     private final ClientRuntimeFactory runtimeFactory;
     private final WorkbenchClientProperties properties;
+    private volatile WorkbenchTaskInputParser taskInputParser;
 
     public SpringWorkbenchExecutor(
             ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
@@ -90,22 +91,33 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
     public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
-        String input = extractText(ctx.getMessage());
+        String userText = extractText(ctx.getMessage());
         long started = System.nanoTime();
-        log.info(
-                "[SpringWorkbench] TASK_START taskId={}, contextId={}, inputChars={}, "
-                        + "orchUrl={}, transportMode={}, sslVerify={}",
-                taskId,
-                contextId,
-                input.length(),
-                properties.getOrchUrl(),
-                runtimeFactory.mode(),
-                properties.isSslVerify());
 
         emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
         emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
 
         try {
+            WorkbenchTaskInputParser.ParsedTask taskInput =
+                    taskInputParser()
+                            .parse(
+                                    userText,
+                                    ctx.getMessage() != null
+                                            ? ctx.getMessage().metadata()
+                                            : Map.of());
+            String input = taskInput.runtimeIntent();
+            log.info(
+                    "[SpringWorkbench] TASK_START taskId={}, contextId={}, inputChars={}, "
+                            + "taskTemplate={}, taskParams={}, orchUrl={}, transportMode={}, "
+                            + "sslVerify={}",
+                    taskId,
+                    contextId,
+                    input.length(),
+                    taskInput.templateUri().uri(),
+                    taskInput.parameters().keySet(),
+                    properties.getOrchUrl(),
+                    runtimeFactory.mode(),
+                    properties.isSslVerify());
             String result =
                     new WorkbenchOrchestrator(
                             properties.getOrchUrl(),
@@ -116,7 +128,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                             .run(input);
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put(A2ATExtension.TASK_T.uri(), result);
-            List<Part<?>> parts = List.of(new TextPart("SPN cross-city fault diagnosis summary"));
+            List<Part<?>> parts = List.of(new TextPart(result));
             emitter.addArtifact(
                     parts, "result", "cross-city-diagnosis-summary", metadata, false, true);
             emitter.complete(buildStatusMessage(contextId, taskId, "Completed"));
@@ -137,6 +149,19 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                     e.getMessage(),
                     e);
             emitter.fail(buildStatusMessage(contextId, taskId, "Failed: " + e.getMessage()));
+        }
+    }
+
+    private WorkbenchTaskInputParser taskInputParser() {
+        WorkbenchTaskInputParser current = taskInputParser;
+        if (current != null) {
+            return current;
+        }
+        synchronized (this) {
+            if (taskInputParser == null) {
+                taskInputParser = WorkbenchTaskInputParser.fromEnv(resolveEnvPath());
+            }
+            return taskInputParser;
         }
     }
 
