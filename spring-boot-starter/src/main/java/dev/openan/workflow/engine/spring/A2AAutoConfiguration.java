@@ -203,7 +203,7 @@ public class A2AAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public A2AController a2aController(
-            RestHandler restHandler, RequestHandler requestHandler, A2AProperties properties) {
-        return new A2AController(restHandler, requestHandler, properties);
+            RestHandler restHandler, RequestHandler requestHandler) {
+        return new A2AController(restHandler, requestHandler);
     }
 }
