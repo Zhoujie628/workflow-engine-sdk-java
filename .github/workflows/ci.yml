@@ -92,5 +92,5 @@ jobs:
           -pl a2a-t-client,a2a-t-server
           -am install
 
-      - name: Build and test samples
+      - name: Build and test samples when Eastcom SDK is available
         run: mvn -B -pl samples -am verify

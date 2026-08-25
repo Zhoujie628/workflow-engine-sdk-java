@@ -21,7 +21,8 @@ a2a:
   orch-url: https://127.0.0.1:5001
   ssl-verify: false
   # Production default: route A2A messages through the Eastcom Order SDK.
-  # Use mock for the local SpringSpnDemo, or direct to bypass the instruction platform.
+  # Use order plus simulator-enabled=true for the local order demo, or direct to bypass
+  # the instruction platform. The simulator is never started outside order mode.
   transport-mode: ${A2A_TRANSPORT_MODE:order}
   mock-gateway-url: ${A2A_MOCK_GATEWAY_URL:http://127.0.0.1:26400}
   order:

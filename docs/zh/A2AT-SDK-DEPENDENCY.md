@@ -12,7 +12,7 @@
 该固定提交中的 `A2ATClient`、`A2ATServer` 和 `LLMClient` 尚未实现
 `AutoCloseable`，因此调用过 OpenAI 兼容 LLM 后，底层 OpenAI Java 客户端的
 `DefaultSleeper` 定时线程无法由工作流引擎通过公共 API 关闭。`SpringSpnDemo` 的
-Task-T、Authorization-T、Notification-T 和直连业务链路均可正常完成，
+Task-T、Authorization-T、Notification-T、直连和指令平台业务链路均可正常完成，
 但一次性关闭内嵌 Tomcat 时会提示这一条上游线程生命周期告警。
 
 上游 SDK 应在新提交中补充幂等 `close()`，由 `A2ATClient/A2ATServer` 级联关闭其拥有的
@@ -38,6 +38,10 @@ mvn -B "-Drevision=1.0.0-0ef79d3" -DskipTests `
 mvn -B clean verify
 ```
 
+`dev` 分支的 `samples` 还依赖东信 `com.eastcom.apollo:order-shaded-client:1.1.18`。
+该包不在 Maven Central，运行完整 sample 测试前还必须按《指令平台适配指南》配置企业
+Maven 仓库或安装 jar；`main` 分支的直连模式不需要该依赖。
+
 ## 升级 A2A-T SDK
 
 升级时必须同步修改三处，且用全量测试证明一致性：
@@ -47,7 +51,7 @@ mvn -B clean verify
 3. 本文及 README 的安装命令。
 
 禁止只覆盖本地同版本 jar。新版本至少要验证 Task-T 生成/校验、无状态 Negotiation-T
-metadata、Authorization-T、Notification-T 长连接，以及直连端到端路径。
+metadata、Authorization-T、Notification-T 长连接，以及直连和东信转发两条端到端路径。
 
 ## 当前内容校验兼容层
 
@@ -58,4 +62,4 @@ metadata、Authorization-T、Notification-T 长连接，以及直连端到端路
 `validate*PromptAndDataFilling`，只把语义判定标准校准为 renderer 的真实输出契约。
 
 升级 SDK 时必须先运行其官方 Authorization-T/Notification-T 样例；若上游已统一 renderer
-与 validator，应删除该覆盖并执行本仓库全量测试及直连模式的端到端验证。
+与 validator，应删除该覆盖并执行本仓库全量测试及两种传输模式的端到端验证。
