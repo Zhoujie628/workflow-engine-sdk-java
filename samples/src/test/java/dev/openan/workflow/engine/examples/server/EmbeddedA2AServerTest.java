@@ -27,6 +27,8 @@ import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
+import dev.openan.workflow.engine.examples.testsupport.OfflineA2ATLlmClient;
+import dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.model.SendMessageResult;
@@ -34,6 +36,7 @@ import dev.openan.workflow.engine.model.SendMessageResult;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.net.URI;
@@ -54,7 +57,14 @@ class EmbeddedA2AServerTest {
     private static final String AGENT_NAME = "Test Agent";
     private JdkHttpA2AServer server;
     private DefaultWorkflowEngineClient client;
+    private A2ATransport transport;
     private int port;
+    private String sdkEnvPath;
+
+    @BeforeAll
+    static void installOfflineSdkProvider() {
+        OfflineA2ATLlmClient.install();
+    }
 
     private static String extractExtensionValue(SendMessageResult result, String extKeyword) {
         Map<String, Object> meta = result.getMetadata();
@@ -91,9 +101,9 @@ class EmbeddedA2AServerTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        // Unit tests must stay deterministic and offline: disable LLM calls so
-        // agents fall back to their hardcoded diagnostic text (asserted below).
-        System.setProperty("a2at.llm.disabled", "true");
+        // Exercise real A2A-T client/server pipelines through the offline structured provider.
+        sdkEnvPath = OfflineA2ATLlmClient.envPath();
+        System.setProperty("a2at.env.path", sdkEnvPath);
         port = 28000 + (int) (Math.random() * 1000);
         Map<String, Object> card =
                 Map.of(
@@ -147,18 +157,24 @@ class EmbeddedA2AServerTest {
         server =
                 new OmcAgentLauncher().startFromCard(card, new SpnDomainAgentCity1Executor());
         Thread.sleep(500);
-        A2ATransport transport =
+        transport =
                 new A2ATransport(
                         List.of(mapper.convertValue(card, AgentCard.class)),
                         null,
-                        WorkflowEngineClientConfig.builder().sslVerify(false).build());
+                        WorkflowEngineClientConfig.builder()
+                                .sslVerify(false)
+                                .a2atEnvPath(sdkEnvPath)
+                                .build());
         client = new DefaultWorkflowEngineClient(transport);
+        client.setControlPoint(new WorkbenchControlPoint(sdkEnvPath));
     }
 
     @AfterEach
     void tearDown() {
         if (client != null) client.close();
+        if (transport != null) transport.close();
         if (server != null) server.close();
+        System.clearProperty("a2at.env.path");
     }
 
     @Test
@@ -224,5 +240,14 @@ class EmbeddedA2AServerTest {
         assertTrue(
                 result.getText().contains("诊断结果"),
                 "Final response must be the completed diagnosis, got: " + result.getText());
+    }
+
+    @Test
+    void taskRouteParserDecodesExactlyOnePathSegment() {
+        assertEquals("task id+/city", JdkHttpA2AServer.taskIdFromPath("/tasks/task%20id%2B%2Fcity", null));
+        assertEquals("task+id", JdkHttpA2AServer.taskIdFromPath("/tasks/task+id:cancel", ":cancel"));
+        assertNull(JdkHttpA2AServer.taskIdFromPath("/other/task", null));
+        assertNull(JdkHttpA2AServer.taskIdFromPath("/tasks/a/b", null));
+        assertNull(JdkHttpA2AServer.taskIdFromPath("/tasks/id:subscribe", ":cancel"));
     }
 }
