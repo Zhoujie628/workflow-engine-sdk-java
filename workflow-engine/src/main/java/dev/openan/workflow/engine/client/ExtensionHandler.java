@@ -37,8 +37,8 @@ import java.util.concurrent.CompletableFuture;
  * structured task prompt on send; Negotiation-T extracts the negotiation context on receive and
  * feeds the auto-loop.
  *
- * <p>Authorization-T / Notification-T are pre-positioning operations (one-shot, via {@link
- * ExtensionSender#sendExtensionMessage}), so they are not part of this in-workflow chain.
+ * <p>Authorization-T / Notification-T are independent operations (via {@link ExtensionSender}),
+ * so they are not part of this in-workflow chain.
  */
 public interface ExtensionHandler {
 

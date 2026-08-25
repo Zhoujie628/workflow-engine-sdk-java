@@ -34,9 +34,10 @@ import java.util.concurrent.CompletableFuture;
  * wiring. All wire-level work (client runtime, auth, SSE event extraction) delegates to the
  * transport.
  *
- * <p>One-shot pre-positioning (Authorization-T / Notification-T) is a separate concern and lives on
- * {@link ExtensionSender}; callers that only need pre-positioning hold that lighter facade over the
- * same transport.
+ * <p>Authorization-T operations and Notification-T subscriptions live on {@link ExtensionSender}.
+ * Task, Authorization and Notification protocol channels have independent
+ * lifecycles, so production integrations should give those facades separate transport/runtime
+ * instances even when all three ultimately target the same OMC.
  *
  * <p>The single message type on this facade:
  *
@@ -68,8 +69,9 @@ public interface WorkflowEngineClient {
     }
 
     /**
-     * Structured-data send: renders the Task-T prompt deterministically from typed data via the
-     * SDK's fromData pipeline (no scenario recognition, no LLM), then runs the normal send path
+     * Structured-data send: renders the Task-T prompt from typed data via the SDK's schema-aware
+     * fromData pipeline. Scenario recognition is bypassed, but slot mapping may invoke the
+     * configured LLM. The result then runs through the normal send path
      * (Negotiation-T auto-loop, auth, extension headers).
      *
      * <p>Callers holding structured business data should prefer this over {@link #sendMessage}:
@@ -156,21 +158,15 @@ public interface WorkflowEngineClient {
 
 
     /** Query a task by ID (A2A GET tasks/{id}). */
-    default CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
-        throw new UnsupportedOperationException("getTask not implemented");
-    }
+    CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 
     /** Cancel a task by ID (A2A POST tasks/{id}:cancel). */
-    default CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
-        throw new UnsupportedOperationException("cancelTask not implemented");
-    }
+    CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
 
     /** Subscribe to a task stream (A2A POST tasks/{id}:subscribe). */
-    default CompletableFuture<SendMessageResult> subscribeToTask(
+    CompletableFuture<SendMessageResult> subscribeToTask(
             String agentName, String taskId,
-            java.util.function.Consumer<java.util.Map<String, Object>> eventCallback) {
-        throw new UnsupportedOperationException("subscribeToTask not implemented");
-    }
+            java.util.function.Consumer<java.util.Map<String, Object>> eventCallback);
 
     void close();
 }

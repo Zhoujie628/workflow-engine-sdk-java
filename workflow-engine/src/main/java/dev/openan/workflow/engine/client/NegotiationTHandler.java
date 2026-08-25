@@ -25,11 +25,9 @@ import dev.openan.workflow.engine.model.SendMessageResult;
 
 import net.openan.a2at.sdk.client.A2ATClient;
 import net.openan.a2at.sdk.core.model.FilledParamData;
+import net.openan.a2at.sdk.core.model.MetadataContent;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.core.model.TemplateUri;
-
-import java.util.Locale;
-import java.util.Map;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -79,30 +77,19 @@ class NegotiationTHandler implements ExtensionHandler {
     }
 
     /**
-     * Extracts the stateful negotiation context map from the reply metadata.
-     *
-     * <p>Priority 1: the {@code negotiation_context} key — the SDK demo convention; the agent
-     * embeds the {@code startNegotiation} payload's context map (negotiationType /
-     * negotiationId / round / status) there, exactly what {@code receiveNegotiation} expects.
-     *
-     * <p>Priority 2 (legacy): a {@code DATA-NEGOTIATION-T} metadata entry. When neither is
-     * present the caller falls back to passing the whole metadata map, which the SDK rejects
-     * with a context-parse error — handled by the direct-extraction fallback.
+     * Extracts the canonical stateless content-layer context map from reply metadata.
      */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> extractNegotiationContext(Map<String, Object> metadata) {
         if (metadata == null) {
             return null;
         }
-        Object contextValue = metadata.get("negotiation_context");
-        if (contextValue instanceof Map<?, ?> contextMap
-                && ((Map<?, ?>) contextMap).containsKey("negotiationType")) {
+        Object contextValue =
+                metadata.get(
+                        net.openan.a2at.sdk.core.model.MetadataContent
+                                .NEGOTIATION_CONTEXT_METADATA_KEY);
+        if (contextValue instanceof Map<?, ?> contextMap) {
             return (Map<String, Object>) contextMap;
-        }
-        for (var entry : metadata.entrySet()) {
-            if (entry.getKey().contains("DATA-NEGOTIATION-T") && entry.getValue() instanceof Map) {
-                return (Map<String, Object>) entry.getValue();
-            }
         }
         return null;
     }
@@ -111,25 +98,20 @@ class NegotiationTHandler implements ExtensionHandler {
         if (metadata == null) {
             return null;
         }
-        for (var entry : metadata.entrySet()) {
-            String upperKey = entry.getKey().toUpperCase(Locale.ROOT);
-            if (upperKey.contains("NEGOTIATION-T")
-                    && !upperKey.contains("DATA-NEGOTIATION-T")
-                    && entry.getValue() instanceof String) {
-                return (String) entry.getValue();
-            }
-        }
-        return null;
+        Object value = metadata.get(A2ATExtension.NEGOTIATION_T.uri());
+        return value instanceof String text ? text : null;
     }
 
     private static boolean supportsNegotiation(AgentCard agentCard) {
+        if (agentCard.capabilities() == null) {
+            return false;
+        }
         var extensions = agentCard.capabilities().extensions();
         if (extensions == null) {
             return false;
         }
         for (var ext : extensions) {
-            String uri = ext.uri();
-            if (uri.toUpperCase(Locale.ROOT).contains("NEGOTIATION-T")) {
+            if (A2ATExtension.NEGOTIATION_T.uri().equals(ext.uri())) {
                 return true;
             }
         }
@@ -137,14 +119,7 @@ class NegotiationTHandler implements ExtensionHandler {
     }
 
     private static boolean hasNegotiationMetadata(Map<String, Object> metadata) {
-        if (metadata == null) return false;
-        for (String key : metadata.keySet()) {
-            String upper = key.toUpperCase(Locale.ROOT);
-            if (upper.contains("NEGOTIATION-T") && !upper.contains("DATA-NEGOTIATION-T")) {
-                return true;
-            }
-        }
-        return false;
+        return metadata != null && metadata.containsKey(A2ATExtension.NEGOTIATION_T.uri());
     }
 
     private static String getAgentName(AgentCard agentCard) {
@@ -154,53 +129,40 @@ class NegotiationTHandler implements ExtensionHandler {
     /**
      * Parses the negotiation session context for the validate APIs.
      *
-     * <p>Primary source: the engine's {@code negotiation_context} key (id/round/maxRounds —
-     * the wire serialization from {@code A2ATContentFacade.contextPayload}). Fallback: the
-     * SDK content-layer's {@code negotiationContext} key, whose {@code buildMetadataContent}
-     * embeds {@code id} only (round defaults to 1). Returns null when neither is usable; the
-     * SDK validate APIs treat a null context as not-a-negotiation-message.
+     * <p>The latest SDK carries all three fields in {@code negotiationContext}; the content layer
+     * is stateless and the engine advances this value between messages.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext parseNegotiationContext(
             Map<String, Object> metadata) {
-        Object stateful = metadata.get("negotiation_context");
-        if (stateful instanceof Map<?, ?> stateMap) {
-            net.openan.a2at.sdk.core.model.NegotiationContext ctx =
-                    A2ATContentFacade.contextFromMap(stateMap);
-            if (ctx != null) {
-                return ctx;
-            }
-        }
-        Object raw = metadata.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (raw instanceof Map<?, ?> contextMap) {
-            Object id = contextMap.get("id");
-            if (id instanceof String s) {
-                try {
-                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s,
-                            1,
-                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-                } catch (IllegalArgumentException e) {
-                    log.debug("[Negotiation-T] Malformed negotiationContext metadata: {}", e.getMessage());
-                }
-            }
-        }
-        return null;
+        return A2ATContentFacade.contextFromMap(extractNegotiationContext(metadata));
     }
 
     /**
-     * Resolves the propose template URI matching the negotiation type declared in the received
-     * context payload. Falls back to information negotiation when the type is missing or unknown.
+     * Resolves the propose template URI carried by {@link MetadataContent#buildMetadataContent()}.
      */
-    private static TemplateUri proposeTemplateFor(Map<String, Object> contextMap) {
-        Object type = contextMap != null ? contextMap.get("negotiationType") : null;
-        if (type instanceof String s) {
-            return switch (s.replace('-', '_').toUpperCase(Locale.ROOT)) {
-                case "TARGET" -> StandardTemplates.TARGET_NEGOTIATION_PROPOSE;
-                case "FEASIBILITY" -> StandardTemplates.FEASIBILITY_NEGOTIATION_PROPOSE;
-                default -> StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE;
-            };
+    private static TemplateUri proposeTemplateFor(Map<String, Object> metadata) {
+        Object raw = metadata.get(
+                net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);
+        TemplateUri parsed = null;
+        if (raw instanceof TemplateUri template) {
+            parsed = template;
+        } else if (raw instanceof String text) {
+            parsed = TemplateUri.parse(text).orElse(null);
+        } else if (raw instanceof Map<?, ?> map
+                && map.get("extensionName") instanceof String extensionName
+                && map.get("pathSegments") instanceof java.util.List<?> pathSegments
+                && map.get("templateVersion") instanceof String version) {
+            parsed = TemplateUri.of(
+                    extensionName,
+                    pathSegments.stream().map(String::valueOf).toList(),
+                    version);
         }
-        return StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE;
+        if (parsed == null
+                || !"Negotiation-T".equals(parsed.extensionName())
+                || !parsed.pathSegments().contains("propose")) {
+            throw new IllegalArgumentException("Missing or invalid Negotiation-T propose templateUri");
+        }
+        return parsed;
     }
 
     @Override
@@ -264,11 +226,15 @@ class NegotiationTHandler implements ExtensionHandler {
                                 proposeText);
                         // Validate the received negotiation message and extract params against
                         // the propose template matching the declared type. The context travels
-                        // in the negotiation_context metadata key; without it the SDK treats
+                        // in the negotiationContext metadata key; without it the SDK treats
                         // the text as a non-negotiation message.
-                        TemplateUri proposeUri = proposeTemplateFor(extractNegotiationContext(metadata));
+                        TemplateUri proposeUri = proposeTemplateFor(metadata);
                         net.openan.a2at.sdk.core.model.NegotiationContext context =
                                 parseNegotiationContext(metadata);
+                        if (context == null) {
+                            throw new IllegalArgumentException(
+                                    "Missing or invalid Negotiation-T negotiationContext");
+                        }
                         try {
                             FilledParamData paramData =
                                     a2atClient.validateProposePromptAndDataFilling(
@@ -286,12 +252,13 @@ class NegotiationTHandler implements ExtensionHandler {
                                         paramData.data().keySet());
                             }
                         } catch (Exception ve) {
-                            log.warn(
-                                    "[Negotiation-T] validateProposePromptAndDataFilling"
-                                            + " failed for '{}' ({}): {}",
-                                    getAgentName(agentCard),
-                                    proposeUri.uri(),
-                                    ve.getMessage());
+                            throw new IllegalStateException(
+                                    "Negotiation-T propose validation failed for '"
+                                            + getAgentName(agentCard)
+                                            + "' ("
+                                            + proposeUri.uri()
+                                            + ")",
+                                    ve);
                         }
                     }
                     result.setMetadata(metadata);

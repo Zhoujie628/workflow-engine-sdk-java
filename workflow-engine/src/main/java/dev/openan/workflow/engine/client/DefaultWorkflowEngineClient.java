@@ -53,8 +53,8 @@ import java.util.concurrent.CompletableFuture;
  * ControlPoint wiring. All wire-level work (client runtime, auth, SSE event extraction) delegates
  * to the transport.
  *
- * <p>One-shot pre-positioning sends (Authorization-T / Notification-T) are a separate concern and
- * live on {@link DefaultExtensionSender}.
+ * <p>Independent Authorization-T operations and Notification-T subscriptions live on {@link
+ * DefaultExtensionSender}.
  */
 public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCloseable {
 
@@ -63,6 +63,9 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     private final A2ATransport transport;
     private final ExtensionRegistry extensionRegistry;
     private final int maxNegotiationRounds;
+    private final boolean closeTransportOnClose;
+    private final java.util.concurrent.atomic.AtomicBoolean closed =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private EventCallback eventCallback = new EventCallback();
     private ControlPoint controlPoint;
 
@@ -71,7 +74,25 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             int maxNegotiationRounds,
             List<ExtensionHandler> customHandlers,
             Map<String, Object> negotiationParamSchema) {
-        this.transport = transport;
+        this(
+                transport,
+                maxNegotiationRounds,
+                customHandlers,
+                negotiationParamSchema,
+                false);
+    }
+
+    private DefaultWorkflowEngineClient(
+            A2ATransport transport,
+            int maxNegotiationRounds,
+            List<ExtensionHandler> customHandlers,
+            Map<String, Object> negotiationParamSchema,
+            boolean closeTransportOnClose) {
+        this.transport = java.util.Objects.requireNonNull(transport, "transport");
+        if (maxNegotiationRounds < 1) {
+            throw new IllegalArgumentException("maxNegotiationRounds must be positive");
+        }
+        this.closeTransportOnClose = closeTransportOnClose;
         this.extensionRegistry = new ExtensionRegistry(negotiationParamSchema);
         if (customHandlers != null) {
             for (ExtensionHandler h : customHandlers) {
@@ -94,6 +115,33 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
     public DefaultWorkflowEngineClient(A2ATransport transport) {
         this(transport, 3, null, null);
+    }
+
+    /** Applies negotiation and extension settings from the same config used by the transport. */
+    public DefaultWorkflowEngineClient(
+            A2ATransport transport, WorkflowEngineClientConfig config) {
+        this(
+                transport,
+                java.util.Objects.requireNonNull(config, "config").getMaxNegotiationRounds(),
+                config.getCustomHandlers(),
+                config.getNegotiationParamSchema());
+    }
+
+    /** Creates a client which closes the supplied transport when the client is closed. */
+    public static DefaultWorkflowEngineClient owning(A2ATransport transport) {
+        return new DefaultWorkflowEngineClient(transport, 3, null, null, true);
+    }
+
+    /** Owning variant which also applies all client-level configuration. */
+    public static DefaultWorkflowEngineClient owning(
+            A2ATransport transport, WorkflowEngineClientConfig config) {
+        java.util.Objects.requireNonNull(config, "config");
+        return new DefaultWorkflowEngineClient(
+                transport,
+                config.getMaxNegotiationRounds(),
+                config.getCustomHandlers(),
+                config.getNegotiationParamSchema(),
+                true);
     }
 
     // ------------------------------------------------------------------
@@ -154,7 +202,15 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     // Workflow send path
     // ------------------------------------------------------------------
     private void emit(String type, Map<String, Object> data) {
-        eventCallback.onEvent(type, data);
+        try {
+            eventCallback.onEvent(type, data);
+        } catch (RuntimeException callbackError) {
+            log.warn(
+                    "[EngineClient] Event callback failed for type={}: {}",
+                    type,
+                    callbackError.getMessage(),
+                    callbackError);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -163,6 +219,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     @Override
     public CompletableFuture<SendMessageResult> sendMessage(
             String agentName, String message, String contextId, Map<String, Object> metadata) {
+        if (agentName == null || agentName.isBlank() || message == null || message.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("agentName and message must not be blank"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             log.error("[EngineClient] Agent not found: {}", agentName);
@@ -353,8 +413,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 .thenCompose(
                         followUpMeta -> {
                             // The message body is the rendered negotiation text itself: the SDK
-                            // template output when generation succeeded, the raw clarification on
-                            // fallback. The same text also travels in metadata under the
+                            // template output. The same text also travels in metadata under the
                             // Negotiation-T key; agents read either.
                             Object rendered =
                                     followUpMeta.get(A2ATExtension.NEGOTIATION_T.uri());
@@ -403,30 +462,33 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
      * <p>The clarification text is classified: {@code reject:...} / {@code abort:...} prefixes
      * select the Reject or Abort terminal templates, anything else renders an Accept message via
      * {@code generateNegotiationAcceptPromptFromText} (one LLM extraction step). When the
-     * negotiation context is available, the SDK state machine is also advanced so the follow-up
-     * payload carries the next-round context. All failures degrade to the raw-clarification
-     * fallback.
+     * negotiation context is available, the engine advances the stateless context so the
+     * follow-up payload carries the next round. Rendering failures are fatal: raw clarifications
+     * are never disguised as protocol messages.
      */
     private CompletableFuture<Map<String, Object>> buildNegotiationFollowUpMeta(
             String agentName, Map<String, Object> negMeta, String clarification) {
         A2ATContentFacade content = transport.getContentFacade();
         if (content == null) {
-            return CompletableFuture.completedFuture(buildFallbackMeta(clarification));
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException(
+                            "A2A-T client is required to render a Negotiation-T follow-up for '"
+                                    + agentName
+                                    + "'"));
         }
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
                         MetadataContent mc = renderFollowUpMessage(content, agentName, negMeta, clarification);
                         if (mc.promptText() != null && !mc.promptText().isEmpty()) {
-                            return advanceStateMachine(content, agentName, negMeta, clarification, mc);
+                            return advanceContext(agentName, negMeta, clarification, mc);
                         }
+                        throw new IllegalStateException("A2A-T SDK returned empty negotiation content");
                     } catch (Exception e) {
-                        log.warn(
-                                "[Negotiation] SDK content generation failed for '{}': {}; using fallback",
-                                agentName,
-                                e.getMessage());
+                        throw new IllegalStateException(
+                                "Negotiation-T content generation failed for '" + agentName + "'",
+                                e);
                     }
-                    return buildFallbackMeta(clarification);
                 });
     }
 
@@ -527,8 +589,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
      * caller (SDK guide §1.10). The engine owns the context: parses it from the propose
      * metadata, advances via {@code nextRound()}, and re-serializes it for the wire.
      */
-    private Map<String, Object> advanceStateMachine(
-            A2ATContentFacade content,
+    private Map<String, Object> advanceContext(
             String agentName,
             Map<String, Object> negMeta,
             String clarification,
@@ -543,7 +604,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 decision.startsWith("reject:") || decision.startsWith("abort:");
         net.openan.a2at.sdk.core.model.NegotiationContext next =
                 terminal ? ctx : ctx.nextRound();
-        meta.put("negotiation_context", A2ATContentFacade.contextPayload(next));
+        meta.put(
+                net.openan.a2at.sdk.core.model.MetadataContent
+                        .NEGOTIATION_CONTEXT_METADATA_KEY,
+                A2ATContentFacade.contextPayload(next));
         log.info(
                 "[Negotiation] Context advanced for '{}' id={} round={} -> {}",
                 agentName,
@@ -555,39 +619,17 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
     /**
      * Extracts the negotiation session context (id/round/maxRounds) from the received
-     * metadata. Primary source: the engine's {@code negotiation_context} key (the wire
-     * serialization produced by {@link A2ATContentFacade#contextPayload}); fallback: the SDK
-     * content-layer's {@code negotiationContext} key ({@code buildMetadataContent} embeds
-     * {@code id} only — the missing rounds default). Returns null when neither is usable.
+     * metadata. The latest SDK's canonical {@code negotiationContext} entry carries all three
+     * values; no stateful negotiation API or legacy metadata shape is involved.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext extractContentContext(
             Map<String, Object> negMeta) {
         Object stateful = negMeta.get(A2ATExtension.NEGOTIATION_CONTEXT_META_KEY);
-        if (!(stateful instanceof Map<?, ?> stateMap)) {
-            // The propose metadata's negotiation_context key (engine-external convention shared
-            // with the samples; mirrors the SDK demo constants).
-            stateful = negMeta.get("negotiation_context");
-        }
-        if (stateful instanceof Map<?, ?> stateMap2) {
+        if (stateful instanceof Map<?, ?> stateMap) {
             net.openan.a2at.sdk.core.model.NegotiationContext ctx =
-                    A2ATContentFacade.contextFromMap(stateMap2);
+                    A2ATContentFacade.contextFromMap(stateMap);
             if (ctx != null) {
                 return ctx;
-            }
-        }
-        Object raw =
-                negMeta.get(net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (raw instanceof Map<?, ?> contextMap) {
-            Object id = contextMap.get("id");
-            if (id instanceof String s) {
-                try {
-                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s,
-                            1,
-                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-                } catch (IllegalArgumentException ignored) {
-                    // fall through
-                }
             }
         }
         return null;
@@ -602,11 +644,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         return context;
     }
 
-    private static Map<String, Object> buildFallbackMeta(String clarification) {
-        Map<String, Object> meta = new HashMap<>();
-        meta.put(A2ATExtension.NEGOTIATION_T.uri(), clarification);
-        return meta;
-    }
     // ------------------------------------------------------------------
     // Extension handler chain
     // ------------------------------------------------------------------
@@ -685,8 +722,11 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 data.put("append", ae.append());
                 data.put("last_chunk", ae.lastChunk());
                 if (!text.isEmpty()) data.put("text", text.toString());
-                if (ae.metadata() != null && !ae.metadata().isEmpty())
-                    data.put("metadata", ae.metadata());
+                // Business metadata belongs to the Artifact. Event metadata describes delivery
+                // (chunking, tracing, etc.) and must not hide the protocol payload.
+                Map<String, Object> artifactMetadata = ae.artifact().metadata();
+                if (artifactMetadata != null && !artifactMetadata.isEmpty())
+                    data.put("metadata", artifactMetadata);
                 log.info(
                         "[EngineClient] Agent {} artifact update: {} ({})",
                         agentName,
@@ -716,6 +756,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
     @Override
     public CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
+        if (agentName == null || agentName.isBlank() || taskId == null || taskId.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("agentName and taskId must not be blank"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
@@ -725,6 +769,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
     @Override
     public CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
+        if (agentName == null || agentName.isBlank() || taskId == null || taskId.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("agentName and taskId must not be blank"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
@@ -736,16 +784,27 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     public CompletableFuture<SendMessageResult> subscribeToTask(
             String agentName, String taskId,
             java.util.function.Consumer<java.util.Map<String, Object>> eventCallback) {
+        if (agentName == null || agentName.isBlank() || taskId == null || taskId.isBlank()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("agentName and taskId must not be blank"));
+        }
         AgentCard agentCard = transport.getCard(agentName);
         if (agentCard == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
         }
         return transport.subscribeToTask(agentCard, agentName, taskId,
-                event -> forwardIntermediateEvent(event, agentName));
+                event -> {
+                    forwardIntermediateEvent(event, agentName);
+                    if (eventCallback != null) {
+                        eventCallback.accept(ClientEventMapper.toMap(event, agentName));
+                    }
+                });
     }
 
     @Override
     public void close() {
-        // Transport is owned by the caller; do not close it here.
+        if (closeTransportOnClose && closed.compareAndSet(false, true)) {
+            transport.close();
+        }
     }
 }

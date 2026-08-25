@@ -41,20 +41,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.time.Duration;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -74,7 +76,7 @@ public class A2ATransport implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(A2ATransport.class);
 
-    private final Map<String, AgentCard> cardMap = new ConcurrentHashMap<>();
+    private volatile Map<String, AgentCard> cardMap = Map.of();
     private final A2AJavaClientRuntime a2aClientRuntime;
     private final AgentAuthManager authManager;
     private final AuthProvider authProvider;
@@ -85,11 +87,15 @@ public class A2ATransport implements AutoCloseable {
     private final ExecutorService asyncExecutor;
     private final long notificationAckTimeoutSeconds;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final java.util.Set<NotificationSubscription> notificationSubscriptions =
+            ConcurrentHashMap.newKeySet();
 
     public A2ATransport(
             List<AgentCard> agentCards,
             A2AJavaClientRuntime a2aClientRuntime,
             WorkflowEngineClientConfig config) {
+        config = java.util.Objects.requireNonNull(config, "config");
+        Map<String, AgentCard> validatedCards = validateAgentCards(agentCards);
         this.a2aClientRuntime =
                 a2aClientRuntime != null
                         ? a2aClientRuntime
@@ -120,30 +126,40 @@ public class A2ATransport implements AutoCloseable {
                             return t;
                         },
                         new ThreadPoolExecutor.CallerRunsPolicy());
+        // Do not copy SDK .env values into global JVM properties. Each transport constructs its
+        // own SDK client from the explicit path, which keeps Task/Authorization/Notification
+        // channels independently configurable and prevents cross-instance credential leakage.
+        CredentialHttpTransport credentialHttpTransport = null;
+        String credentialEncryptionKey = null;
         if (config.getA2atEnvPath() != null) {
-            EnvFileLoader.loadToSystemProperties(java.nio.file.Path.of(config.getA2atEnvPath()));
+            credentialEncryptionKey =
+                    EnvFileLoader.read(java.nio.file.Path.of(config.getA2atEnvPath()))
+                            .get("A2AT_CRED_KEY");
         }
-        java.net.http.HttpClient credentialHttpClient = null;
         if (config.getCredentialsConfigPath() != null
                 || config.getCredentialsConfig() != null) {
-            credentialHttpClient =
-                    JdkHttpClientFactory.create(
+            credentialHttpTransport =
+                    CredentialHttpTransport.create(
                             config.isSslVerify(),
                             config.getCaCertsPath(),
                             config.getClientCertPath(),
                             config.getClientKeyPath(),
                             config.getClientKeyPassword(),
                             config.getCrlPath(),
-                            Duration.ofSeconds(30),
-                            null);
+                            Duration.ofSeconds(30));
         }
         if (config.getCredentialsConfigPath() != null) {
             this.authManager =
                     new AgentAuthManager(
-                            config.getCredentialsConfigPath(), credentialHttpClient);
+                            config.getCredentialsConfigPath(),
+                            credentialHttpTransport,
+                            credentialEncryptionKey);
         } else if (config.getCredentialsConfig() != null) {
             this.authManager =
-                    new AgentAuthManager(config.getCredentialsConfig(), credentialHttpClient);
+                    new AgentAuthManager(
+                            config.getCredentialsConfig(),
+                            credentialHttpTransport,
+                            credentialEncryptionKey);
         } else {
             this.authManager = new AgentAuthManager();
         }
@@ -154,11 +170,7 @@ public class A2ATransport implements AutoCloseable {
                         new AuthProviderHeaderContributor(authProvider),
                         new CredentialHeaderContributor(authManager, authProvider),
                         new ExtensionHeaderContributor(authManager));
-        for (AgentCard card : agentCards) {
-            if (!card.name().isEmpty()) {
-                cardMap.put(card.name(), card);
-            }
-        }
+        cardMap = java.util.Collections.unmodifiableMap(validatedCards);
         log.info(
                 "[Transport] Initialized with {} agent(s), a2at={}",
                 cardMap.size(),
@@ -166,19 +178,78 @@ public class A2ATransport implements AutoCloseable {
     }
 
     public static String extractResponseText(Iterable<ClientEvent> events) {
-        StringBuilder text = new StringBuilder();
+        // A2A clients commonly expose the same artifact three times: first as an artifact update,
+        // then in the Task snapshot attached to a status update, and finally in the terminal Task.
+        // Treat artifact updates as the authoritative stream and use snapshots/messages only as
+        // fallbacks. Blindly concatenating every representation corrupts workflow input.
+        Map<String, StringBuilder> streamedArtifacts = new LinkedHashMap<>();
+        Map<String, String> snapshotArtifacts = new LinkedHashMap<>();
+        Set<String> fallbackMessages = new LinkedHashSet<>();
         for (ClientEvent event : events) {
-            if (event instanceof TaskEvent te) extractTextFromTask(te.getTask(), text);
-            else if (event instanceof TaskUpdateEvent tue) {
-                extractTextFromTask(tue.getTask(), text);
-                if (tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent ae)
-                    extractTextFromArtifact(ae.artifact(), text);
+            if (event instanceof TaskEvent te) {
+                captureTaskArtifacts(te.getTask(), snapshotArtifacts);
+            } else if (event instanceof TaskUpdateEvent tue) {
+                captureTaskArtifacts(tue.getTask(), snapshotArtifacts);
+                if (tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent ae) {
+                    String artifactId = artifactKey(ae.artifact(), streamedArtifacts.size());
+                    String chunk = artifactText(ae.artifact());
+                    if (Boolean.TRUE.equals(ae.append())) {
+                        streamedArtifacts
+                                .computeIfAbsent(artifactId, ignored -> new StringBuilder())
+                                .append(chunk);
+                    } else {
+                        streamedArtifacts.put(artifactId, new StringBuilder(chunk));
+                    }
+                }
                 if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue
-                        && sue.status().message() != null)
-                    extractTextFromMessage(sue.status().message(), text);
-            } else if (event instanceof MessageEvent me)
-                extractTextFromMessage(me.getMessage(), text);
+                        && sue.status().message() != null) {
+                    addFallbackMessage(sue.status().message(), fallbackMessages);
+                }
+            } else if (event instanceof MessageEvent me) {
+                addFallbackMessage(me.getMessage(), fallbackMessages);
+            }
         }
+        if (!streamedArtifacts.isEmpty()) {
+            return concatenate(streamedArtifacts.values());
+        }
+        if (!snapshotArtifacts.isEmpty()) {
+            return concatenate(snapshotArtifacts.values());
+        }
+        return String.join("", fallbackMessages);
+    }
+
+    private static void captureTaskArtifacts(Task task, Map<String, String> artifacts) {
+        if (task == null || task.artifacts() == null) return;
+        for (Artifact artifact : task.artifacts()) {
+            artifacts.put(artifactKey(artifact, artifacts.size()), artifactText(artifact));
+        }
+    }
+
+    private static String artifactKey(Artifact artifact, int fallbackIndex) {
+        if (artifact.artifactId() != null && !artifact.artifactId().isBlank()) {
+            return artifact.artifactId();
+        }
+        if (artifact.name() != null && !artifact.name().isBlank()) {
+            return artifact.name();
+        }
+        return "artifact-" + fallbackIndex;
+    }
+
+    private static String artifactText(Artifact artifact) {
+        StringBuilder text = new StringBuilder();
+        extractTextFromArtifact(artifact, text);
+        return text.toString();
+    }
+
+    private static void addFallbackMessage(Message message, Set<String> messages) {
+        StringBuilder text = new StringBuilder();
+        extractTextFromMessage(message, text);
+        if (!text.isEmpty()) messages.add(text.toString());
+    }
+
+    private static String concatenate(Iterable<?> values) {
+        StringBuilder text = new StringBuilder();
+        for (Object value : values) text.append(value);
         return text.toString();
     }
 
@@ -268,26 +339,30 @@ public class A2ATransport implements AutoCloseable {
 
     public static List<String> extractExtensionUris(AgentCard agentCard) {
         List<String> uris = new ArrayList<>();
+        if (agentCard == null || agentCard.capabilities() == null) {
+            return uris;
+        }
         var extensions = agentCard.capabilities().extensions();
         if (extensions == null) {
             return uris;
         }
         for (var ext : extensions) {
+            if (ext == null) continue;
             String uri = ext.uri();
-            if (!uri.isEmpty()) uris.add(uri);
+            if (uri != null && !uri.isBlank()) uris.add(uri);
         }
         return uris;
     }
 
-        private A2ATClient initA2atClient(String a2atEnvPath) {
+    private A2ATClient initA2atClient(String a2atEnvPath) {
         if (a2atEnvPath == null || a2atEnvPath.isEmpty()) {
             return null;
         }
         try {
             return new A2ATClient(java.nio.file.Path.of(a2atEnvPath));
         } catch (Exception e) {
-            log.warn("Failed to init A2ATClient: {}", e.getMessage());
-            return null;
+            throw new IllegalArgumentException(
+                    "Failed to initialize A2A-T client from " + a2atEnvPath, e);
         }
     }
 
@@ -335,13 +410,32 @@ public class A2ATransport implements AutoCloseable {
     }
 
     public void updateAgentCards(List<AgentCard> agentCards) {
-        cardMap.clear();
+        Map<String, AgentCard> validatedCards = validateAgentCards(agentCards);
+        cardMap = java.util.Collections.unmodifiableMap(validatedCards);
+        log.info("[Transport] Updated agent cards: {} agent(s)", cardMap.size());
+    }
+
+    private static Map<String, AgentCard> validateAgentCards(List<AgentCard> agentCards) {
+        java.util.Objects.requireNonNull(agentCards, "agentCards");
+        Map<String, AgentCard> validated = new java.util.LinkedHashMap<>();
         for (AgentCard card : agentCards) {
-            if (!card.name().isEmpty()) {
-                cardMap.put(card.name(), card);
+            java.util.Objects.requireNonNull(card, "agentCard");
+            if (card.name() == null || card.name().isBlank()) {
+                throw new IllegalArgumentException("AgentCard name must not be blank");
+            }
+            if (card.capabilities() == null) {
+                throw new IllegalArgumentException(
+                        "AgentCard capabilities are required: " + card.name());
+            }
+            if (card.supportedInterfaces() == null || card.supportedInterfaces().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "AgentCard supportedInterfaces are required: " + card.name());
+            }
+            if (validated.putIfAbsent(card.name(), card) != null) {
+                throw new IllegalArgumentException("Duplicate AgentCard name: " + card.name());
             }
         }
-        log.info("[Transport] Updated agent cards: {} agent(s)", cardMap.size());
+        return validated;
     }
 
     /**
@@ -446,8 +540,8 @@ public class A2ATransport implements AutoCloseable {
     /**
      * Long-lived SSE stream for Notification-T subscription. Opens a daemon thread that keeps the
      * SSE response stream open. The eventSink callback processes events in real-time (subscribed
-     * ack + later recovery results). The returned future completes on the first event (subscription
-     * confirmed).
+     * ack + later recovery results). The returned future completes on the first event carrying a
+     * concrete task state; an artifact alone is application data, not a protocol acknowledgement.
      */
     public CompletableFuture<SendMessageResult> sendNotificationStream(
             AgentCard agentCard,
@@ -456,11 +550,39 @@ public class A2ATransport implements AutoCloseable {
             String contextId,
             Map<String, Object> metadata,
             Consumer<ClientEvent> eventSink) {
-        if (closed.get()) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("A2A transport is closed"));
+        try {
+            return openNotificationStream(
+                            agentCard, agentName, message, contextId, metadata, eventSink)
+                    .acknowledgement();
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
         }
-        CompletableFuture<SendMessageResult> future = new CompletableFuture<>();
+    }
+
+    /** Opens a long-lived Notification-T stream and returns its explicit lifecycle handle. */
+    public NotificationSubscription openNotificationStream(
+            AgentCard agentCard,
+            String agentName,
+            String message,
+            String contextId,
+            Map<String, Object> metadata,
+            Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            throw new IllegalStateException("A2A transport is closed");
+        }
+        AtomicReference<Thread> streamThreadRef = new AtomicReference<>();
+        NotificationSubscription subscription =
+                new NotificationSubscription(
+                        agentName,
+                        contextId,
+                        () -> {
+                            closeConversation(agentCard, contextId);
+                            Thread running = streamThreadRef.get();
+                            if (running != null) {
+                                running.interrupt();
+                            }
+                        });
+        notificationSubscriptions.add(subscription);
         Thread streamThread =
                 new Thread(
                         () -> {
@@ -487,32 +609,45 @@ public class A2ATransport implements AutoCloseable {
                                                     "[Transport] Notification-T event from {}: {}",
                                                     agentName,
                                                     event.getClass().getSimpleName());
+                                            subscription.recordEvent();
                                             if (eventSink != null) {
                                                 eventSink.accept(event);
                                             }
-                                            if (!future.isDone()) {
-                                                future.complete(
-                                                        SendMessageResult.builder()
-                                                                .text("Subscribed")
-                                                                .taskState("TASK_STATE_WORKING")
-                                                                .build());
+                                            SendMessageResult acknowledgement =
+                                                    eventResult(event);
+                                            if (isFailureState(acknowledgement.getTaskState())) {
+                                                subscription.failAcknowledgement(
+                                                        new IllegalStateException(
+                                                                "Notification-T subscription rejected by '"
+                                                                        + agentName
+                                                                        + "': state="
+                                                                        + acknowledgement
+                                                                                .getTaskState()
+                                                                        + ", response="
+                                                                        + acknowledgement.getText()));
+                                            } else if (isAcknowledgementState(
+                                                    acknowledgement.getTaskState())) {
+                                                subscription.acknowledge(acknowledgement);
                                             }
                                         },
                                         s -> log.info("[A2A] {}", s));
                                 log.info(
                                         "[Transport] Notification-T stream closed for {}",
                                         agentName);
-                                if (!future.isDone()) {
-                                    future.complete(
+                                if (!subscription.acknowledgement().isDone()) {
+                                    subscription.acknowledge(
                                             SendMessageResult.builder()
-                                                    .text("Stream closed")
+                                                    .text("Stream closed before acknowledgement")
                                                     .taskState("TASK_STATE_COMPLETED")
                                                     .build());
                                 }
+                                subscription.completeStream();
                             } catch (Exception e) {
                                 String msg = e.getMessage() != null ? e.getMessage() : "";
                                 boolean connectionClosed =
-                                        msg.contains("connection closed locally")
+                                        !subscription.isActive()
+                                                || causedByInterruption(e)
+                                                || msg.contains("connection closed locally")
                                                 || msg.contains(
                                                         "chunked transfer encoding, state: READING_LENGTH");
                                 if (connectionClosed) {
@@ -526,38 +661,73 @@ public class A2ATransport implements AutoCloseable {
                                             e.getMessage(),
                                             e);
                                 }
-                                if (!future.isDone()) {
-                                    future.completeExceptionally(e);
+                                if (!subscription.acknowledgement().isDone()) {
+                                    subscription.failAcknowledgement(e);
                                 }
+                                if (!connectionClosed && subscription.isActive()) {
+                                    subscription.failStream(e);
+                                } else {
+                                    subscription.completeStream();
+                                }
+                            } finally {
+                                notificationSubscriptions.remove(subscription);
+                                subscription.markStreamTerminated();
                             }
                         },
                         "notif-t-" + agentName);
         streamThread.setDaemon(true);
+        streamThreadRef.set(streamThread);
         streamThread.start();
-        return future.orTimeout(notificationAckTimeoutSeconds, TimeUnit.SECONDS)
-                .handle(
-                        (result, error) -> {
-                            if (error == null) return result;
-                            Throwable cause = unwrapCompletionError(error);
-                            if (!(cause instanceof TimeoutException)) {
-                                throw new CompletionException(cause);
-                            }
-                            log.warn(
-                                    "[Transport] Notification-T subscription: no event in {}s, assuming active (stream stays open)",
-                                    notificationAckTimeoutSeconds);
-                            return SendMessageResult.builder()
-                                    .text("Subscribed (no-ack)")
-                                    .taskState("TASK_STATE_WORKING")
-                                    .build();
-                        });
+        CompletableFuture.runAsync(
+                () -> {
+                    if (subscription.isActive()
+                            && !subscription.acknowledgement().isDone()) {
+                        log.warn(
+                                "[Transport] Notification-T subscription: no event in {}s, assuming active (stream stays open)",
+                                notificationAckTimeoutSeconds);
+                        subscription.acknowledge(
+                                SendMessageResult.builder()
+                                        .text("Subscribed (no-ack)")
+                                        .taskState("TASK_STATE_WORKING")
+                                        .build());
+                    }
+                },
+                CompletableFuture.delayedExecutor(
+                        notificationAckTimeoutSeconds, TimeUnit.SECONDS));
+        return subscription;
     }
 
-    private static Throwable unwrapCompletionError(Throwable error) {
+    private static SendMessageResult eventResult(ClientEvent event) {
+        List<ClientEvent> eventList = List.of(event);
+        return SendMessageResult.builder()
+                .text(extractResponseText(eventList))
+                .task(extractResponseTask(eventList))
+                .metadata(extractResponseMetadata(eventList))
+                .taskState(extractResponseTaskState(eventList))
+                .build();
+    }
+
+    private static boolean isFailureState(String state) {
+        if (state == null) return false;
+        return state.contains("FAILED")
+                || state.contains("CANCELED")
+                || state.contains("CANCELLED")
+                || state.contains("REJECTED");
+    }
+
+    static boolean isAcknowledgementState(String state) {
+        return state != null && !state.isBlank();
+    }
+
+    private static boolean causedByInterruption(Throwable error) {
         Throwable current = error;
-        while (current instanceof CompletionException && current.getCause() != null) {
+        while (current != null) {
+            if (current instanceof InterruptedException) {
+                return true;
+            }
             current = current.getCause();
         }
-        return current;
+        return false;
     }
 
     private MessageSendParams buildMessageSendParams(
@@ -605,7 +775,7 @@ public class A2ATransport implements AutoCloseable {
                         .text(text.toString())
                         .task(task)
                         .metadata(metadata)
-                        .taskState(task.status().state().name())
+                        .taskState(taskState(task))
                         .build();
             } catch (Exception e) {
                 throw new RuntimeException("getTask failed for " + agentName + ": " + e.getMessage(), e);
@@ -624,10 +794,13 @@ public class A2ATransport implements AutoCloseable {
                 Task task = a2aClientRuntime.cancelTask(agentCard, taskId, ctx);
                 StringBuilder text = new StringBuilder();
                 extractTextFromTask(task, text);
+                Map<String, Object> metadata = new HashMap<>();
+                mergeTaskMetadata(task, metadata);
                 return SendMessageResult.builder()
                         .text(text.toString())
                         .task(task)
-                        .taskState(task.status().state().name())
+                        .metadata(metadata)
+                        .taskState(taskState(task))
                         .build();
             } catch (Exception e) {
                 throw new RuntimeException("cancelTask failed for " + agentName + ": " + e.getMessage(), e);
@@ -645,15 +818,36 @@ public class A2ATransport implements AutoCloseable {
         return a2aClientRuntime.subscribeToTask(agentCard, taskId, ctx,
                 event -> {
                     if (eventSink != null) {
-                        try { eventSink.accept(event); } catch (Exception ignored) {}
+                        try {
+                            eventSink.accept(event);
+                        } catch (RuntimeException callbackError) {
+                            log.warn(
+                                    "[Transport] Task subscription callback failed for {}: {}",
+                                    agentName,
+                                    callbackError.getMessage(),
+                                    callbackError);
+                        }
                     }
                 });
+    }
+
+    private static String taskState(Task task) {
+        return task != null && task.status() != null && task.status().state() != null
+                ? task.status().state().name()
+                : null;
     }
 
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         log.info("[Transport] Closing");
+        List<NotificationSubscription> subscriptions =
+                new ArrayList<>(notificationSubscriptions);
+        for (NotificationSubscription subscription : subscriptions) {
+            subscription.close();
+        }
+        awaitNotificationShutdown(subscriptions);
+        notificationSubscriptions.clear();
         asyncExecutor.shutdown();
         try {
             if (!asyncExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
@@ -667,6 +861,40 @@ public class A2ATransport implements AutoCloseable {
             a2aClientRuntime.close();
         } catch (Exception e) {
             log.warn("[Transport] Runtime close failed: {}", e.getMessage(), e);
+        }
+    }
+
+    private void awaitNotificationShutdown(List<NotificationSubscription> subscriptions) {
+        if (subscriptions.isEmpty()) {
+            return;
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        int terminated = 0;
+        for (NotificationSubscription subscription : subscriptions) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            try {
+                subscription.streamTermination().get(remaining, TimeUnit.NANOSECONDS);
+                terminated++;
+            } catch (java.util.concurrent.TimeoutException e) {
+                break;
+            } catch (java.util.concurrent.ExecutionException e) {
+                terminated++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (terminated == subscriptions.size()) {
+            log.info(
+                    "[Transport] NOTIFICATION_SHUTDOWN_DONE subscriptions={}", terminated);
+        } else {
+            log.warn(
+                    "[Transport] NOTIFICATION_SHUTDOWN_TIMEOUT terminated={}, total={}, timeoutSeconds=2",
+                    terminated,
+                    subscriptions.size());
         }
     }
 }

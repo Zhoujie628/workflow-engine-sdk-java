@@ -21,6 +21,9 @@ package dev.openan.workflow.engine.client;
 
 import lombok.Getter;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -67,12 +70,56 @@ public class WorkflowEngineClientConfig {
         this.sendExecutorQueueCapacity = b.sendExecutorQueueCapacity;
         this.authProvider = b.authProvider;
         this.credentialsConfigPath = b.credentialsConfigPath;
-        this.credentialsConfig = b.credentialsConfig;
+        this.credentialsConfig =
+                b.credentialsConfig != null ? copyCredentials(b.credentialsConfig) : null;
         this.a2atEnvPath = b.a2atEnvPath;
         this.maxNegotiationRounds = b.maxNegotiationRounds;
-        this.customHandlers = b.customHandlers;
+        this.customHandlers = b.customHandlers != null ? List.copyOf(b.customHandlers) : null;
         this.preferredProtocol = b.preferredProtocol;
-        this.negotiationParamSchema = b.negotiationParamSchema;
+        this.negotiationParamSchema =
+                b.negotiationParamSchema != null
+                        ? immutableObjectMap(b.negotiationParamSchema)
+                        : null;
+    }
+
+    private static Map<String, Map<String, Map<String, Object>>> copyCredentials(
+            Map<String, Map<String, Map<String, Object>>> source) {
+        Map<String, Map<String, Map<String, Object>>> top = new LinkedHashMap<>();
+        source.forEach(
+                (agent, schemes) -> {
+                    Map<String, Map<String, Object>> schemeCopy = new LinkedHashMap<>();
+                    if (schemes != null) {
+                        schemes.forEach(
+                                (scheme, values) ->
+                                        schemeCopy.put(
+                                                scheme,
+                                                values != null
+                                                        ? immutableObjectMap(values)
+                                                        : Map.of()));
+                    }
+                    top.put(agent, Collections.unmodifiableMap(schemeCopy));
+                });
+        return Collections.unmodifiableMap(top);
+    }
+
+    private static Map<String, Object> immutableObjectMap(Map<String, Object> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> copy.put(key, immutableValue(value)));
+        return Collections.unmodifiableMap(copy);
+    }
+
+    private static Object immutableValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, nested) -> copy.put(key, immutableValue(nested)));
+            return Collections.unmodifiableMap(copy);
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            list.forEach(item -> copy.add(immutableValue(item)));
+            return Collections.unmodifiableList(copy);
+        }
+        return value;
     }
 
     public static Builder builder() {
@@ -208,6 +255,9 @@ public class WorkflowEngineClientConfig {
                     || sendExecutorMaxSize < sendExecutorCoreSize
                     || sendExecutorQueueCapacity <= 0) {
                 throw new IllegalArgumentException("Invalid send executor configuration");
+            }
+            if (maxNegotiationRounds <= 0) {
+                throw new IllegalArgumentException("maxNegotiationRounds must be positive");
             }
             return new WorkflowEngineClientConfig(this);
         }

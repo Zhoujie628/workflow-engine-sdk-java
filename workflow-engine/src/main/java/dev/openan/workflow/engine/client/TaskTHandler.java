@@ -47,13 +47,16 @@ class TaskTHandler implements ExtensionHandler {
     private static final Logger log = LoggerFactory.getLogger(TaskTHandler.class);
 
     private static String findTaskTUri(AgentCard agentCard) {
+        if (agentCard.capabilities() == null) {
+            return null;
+        }
         var extensions = agentCard.capabilities().extensions();
         if (extensions == null) {
             return null;
         }
         for (var ext : extensions) {
             String uri = ext.uri();
-            if (uri.contains("Task-T")) {
+            if (A2ATExtension.TASK_T.uri().equals(uri)) {
                 return uri;
             }
         }
@@ -77,25 +80,35 @@ class TaskTHandler implements ExtensionHandler {
             A2ATClient a2atClient,
             ControlPoint controlPoint) {
         if (a2atClient == null) {
-            return CompletableFuture.completedFuture(metadata);
+            Map<String, Object> cleaned =
+                    metadata != null ? new HashMap<>(metadata) : new HashMap<>();
+            cleaned.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
+            Object taskData = cleaned.remove(A2ATExtension.TASK_DATA_META_KEY);
+            Object taskSchema = cleaned.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
+            if (taskData != null || taskSchema != null) {
+                return CompletableFuture.failedFuture(
+                        new IllegalStateException(
+                                "A2A-T client is required for structured Task-T rendering"));
+            }
+            log.warn(
+                    "[Task-T] A2A-T client unavailable for '{}'; sending plain A2A without forged Task-T metadata",
+                    getAgentName(agentCard));
+            return CompletableFuture.completedFuture(cleaned);
         }
         // Skip Task-T prompt generation when this is a Negotiation-T follow-up: the metadata
         // carries a RENDERED follow-up message under the Negotiation-T key. An EMPTY
         // Negotiation-T value only activates the A2A-Extensions header (first task send) and
         // must NOT skip generation.
         if (metadata != null) {
-            for (Map.Entry<String, Object> entry : metadata.entrySet()) {
-                if (entry.getKey().toUpperCase(java.util.Locale.ROOT).contains("NEGOTIATION-T")
-                        && entry.getValue() instanceof String s
-                        && !s.isEmpty()) {
-                    log.info("[Task-T] Skipping prompt generation for negotiation follow-up");
-                    // Still strip engine-internal fromData keys: they must never reach the wire.
-                    Map<String, Object> cleaned = new HashMap<>(metadata);
-                    cleaned.remove(A2ATExtension.TASK_DATA_META_KEY);
-                    cleaned.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
-                    cleaned.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
-                    return CompletableFuture.completedFuture(cleaned);
-                }
+            Object negotiation = metadata.get(A2ATExtension.NEGOTIATION_T.uri());
+            if (negotiation instanceof String s && !s.isEmpty()) {
+                log.info("[Task-T] Skipping prompt generation for negotiation follow-up");
+                // Still strip engine-internal fromData keys: they must never reach the wire.
+                Map<String, Object> cleaned = new HashMap<>(metadata);
+                cleaned.remove(A2ATExtension.TASK_DATA_META_KEY);
+                cleaned.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
+                cleaned.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
+                return CompletableFuture.completedFuture(cleaned);
             }
         }
         String taskTUri = findTaskTUri(agentCard);
@@ -107,12 +120,19 @@ class TaskTHandler implements ExtensionHandler {
             log.info("[Task-T] Metadata already preset, skipping generation");
             return CompletableFuture.completedFuture(result);
         }
-        // Structured-data track: caller supplied taskData + taskSchema → deterministic
-        // fromData rendering (no scenario recognition, no LLM).
+        // Structured-data track: caller supplied taskData + taskSchema. The SDK bypasses scenario
+        // recognition but its schema-aware slot extractor can still invoke the configured LLM.
         Object taskData = result.remove(A2ATExtension.TASK_DATA_META_KEY);
         Object taskSchema = result.remove(A2ATExtension.TASK_SCHEMA_META_KEY);
         Object taskTemplate = result.remove(A2ATExtension.TASK_TEMPLATE_META_KEY);
-        if (taskData instanceof Map<?, ?> data && taskSchema instanceof Map<?, ?> schema) {
+        if (taskData != null || taskSchema != null) {
+            if (!(taskData instanceof Map<?, ?> data)
+                    || !(taskSchema instanceof Map<?, ?> schema)
+                    || schema.isEmpty()) {
+                return CompletableFuture.failedFuture(
+                        new IllegalArgumentException(
+                                "Structured Task-T requires non-null data and a non-empty schema"));
+            }
             return CompletableFuture.supplyAsync(
                     () ->
                             renderFromData(
@@ -130,7 +150,7 @@ class TaskTHandler implements ExtensionHandler {
                     try {
                         PromptGenerationResult promptResult =
                                 a2atClient.generateTaskPrompt(messageText);
-                        if (promptResult.success()) {
+                        if (promptResult != null && promptResult.success()) {
                             String promptText = promptResult.promptText();
                             if (promptText != null && !promptText.isEmpty()) {
                                 result.put(taskTUri, promptText);
@@ -139,24 +159,34 @@ class TaskTHandler implements ExtensionHandler {
                                         getAgentName(agentCard),
                                         promptText.length());
                                 log.debug("[Task-T] Prompt content: [{}]", promptText);
+                                return result;
                             }
+                            throw new IllegalStateException("A2A-T SDK returned an empty Task-T prompt");
                         } else {
-                            PromptGenerationFailure f = promptResult.failure();
-                            log.warn(
-                                    "[Task-T] Prompt generation failed for '{}': code={}, stage={}, message={}",
-                                    getAgentName(agentCard),
-                                    f != null ? f.code() : "unknown",
-                                    f != null ? f.stage() : "unknown",
-                                    f != null ? f.message() : "unknown");
+                            PromptGenerationFailure f = promptResult != null ? promptResult.failure() : null;
+                            throw new IllegalStateException(
+                                    "Task-T prompt generation failed for '"
+                                            + getAgentName(agentCard)
+                                            + "': code="
+                                            + (f != null ? f.code() : "unknown")
+                                            + ", stage="
+                                            + (f != null ? f.stage() : "unknown")
+                                            + ", message="
+                                            + (f != null ? f.message() : "unknown"));
                         }
                     } catch (Exception e) {
-                        log.warn("[Task-T] Failed: {}", e.getMessage());
+                        throw e instanceof IllegalStateException state
+                                ? state
+                                : new IllegalStateException(
+                                        "Task-T prompt generation failed for '"
+                                                + getAgentName(agentCard)
+                                                + "'",
+                                        e);
                     }
-                    return result;
                 });
     }
 
-    /** Deterministic fromData rendering; on failure degrades to the free-text track. */
+    /** SDK schema-aware fromData rendering. Failure is fatal; never send an unrendered task. */
     private Map<String, Object> renderFromData(
             A2ATClient a2atClient,
             AgentCard agentCard,
@@ -173,16 +203,18 @@ class TaskTHandler implements ExtensionHandler {
             net.openan.a2at.sdk.core.model.TemplateUri templateUri =
                     templateUriStr != null
                             ? net.openan.a2at.sdk.core.model.TemplateUri.parse(templateUriStr)
-                                    .orElse(
-                                            net.openan.a2at.sdk.core.model.StandardTemplates
-                                                    .PRIVATE_LINE_COMPLAINT)
+                                    .orElseThrow(
+                                            () ->
+                                                    new IllegalArgumentException(
+                                                            "Invalid Task-T template URI: "
+                                                                    + templateUriStr))
                             : net.openan.a2at.sdk.core.model.StandardTemplates
                                     .PRIVATE_LINE_COMPLAINT;
             net.openan.a2at.sdk.core.model.MetadataContent content =
                     a2atClient.generateTaskPromptFromDataWithSchema(
                             typedData, typedSchema, templateUri);
             if (content != null && content.promptText() != null && !content.promptText().isEmpty()) {
-                result.put(taskTUri, content.promptText());
+                result.putAll(content.buildMetadataContent());
                 log.info(
                         "[Task-T] Rendered prompt from task data for '{}': {} chars (template={})",
                         getAgentName(agentCard),
@@ -190,13 +222,15 @@ class TaskTHandler implements ExtensionHandler {
                         content.templateUri());
                 return result;
             }
+            throw new IllegalStateException("A2A-T SDK returned empty Task-T content");
         } catch (Exception e) {
-            log.warn(
-                    "[Task-T] fromData rendering failed for '{}': {}",
-                    getAgentName(agentCard),
-                    e.getMessage());
+            throw new IllegalStateException(
+                    "Task-T fromData rendering failed for '"
+                            + getAgentName(agentCard)
+                            + "': "
+                            + e.getMessage(),
+                    e);
         }
-        return result;
     }
 
     @Override

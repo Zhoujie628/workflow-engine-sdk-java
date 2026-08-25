@@ -34,9 +34,8 @@ import java.util.Map;
  * Registry of A2A-T extension handlers.
  *
  * <p>The workflow engine only handles Task-T (task prompt generation) and Negotiation-T (auto
- * negotiation loop). Authorization-T and Notification-T are pre-positioning operations done once
- * before the workflow starts (see {@link WorkflowEngineClient#sendExtensionMessage}), so they are
- * NOT part of the workflow's extension handler chain.
+ * negotiation loop). Authorization-T and Notification-T are independent protocol operations (see
+ * {@link ExtensionSender}), so they are NOT part of the workflow's extension handler chain.
  */
 class ExtensionRegistry {
 
@@ -84,6 +83,14 @@ class ExtensionRegistry {
             }
             java.util.Set<String> pathSegments = extensionPathSegments(uri);
             for (Map.Entry<String, ExtensionHandler> entry : handlers.entrySet()) {
+                if (entry.getValue() instanceof TaskTHandler
+                        && !A2ATExtension.TASK_T.uri().equals(uri)) {
+                    continue;
+                }
+                if (entry.getValue() instanceof NegotiationTHandler
+                        && !A2ATExtension.NEGOTIATION_T.uri().equals(uri)) {
+                    continue;
+                }
                 String keyword = entry.getKey().toLowerCase(Locale.ROOT);
                 if (pathSegments.contains(keyword)
                         && !seen.contains(entry.getKey())) {
