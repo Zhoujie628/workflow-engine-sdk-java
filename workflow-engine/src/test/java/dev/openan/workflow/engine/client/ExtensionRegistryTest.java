@@ -37,10 +37,10 @@ class ExtensionRegistryTest {
         List<ExtensionHandler> handlers =
                 reg.getHandlersForExtensions(
                         List.of(
-                                "https://example.com/Task-T",
-                                "https://example.com/Negotiation-T",
-                                "https://example.com/Authorization-T",
-                                "https://example.com/Notification-T"));
+                                A2ATExtension.TASK_T.uri(),
+                                A2ATExtension.NEGOTIATION_T.uri(),
+                                A2ATExtension.AUTHORIZATION_T.uri(),
+                                A2ATExtension.NOTIFICATION_T.uri()));
         // Authorization-T and Notification-T are pre-positioning operations,
         // not part of the workflow engine's extension handler chain.
         assertEquals(2, handlers.size());
@@ -51,7 +51,7 @@ class ExtensionRegistryTest {
         ExtensionRegistry reg = new ExtensionRegistry();
         List<ExtensionHandler> handlers =
                 reg.getHandlersForExtensions(
-                        List.of("https://a2a.example.org/extensions/Task-T/v1"));
+                        List.of(A2ATExtension.TASK_T.uri()));
         assertEquals(1, handlers.size());
         assertEquals("Task-T", handlers.get(0).extensionKeyword());
     }
@@ -61,18 +61,18 @@ class ExtensionRegistryTest {
         ExtensionRegistry reg = new ExtensionRegistry();
         List<ExtensionHandler> handlers =
                 reg.getHandlersForExtensions(
-                        List.of("https://a2a.example.org/extensions/NEGOTIATION-T/v1"));
+                        List.of(A2ATExtension.NEGOTIATION_T.uri()));
         assertEquals(1, handlers.size());
         assertEquals("Negotiation-T", handlers.get(0).extensionKeyword());
     }
 
     @Test
-    void deduplicatesWhenMultipleUrisMatchSameHandler() {
+    void rejectsNonCanonicalBuiltinUris() {
         ExtensionRegistry reg = new ExtensionRegistry();
         List<ExtensionHandler> handlers =
                 reg.getHandlersForExtensions(
                         List.of("https://example.com/Task-T/v1", "https://example.com/Task-T/v2"));
-        assertEquals(1, handlers.size(), "Task-T should be matched once even with two URIs");
+        assertTrue(handlers.isEmpty());
     }
 
     @Test

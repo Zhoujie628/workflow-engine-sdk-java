@@ -103,6 +103,33 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
     }
 
     @Override
+    public CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
+        return cannedResult(agentName, defaultTaskState);
+    }
+
+    @Override
+    public CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
+        return cannedResult(agentName, "TASK_STATE_CANCELED");
+    }
+
+    @Override
+    public CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName,
+            String taskId,
+            java.util.function.Consumer<Map<String, Object>> eventCallback) {
+        return cannedResult(agentName, defaultTaskState);
+    }
+
+    private CompletableFuture<SendMessageResult> cannedResult(String agentName, String taskState) {
+        return CompletableFuture.completedFuture(
+                SendMessageResult.builder()
+                        .text(cannedResponses.getOrDefault(agentName, defaultResponse))
+                        .taskState(taskState)
+                        .metadata(Map.of())
+                        .build());
+    }
+
+    @Override
     public void close() {}
 
     public List<SentMessage> getSentMessages() {

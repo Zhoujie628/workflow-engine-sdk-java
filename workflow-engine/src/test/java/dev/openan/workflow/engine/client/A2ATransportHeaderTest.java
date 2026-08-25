@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.openan.a2at.sdk.core.model.StandardTemplates;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
@@ -22,7 +23,11 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 
@@ -166,6 +171,112 @@ class A2ATransportHeaderTest {
         assertEquals(1, headers.size());
     }
 
+    @Test
+    void closeWaitsUntilNotificationTransportCallHasExited() throws Exception {
+        AgentCard card = agentCard();
+        CountDownLatch entered = new CountDownLatch(1);
+        AtomicBoolean exited = new AtomicBoolean();
+        A2AJavaClientRuntime runtime =
+                new A2AJavaClientRuntime() {
+                    @Override
+                    public Iterable<ClientEvent> sendMessage(
+                            AgentCard agentCard,
+                            MessageSendParams params,
+                            ClientCallContext callContext,
+                            Consumer<ClientEvent> eventSink,
+                            Consumer<String> logSink) {
+                        entered.countDown();
+                        try {
+                            new CountDownLatch(1).await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } finally {
+                            exited.set(true);
+                        }
+                        return List.of();
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+        A2ATransport transport =
+                new A2ATransport(
+                        List.of(card), runtime, WorkflowEngineClientConfig.builder().build());
+
+        transport.openNotificationStream(
+                card, card.name(), "subscribe", "context-1", Map.of(), null);
+        assertTrue(entered.await(1, TimeUnit.SECONDS));
+
+        transport.close();
+
+        assertTrue(exited.get(), "close must wait for the notification call to terminate");
+    }
+
+    @Test
+    void borrowedClientDoesNotCloseCallerOwnedTransport() throws Exception {
+        AtomicInteger closeCalls = new AtomicInteger();
+        A2ATransport transport =
+                new A2ATransport(
+                        List.of(agentCard()),
+                        new CountingRuntime(closeCalls),
+                        WorkflowEngineClientConfig.builder().build());
+
+        new DefaultWorkflowEngineClient(transport).close();
+        assertEquals(0, closeCalls.get());
+
+        transport.close();
+        assertEquals(1, closeCalls.get());
+    }
+
+    @Test
+    void owningClientClosesTransportExactlyOnce() throws Exception {
+        AtomicInteger closeCalls = new AtomicInteger();
+        A2ATransport transport =
+                new A2ATransport(
+                        List.of(agentCard()),
+                        new CountingRuntime(closeCalls),
+                        WorkflowEngineClientConfig.builder().build());
+        DefaultWorkflowEngineClient client = DefaultWorkflowEngineClient.owning(transport);
+
+        client.close();
+        client.close();
+
+        assertEquals(1, closeCalls.get());
+    }
+
+    @Test
+    void structuredTaskWithoutSdkFailsBeforeRuntimeInvocation() throws Exception {
+        AtomicInteger sendCalls = new AtomicInteger();
+        A2AJavaClientRuntime runtime = new SendCountingRuntime(sendCalls);
+        try (A2ATransport transport =
+                new A2ATransport(
+                        List.of(agentCard()),
+                        runtime,
+                        WorkflowEngineClientConfig.builder().build())) {
+            CompletionException error =
+                    assertThrows(
+                            CompletionException.class,
+                            () ->
+                                    new DefaultWorkflowEngineClient(transport)
+                                            .sendMessageFromData(
+                                                    "Test Agent",
+                                                    "diagnose",
+                                                    Map.of("任务对象", "port-1"),
+                                                    Map.of(
+                                                            "type",
+                                                            "object",
+                                                            "properties",
+                                                            Map.of(
+                                                                    "任务对象",
+                                                                    Map.of("type", "string"))),
+                                                    StandardTemplates.PRIVATE_LINE_COMPLAINT)
+                                            .join());
+
+            assertTrue(error.getCause().getMessage().contains("A2A-T client is required"));
+            assertEquals(0, sendCalls.get());
+        }
+    }
+
     private static AgentCard agentCard() throws Exception {
         String json =
                 """
@@ -243,6 +354,39 @@ class A2ATransportHeaderTest {
                 Consumer<ClientEvent> eventSink,
                 Consumer<String> logSink) {
             capturedHeaders.set(Map.copyOf(callContext.getHeaders()));
+            return List.of();
+        }
+
+        @Override
+        public void close() {}
+    }
+
+    private record CountingRuntime(AtomicInteger closeCalls) implements A2AJavaClientRuntime {
+        @Override
+        public Iterable<ClientEvent> sendMessage(
+                AgentCard agentCard,
+                MessageSendParams params,
+                ClientCallContext callContext,
+                Consumer<ClientEvent> eventSink,
+                Consumer<String> logSink) {
+            return List.of();
+        }
+
+        @Override
+        public void close() {
+            closeCalls.incrementAndGet();
+        }
+    }
+
+    private record SendCountingRuntime(AtomicInteger sendCalls) implements A2AJavaClientRuntime {
+        @Override
+        public Iterable<ClientEvent> sendMessage(
+                AgentCard agentCard,
+                MessageSendParams params,
+                ClientCallContext callContext,
+                Consumer<ClientEvent> eventSink,
+                Consumer<String> logSink) {
+            sendCalls.incrementAndGet();
             return List.of();
         }
 

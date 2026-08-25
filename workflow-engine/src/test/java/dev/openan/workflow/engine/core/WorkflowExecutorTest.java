@@ -32,6 +32,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tests for WorkflowExecutor: DAG traversal, parallel subtasks, ANY_SUCCESS, conditional routing,
@@ -152,6 +157,118 @@ class WorkflowExecutorTest {
             agents.add(sm.agentName);
         }
         assertEquals(Set.of("A", "B", "C"), agents);
+    }
+
+    @Test
+    void parallelBranchesScheduleSharedMergeExactlyOnce() {
+        WorkflowStep city1 =
+                WorkflowStep.builder()
+                        .name("diagnosis_city1")
+                        .layer(0)
+                        .subtasks(List.of(task("OMC-1", "diagnose city 1")))
+                        .next(List.of(jump("merge", "")))
+                        .build();
+        WorkflowStep city2 =
+                WorkflowStep.builder()
+                        .name("diagnosis_city2")
+                        .layer(0)
+                        .subtasks(List.of(task("OMC-2", "diagnose city 2")))
+                        .next(List.of(jump("merge", "")))
+                        .build();
+        WorkflowStep merge =
+                WorkflowStep.builder()
+                        .name("merge")
+                        .layer(1)
+                        .stepType(StepType.SELF_LOOP)
+                        .contextFrom(List.of("diagnosis_city1", "diagnosis_city2"))
+                        .subtasks(List.of(task("Workbench", "merge diagnoses")))
+                        .build();
+        Workflow workflow =
+                Workflow.builder()
+                        .name("parallel-join")
+                        .steps(List.of(city1, city2, merge))
+                        .build();
+
+        ExecutorService taskExecutor = Executors.newFixedThreadPool(2);
+        CyclicBarrier diagnosisBarrier = new CyclicBarrier(2);
+        CyclicBarrier schedulingBarrier = new CyclicBarrier(2);
+        AtomicInteger mergeCalls = new AtomicInteger();
+        ControlPoint controlPoint =
+                new ControlPoint() {
+                    @Override
+                    public CompletableFuture<TaskResponse> onTask(
+                            TaskRequest request, WorkflowEngineClient engineClient) {
+                        return CompletableFuture.supplyAsync(
+                                () -> {
+                                    awaitBarrier(diagnosisBarrier);
+                                    return TaskResponse.builder()
+                                            .success(true)
+                                            .output(request.getAgentName() + " diagnosis")
+                                            .build();
+                                },
+                                taskExecutor);
+                    }
+
+                    @Override
+                    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
+                        mergeCalls.incrementAndGet();
+                        return CompletableFuture.completedFuture(
+                                TaskResponse.builder().success(true).output("merged").build());
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(
+                            String stepName,
+                            Map<String, Object> results,
+                            List<JumpCondition> conditions) {
+                        return CompletableFuture.completedFuture(
+                                RouteDecision.builder()
+                                        .nextStep(conditions.get(0).getStep())
+                                        .reason("first")
+                                        .build());
+                    }
+
+                };
+        EventCallback callback =
+                new EventCallback() {
+                    @Override
+                    public void onEvent(String type, Map<String, Object> data) {
+                        if (EventType.STEP_COMPLETE.equals(type)
+                                && String.valueOf(data.get("step")).startsWith("diagnosis_")) {
+                            awaitBarrier(schedulingBarrier);
+                        }
+                    }
+                };
+
+        try {
+            ExecutionResult result =
+                    new WorkflowExecutor(
+                                    workflow,
+                                    controlPoint,
+                                    new StubWorkflowEngineClient("OMC-1", "OMC-2"),
+                                    callback,
+                                    "cross-city complaint",
+                                    "zh")
+                            .run()
+                            .join();
+
+            assertTrue(result.isSuccess());
+            assertEquals(1, mergeCalls.get(), "a converging step must execute exactly once");
+            assertEquals(3, result.getHistory().size());
+            assertEquals(
+                    Set.of("diagnosis_city1", "diagnosis_city2", "merge"),
+                    result.getStepOutputs().keySet());
+        } finally {
+            taskExecutor.shutdownNow();
+        }
+    }
+
+    private static void awaitBarrier(CyclicBarrier barrier) {
+        try {
+            barrier.await(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("Timed out synchronizing parallel workflow test", e);
+        }
     }
 
     @Test
@@ -670,5 +787,132 @@ class WorkflowExecutorTest {
         assertEquals(1, selfTaskMsgs.size());
         assertTrue(events.contains(EventType.TASK_REQUEST));
         assertTrue(events.contains(EventType.TASK_RESPONSE));
+    }
+
+    @Test
+    void repeatedDescriptionsInParallelStepDoNotOverwriteResults() {
+        WorkflowStep parallel =
+                WorkflowStep.builder()
+                        .name("diagnosis")
+                        .layer(0)
+                        .subtasks(
+                                List.of(
+                                        task("City1", "SPN专线故障诊断"),
+                                        task("City2", "SPN专线故障诊断")))
+                        .build();
+        ControlPoint cp =
+                new ControlPoint() {
+                    @Override
+                    public CompletableFuture<TaskResponse> onTask(
+                            TaskRequest request, WorkflowEngineClient engineClient) {
+                        return CompletableFuture.completedFuture(
+                                TaskResponse.builder()
+                                        .success(true)
+                                        .output(request.getAgentName() + " result")
+                                        .build());
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(
+                            String stepName,
+                            Map<String, Object> results,
+                            List<JumpCondition> conditions) {
+                        return CompletableFuture.completedFuture(
+                                RouteDecision.builder().nextStep("end").build());
+                    }
+                };
+
+        ExecutionResult result =
+                new WorkflowExecutor(
+                                Workflow.builder()
+                                        .name("duplicate-descriptions")
+                                        .steps(List.of(parallel))
+                                        .build(),
+                                cp,
+                                new StubWorkflowEngineClient(),
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+
+        assertTrue(result.isSuccess());
+        assertEquals(
+                Map.of(
+                        "SPN专线故障诊断 [City1#0]", "City1 result",
+                        "SPN专线故障诊断 [City2#1]", "City2 result"),
+                result.getStepOutputs().get("diagnosis"));
+        assertEquals(List.of(0, 1),
+                result.getHistory().stream().map(item -> item.get("subtask_index")).toList());
+    }
+
+    @Test
+    void nullTaskOutputAndNullExceptionMessageAreNormalized() {
+        WorkflowStep step =
+                WorkflowStep.builder()
+                        .name("nullable")
+                        .layer(0)
+                        .subtasks(List.of(task("A", "empty")))
+                        .build();
+        ControlPoint nullOutput =
+                new ControlPoint() {
+                    @Override
+                    public CompletableFuture<TaskResponse> onTask(
+                            TaskRequest request, WorkflowEngineClient engineClient) {
+                        return CompletableFuture.completedFuture(
+                                TaskResponse.builder().success(true).output(null).build());
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(
+                            String stepName,
+                            Map<String, Object> results,
+                            List<JumpCondition> conditions) {
+                        return CompletableFuture.completedFuture(
+                                RouteDecision.builder().nextStep("end").build());
+                    }
+                };
+        ExecutionResult success =
+                new WorkflowExecutor(
+                                Workflow.builder().name("null-output").steps(List.of(step)).build(),
+                                nullOutput,
+                                new StubWorkflowEngineClient(),
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+        assertTrue(success.isSuccess());
+        assertEquals("", success.getStepOutputs().get("nullable").get("empty"));
+
+        ControlPoint nullMessageFailure =
+                new ControlPoint() {
+                    @Override
+                    public CompletableFuture<TaskResponse> onTask(
+                            TaskRequest request, WorkflowEngineClient engineClient) {
+                        return CompletableFuture.failedFuture(new RuntimeException((String) null));
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(
+                            String stepName,
+                            Map<String, Object> results,
+                            List<JumpCondition> conditions) {
+                        return CompletableFuture.completedFuture(
+                                RouteDecision.builder().nextStep("end").build());
+                    }
+                };
+        ExecutionResult failure =
+                new WorkflowExecutor(
+                                Workflow.builder().name("null-error").steps(List.of(step)).build(),
+                                nullMessageFailure,
+                                new StubWorkflowEngineClient(),
+                                recordingCallback(),
+                                "",
+                                "zh")
+                        .run()
+                        .join();
+        assertFalse(failure.isSuccess());
+        assertFalse(String.valueOf(failure.getHistory().get(0).get("output")).isBlank());
     }
 }
