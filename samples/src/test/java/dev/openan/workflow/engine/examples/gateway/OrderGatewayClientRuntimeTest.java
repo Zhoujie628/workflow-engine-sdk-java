@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
+import com.google.protobuf.util.JsonFormat;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.spec.AgentCapabilities;
@@ -20,6 +21,9 @@ import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.TextPart;
 import org.a2aproject.sdk.spec.TaskState;
+import org.a2aproject.sdk.spec.Task;
+import org.a2aproject.sdk.spec.TaskStatus;
+import org.a2aproject.sdk.grpc.utils.ProtoUtils;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -30,6 +34,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
 class OrderGatewayClientRuntimeTest {
+    @Test
+    void protocolBodiesAreDisabledUnlessExplicitlyEnabled() {
+        String setting = "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY";
+        String previous = System.getProperty(setting);
+        try {
+            System.setProperty(setting, "false");
+            assertEquals(
+                    "(body logging disabled)",
+                    OrderGatewayClientRuntime.formatProtocolBody("customer-data"));
+            System.setProperty(setting, "true");
+            assertTrue(
+                    OrderGatewayClientRuntime.formatProtocolBody("customer-data")
+                            .contains("customer-data"));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(setting);
+            } else {
+                System.setProperty(setting, previous);
+            }
+        }
+    }
+
     @Test
     void formatSseFramePrettyPrintsDataPayloadAndKeepsControlFields() {
         String frame = "id:1\ndata:{\"artifactUpdate\": {\"taskId\": \"t-1\"}}";
@@ -341,6 +367,154 @@ class OrderGatewayClientRuntimeTest {
         assertEquals(2, closeCount.get(), "runtime close releases the notification lane");
     }
 
+    @Test
+    void taskQueryAndCancelUseGatewayRestRoutesAndParsePlainTask() throws Exception {
+        var requests = new CopyOnWriteArrayList<OrderHttpSessionStrRequest>();
+        var closeCount = new AtomicInteger();
+        String taskBody = plainTaskJson("task with space", "ctx-task");
+        OrderGatewayClientRuntime.OrderSessionFactory sessions =
+                route ->
+                        new OrderGatewayClientRuntime.OrderSession() {
+                            @Override
+                            public OrderHttpSessionStrResponse execute(
+                                    OrderHttpSessionStrRequest request, int timeoutMillis) {
+                                requests.add(request);
+                                return OrderHttpSessionStrResponse.newBuilder()
+                                        .setStatus(200)
+                                        .setBody(taskBody)
+                                        .build();
+                            }
+
+                            @Override
+                            public void executeStreaming(
+                                    OrderHttpSessionStrRequest request,
+                                    int timeoutMillis,
+                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                throw new AssertionError();
+                            }
+
+                            @Override
+                            public void close() {
+                                closeCount.incrementAndGet();
+                            }
+                        };
+        var runtime = runtime(sessions);
+        AgentCard card = card("city1", 26335, false);
+
+        assertEquals("task with space", runtime.getTask(card, "task with space", null).id());
+        assertEquals("task with space", runtime.cancelTask(card, "task with space", null).id());
+
+        assertEquals(2, requests.size());
+        assertEquals("GET", requests.get(0).getMethod());
+        assertEquals("/a2a/json/tasks/task%20with%20space", requests.get(0).getUriPath());
+        assertEquals("POST", requests.get(1).getMethod());
+        assertEquals(
+                "/a2a/json/tasks/task%20with%20space:cancel",
+                requests.get(1).getUriPath());
+        assertEquals("{}", requests.get(1).getBody());
+        assertEquals(2, closeCount.get(), "query/cancel sessions must be ephemeral");
+    }
+
+    @Test
+    void taskSubscriptionUsesDedicatedGatewayLaneAndReturnsTerminalTask() throws Exception {
+        var requests = new CopyOnWriteArrayList<OrderHttpSessionStrRequest>();
+        var emitted = new CopyOnWriteArrayList<ClientEvent>();
+        var closeCount = new AtomicInteger();
+        String completed =
+                GatewayA2AResponseParserTest.taskJson(
+                        "task-subscribe", "ctx-subscribe", TaskState.TASK_STATE_COMPLETED);
+        OrderGatewayClientRuntime.OrderSessionFactory sessions =
+                route ->
+                        new OrderGatewayClientRuntime.OrderSession() {
+                            @Override
+                            public OrderHttpSessionStrResponse execute(
+                                    OrderHttpSessionStrRequest request, int timeoutMillis) {
+                                throw new AssertionError();
+                            }
+
+                            @Override
+                            public void executeStreaming(
+                                    OrderHttpSessionStrRequest request,
+                                    int timeoutMillis,
+                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                requests.add(request);
+                                responseSink.test(streamResponse("data:" + completed + "\n\n"));
+                            }
+
+                            @Override
+                            public void close() {
+                                closeCount.incrementAndGet();
+                            }
+                        };
+        var runtime = runtime(sessions);
+
+        var result =
+                runtime.subscribeToTask(
+                                card("city1", 26335, true),
+                                "task-subscribe",
+                                null,
+                                emitted::add)
+                        .join();
+
+        assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+        assertEquals("task-subscribe", result.getTask().id());
+        assertEquals(1, emitted.size());
+        assertEquals(1, requests.size());
+        assertEquals("POST", requests.get(0).getMethod());
+        assertEquals(
+                "/a2a/json/tasks/task-subscribe:subscribe",
+                requests.get(0).getUriPath());
+        assertEquals("text/event-stream", requests.get(0).getHeadersMap().get("Accept"));
+        assertEquals(1, closeCount.get(), "terminal subscription must release its lane");
+    }
+
+    @Test
+    void conversationsToSameNeOwnIndependentSessions() throws Exception {
+        var openCount = new AtomicInteger();
+        var closeCount = new AtomicInteger();
+        String completed =
+                GatewayA2AResponseParserTest.nonStreamingTaskJson("task", "ctx");
+        OrderGatewayClientRuntime.OrderSessionFactory sessions =
+                route -> {
+                    openCount.incrementAndGet();
+                    return new OrderGatewayClientRuntime.OrderSession() {
+                        @Override
+                        public OrderHttpSessionStrResponse execute(
+                                OrderHttpSessionStrRequest request, int timeoutMillis) {
+                            return OrderHttpSessionStrResponse.newBuilder()
+                                    .setStatus(200)
+                                    .setBody(completed)
+                                    .build();
+                        }
+
+                        @Override
+                        public void executeStreaming(
+                                OrderHttpSessionStrRequest request,
+                                int timeoutMillis,
+                                Predicate<OrderHttpSessionStrResponse> responseSink) {
+                            throw new AssertionError();
+                        }
+
+                        @Override
+                        public void close() {
+                            closeCount.incrementAndGet();
+                        }
+                    };
+                };
+        var runtime = runtime(sessions);
+        AgentCard card = card("city1", 26335, false);
+
+        runtime.sendMessage(card, params("ctx-1", "m-1"), null, null, null);
+        runtime.sendMessage(card, params("ctx-2", "m-2"), null, null, null);
+        runtime.sendMessage(card, params("ctx-2", "m-3"), null, null, null);
+
+        assertEquals(2, openCount.get());
+        runtime.closeConversation(card, "ctx-1");
+        assertEquals(1, closeCount.get());
+        runtime.close();
+        assertEquals(2, closeCount.get());
+    }
+
     private static OrderGatewayClientRuntime runtime(
             OrderGatewayClientRuntime.OrderSessionFactory sessions) {
         var config =
@@ -361,6 +535,16 @@ class OrderGatewayClientRuntimeTest {
 
     private static OrderHttpSessionStrResponse streamResponse(String body) {
         return OrderHttpSessionStrResponse.newBuilder().setStatus(200).setBody(body).build();
+    }
+
+    private static String plainTaskJson(String taskId, String contextId) throws Exception {
+        Task task =
+                Task.builder()
+                        .id(taskId)
+                        .contextId(contextId)
+                        .status(new TaskStatus(TaskState.TASK_STATE_COMPLETED))
+                        .build();
+        return JsonFormat.printer().print(ProtoUtils.ToProto.task(task));
     }
 
     private static int count(Iterable<ClientEvent> events) {

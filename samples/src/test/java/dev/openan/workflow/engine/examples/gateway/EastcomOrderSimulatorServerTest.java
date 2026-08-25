@@ -8,16 +8,33 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpClient;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpRequestConfig;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpResponse;
+import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.ByteString;
 
 import org.junit.jupiter.api.Test;
 
 import java.net.ServerSocket;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class EastcomOrderSimulatorServerTest {
+
+    @Test
+    void requestDecoderSupportsUtf8AndTheVendorWindowsLegacyEncoding() {
+        String request = "## 授权策略的操作类型\n新增授权策略";
+        assertEquals(
+                request,
+                EastcomOrderSimulatorServer.decodeRequestData(
+                        ByteString.copyFrom(request, StandardCharsets.UTF_8)));
+        assertEquals(
+                request,
+                EastcomOrderSimulatorServer.decodeRequestData(
+                        ByteString.copyFrom(request, Charset.forName("GB18030"))));
+    }
 
     @Test
     void httpClientCanLoginAndLoadNeResource() throws Exception {
