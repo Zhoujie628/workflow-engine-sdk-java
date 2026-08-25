@@ -56,7 +56,7 @@ public class MyControlPoint implements ControlPoint {
 }
 ```
 
-`onNegotiation` has a default that returns a generic clarification. Authorization and notification are pre-positioning operations sent via `ExtensionSender` before the workflow starts, not on `ControlPoint`.
+`onNegotiation` has a default that returns a generic clarification. Authorization and notification are independent protocol operations sent via dedicated `ExtensionSender`/transport instances at a workbench-selected business time, not `ControlPoint` callbacks or workflow DAG nodes.
 
 ## 4. Execute via Builder (recommended)
 
@@ -252,11 +252,14 @@ A2AT_LANGUAGE=zh-CN
 A2AT_CRED_KEY=<32-byte hex>
 ```
 
-When `a2atEnvPath` is null, Task-T prompt generation is skipped.
+When `a2atEnvPath` is null, unstructured `sendMessage` sends plain A2A text and does not claim
+Task-T semantics. Structured Task-T, Authorization-T, Notification-T, and Negotiation-T operations
+fail explicitly.
 
-**Disabling the LLM layer in tests**: set the system property `a2at.llm.disabled=true` to make the
-sample agents skip A2ATClient/A2ATServer initialization entirely — negotiation falls back to
-default texts, no LLM calls are made. Used by the sample test suites for hermetic runs.
+**Offline tests**: test `.env` resources select `OfflineA2ATLlmClient` through the SDK SPI. This
+keeps the real A2ATClient/A2ATServer generation, validation, and parameter-filling pipelines
+repeatable without network access. There is no production fallback that disables the SDK and sends
+default negotiation text.
 
 ## 10. Integration Patterns
 

@@ -136,31 +136,33 @@ CompletableFuture<SendMessageResult> sendMessageFromData(
 | `templateUri`  | `TemplateUri`         | 目标模板；null 用 SDK 默认（PRIVATE_LINE_COMPLAINT）    |
 
 **双轨选型**：业务方持有结构化数据（如投诉工单字段）时优先用本方法——SDK 走
-`generateTaskPromptFromDataWithSchema` 确定性渲染（无场景识别、无 LLM 调用）；持有自然语言
+`generateTaskPromptFromDataWithSchema` schema-aware 管线（跳过场景识别，但 slot 映射可能调用
+SDK 配置的 LLM）；持有自然语言
 描述时用 `sendMessage`（SDK 场景识别管线）。两条轨道都完整经过 Negotiation-T 自动循环、
 认证和扩展头注入。
 
 `ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
-为 Authorization-T / Notification-T 前置预置提供同样的结构化数据轨道。
+为独立 Authorization-T 操作提供同样的结构化数据轨道；Notification-T 结构化订阅优先使用
+`openNotificationFromData`。
 
 #### 协商自动循环行为
 
 - **触发条件**：响应 metadata 携带 Negotiation-T 扩展 key（agent 通过 `Message(ROLE_AGENT)` +
-  `INPUT_REQUIRED` 发起协商），且消息 metadata 携带 `negotiation_context`（协商上下文，
-  由 agent 侧 `startNegotiation` 产生）。
-- **每轮**：SDK `receiveNegotiation` 解析协商请求 → `validateProposePromptAndDataFilling`
-  按模板校验并抽取参数 → `ControlPoint.onNegotiation` 生成澄清 → SDK 内容层渲染 follow-up
-  消息 → SDK 状态机推进（`continueNegotiation`，AGREED / REJECTED）→ 发送给 agent →
-  递归检查下一轮。
+  `INPUT_REQUIRED` 发起协商），并同时携带 SDK 生成的 `templateUri` 与
+  `negotiationContext={id,round,maxRounds}`。缺少任一字段均按非法协商报文失败关闭。
+- **每轮**：`NegotiationTHandler` 用 `validateProposePromptAndDataFilling` 按 `templateUri`
+  校验 Propose 并抽取参数 → `ControlPoint.onNegotiation` 生成决策 → SDK 内容层渲染
+  Accept / Reject / Abort → Accept 在发出前再用 `validateAcceptPromptAndDataFilling` 校验 →
+  引擎复制并递增无状态 `NegotiationContext` → 发送给 agent → 递归检查下一轮。
 - **澄清文本约定**（onNegotiation 返回值）：
   - `data:{...json...}` — 确定性 fromData 渲染 Accept（无 LLM 调用，JSON 为补充参数 map）
   - `reject:原因` / `abort:原因` — 渲染 Reject / Abort 终态模板
   - 其他文本 — fromText 渲染 Accept（一次 LLM 抽取）
 - **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
   （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
-- **协商上下文**：agent 将 `startNegotiation` 载荷的上下文（negotiationType / negotiationId /
-  round / status）放在消息 metadata 的 `negotiation_context` key 中，引擎解析后传给
-  receive / validate / continue API。
+- **协商上下文**：最新 SDK 已删除 `startNegotiation` / `receiveNegotiation` /
+  `continueNegotiation`。引擎只接受规范键 `negotiationContext`，结构固定为
+  `{id, round, maxRounds}`；不再读取 `negotiation_context` 等旧键。
 
 #### 模板查询
 
@@ -177,7 +179,7 @@ CompletableFuture<SendMessageResult> sendMessageFromData(
 
 ### ExtensionSender
 
-基于同一 `A2ATransport` 的前置操作门面。在工作流开始前发送一次性 Authorization-T 请求、建立长连接 Notification-T 订阅，或发送其他一次性扩展。跳过
+基于调用方专用 `A2ATransport` 的独立协议操作门面。在独立业务时机发送一次性 Authorization-T 请求、建立长连接 Notification-T 订阅。它们不是工作流 DAG 节点。跳过
 Task-T 提示词生成和 Negotiation-T 自动循环；Notification-T 后续事件通过订阅回调交付。
 
 ```java
@@ -195,7 +197,7 @@ public interface ExtensionSender {
             String agentName, String instruction, String naturalLanguageInput);
 
     // 接口契约：Notification-T（长连接 SSE + 事件回调）
-    CompletableFuture<SendMessageResult> sendNotification(
+    CompletableFuture<NotificationSubscription> openNotification(
             String agentName, String instruction,
             String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
 }
@@ -205,9 +207,13 @@ public interface ExtensionSender {
 |------------------------|-----------------|-------------------------------------|
 | `agentName`            | `String`        | 目标智能体名称（须匹配 `AgentCard.name`） |
 | `instruction`          | `String`        | 简短指令文本；成为 A2A 消息体的 `parts[].text` |
-| `naturalLanguageInput` | `String`        | 扩展 metadata 的自然语言输入。Task-T 由 A2A-T SDK 生成结构化提示词；Authorization-T / Notification-T 当前直接使用此值 |
+| `naturalLanguageInput` | `String`        | 自然语言轨道输入；生产优先使用 `sendExtensionMessageFromData` / `openNotificationFromData`，由 SDK 生成完整 metadata |
 | `extension`            | `A2ATExtension` | 扩展枚举（勿硬编码 URI）            |
-| `eventCallback`        | `Consumer<Map<String, Object>>` | 可选 SSE 事件回调（`sendNotification` 专用）。OMC 后续推送的抢通结果通过此回调实时接收，回调 Map 含 `agent`、`text`、`metadata`、`state`。不传（null）时后续事件被丢弃 |
+| `eventCallback`        | `Consumer<Map<String, Object>>` | 可选 SSE 事件回调。Map 含 `event_kind`、`agent`、`task_id` 及对应的状态/产物字段 |
+
+`NotificationSubscription` 将首个 ACK（`acknowledgement()`）与长连接终止
+（`completion()`）分开，并提供 `heartbeat()`、`isHealthy(maximumIdle)` 和幂等 `close()`。
+Task、Authorization、Notification 必须使用不同的 transport/runtime 实例；关闭单次工作流不得关闭订阅。
 
 **报文格式**：发送给智能体的 A2A 消息结构为 `parts[].text = instruction`，`metadata = { "<扩展URI>": "<扩展值>" }`。以 Authorization-T 为例：
 
@@ -307,12 +313,13 @@ SDK 消息生成/校验/模板查询的完整能力面，方法与 SDK `A2ATClie
 |------|------|------|
 | fromData 生成 | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | 类型化数据确定性渲染，无 LLM |
 | fromText 生成 | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | 自由文本 + 一步 LLM 抽取 |
-| 运行时状态机 | `startNegotiation` / `receiveNegotiation` / `continueNegotiation` | SDK 协商轮次推进 |
+| 无状态上下文 | `MetadataContent.buildMetadataContent` / `NegotiationContext` | 生成并传递 `{id, round, maxRounds}`；引擎负责复制和递增轮次 |
 | 校验提取 | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | 规则门 + LLM 语义校验 + 参数合并；需传 `NegotiationContext`（null = 非协商消息） |
 | 模板查询 | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | 模板目录枚举与查询 |
 | 工具 | `toMetadata(MetadataContent)` | 生成消息转 A2A metadata map（含 `templateUri`、`negotiationContext` key） |
 
-模板 URI 用 `StandardTemplates` 常量传参。失败抛 `A2ATError` 子类，调用方应捕获并降级。
+模板 URI 用 `StandardTemplates` 常量传参。失败抛 `A2ATError` 子类；协议内容必须
+fail-closed，不得将原始文本作为对应 A2A-T URI 的值降级发送。
 
 ### A2AJavaClientRuntime
 
@@ -667,24 +674,17 @@ ExecutionResult result = executor.run().join();
 | 扩展            | URI                                                                                       |
 |-----------------|-------------------------------------------------------------------------------------------|
 | Task-T          | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1`          |
-| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T`      |
+| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1`  |
 | Authorization-T | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1` |
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
-
-> **注意：** `DATA-NEGOTIATION-T/v1` **不是** A2A-T 扩展。它是 A2A-T SDK
-> 协商模块内部使用的 metadata key，用于携带结构化协商上下文
-> （`negotiationType`、`round`、`negotiationId`、`status`）。
-> 不在 AgentCard 上声明，不被 ExtensionHandler 处理，也不出现在
-> `A2A-Extensions` 头中。
 
 > **协商相关 metadata key 约定：**
 >
 > - `negotiationContext`（SDK 契约）：SDK 生成协商消息时写入，携带 `{id, round, maxRounds}`。
 >   validate API 依赖它区分协商消息与普通消息。
 > - `templateUri`（SDK 契约）：SDK 生成消息时写入，标识渲染所用模板。
-> - `negotiation_context` / `negotiation_message` / `negotiation_params`（引擎内部）：
->   `NegotiationTHandler` 接收协商消息后写入 result metadata，供自动循环和调用方读取。
->   常量定义在 `A2ATExtension`（`NEGOTIATION_CONTEXT_META_KEY` 等）。
+> - `negotiation_message` / `negotiation_params`（引擎内部）：接收校验后供自动循环和
+>   业务控制点读取，绝不作为线上的协议兼容键。
 
 ---
 

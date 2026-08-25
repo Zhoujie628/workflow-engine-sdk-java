@@ -1,5 +1,12 @@
 # 引擎核心代码检视报告
 
+> **归档状态（2026-08-25）**：本文是旧 commit 的问题快照，不是当前代码说明。
+> 文中 P0/P1/P2 问题已在未发布版整改，包括 per-client TLS、认证 fail-closed、SSE 原样解析、
+> 有界线程池、runtime 复用、可配置 Spring 执行器、无轮询 DAG join、回调透传、凭证解密
+> fail-closed、规范 URI 精确匹配、任务状态判定，以及真实 SDK 的 Task/Negotiation/Authorization/
+> Notification 管线。当前契约请以 [API 参考](API_REFERENCE.md)、[架构设计](DESIGN.md)和
+> [CHANGELOG](../../CHANGELOG.md) 为准。下文的旧接口名和行号仅用于追溯，不得复制到新实现。
+
 > **检视范围**: `workflow-engine` 模块 + `spring-boot-starter` 模块
 > **检视日期**: 2026-08-18
 > **检视人**: AI 辅助 + 人工核验
@@ -703,7 +710,9 @@ CompletableFuture<SendMessageResult> sendNotification(
 1. **`ConversationScopedA2AJavaClientRuntime` 接口**: 简洁的会话生命周期钩子,`closeConversation` 在 `DefaultWorkflowEngineClient.sendMessage` 的 `whenComplete` 中调用,确保协商循环结束后释放网关会话
 2. **`A2ATExtension` 枚举**: 封装完整 URI,避免散落的字符串常量
 3. **`ExtensionInterceptor`**: 只注入当前消息 metadata 中实际存在的扩展 URI,而非 AgentCard 上声明的所有扩展——正确行为
-4. **`NegotiationTHandler.afterReceive`**: 使用 SDK 的 `receiveNegotiation` + 直接提取 fallback,双路径设计合理
+4. **`NegotiationTHandler.afterReceive`**: 使用最新 SDK 的无状态
+   `validateProposePromptAndDataFilling` 校验提议内容并提取参数；缺少或非法
+   `negotiationContext` 时失败关闭，不再调用已删除的 `receiveNegotiation`，也不保留绕过 SDK 的提取 fallback
 5. **`DefaultWorkflowEngineClient.autoNegotiate`**: 递归协商循环有 `maxNegotiationRounds` 上限(默认 3),防止无限循环
 6. **`SslContextFactory` mTLS 支持**: `loadKeyManagers` 支持客户端证书 + 私钥,RSA 密钥格式正确
 7. **`CredentialCrypto` AES-GCM**: 使用 12 字节 IV + 128 位 tag,符合 NIST 推荐;IV 使用 `SecureRandom` 生成,无 IV 重用风险

@@ -52,16 +52,17 @@ graph TD
 - **`WorkflowEngineClient`** — 工作流执行发送路径。拥有 Task-T 提示词生成（发送前）、
   Negotiation-T 自动循环（接收后）、全局 `EventCallback`、`ControlPoint` 装配。
   这是执行器在工作流执行期间调用的门面。
-- **`ExtensionSender`** — 前置下发门面。在工作流启动前发送一次性 Authorization-T 请求或建立长连接 Notification-T 订阅。
+- **`ExtensionSender`** — 独立协议操作门面。在工作台选定的业务时机发送一次性 Authorization-T 请求或建立长连接 Notification-T 订阅。
   绕过 Task-T 生成和协商循环，不通过全局回调发射事件 — 返回的结果就是回调。
 
 #### 为什么复用 transport 实现 + 两个门面？
 
-工作流发送路径和前置下发路径都需要相同的通信层机制：HTTP 客户端、TLS 配置、
-认证拦截器、智能体卡片解析、SSE 解析。把这些机制放在任一门面上要么 (a) 强制只想做前置下发的
+工作流发送路径和独立扩展路径都需要相同的通信层机制：HTTP 客户端、TLS 配置、
+认证拦截器、智能体卡片解析、SSE 解析。把这些机制放在任一门面上要么 (a) 强制只想做独立协议操作的
 调用方持有完整工作流门面，要么 (b) 在两个类中重复通信代码。复用 `A2ATransport` 实现 + 两个门面的设计
-避免了这两个问题。两个门面可以持有不同生命周期的 transport 实例：工作流发送使用任务级 transport，
-Notification-T 订阅使用工作台级 transport。
+避免了这两个问题。类实现可复用，实例不复用：Task-T、Authorization-T、Notification-T
+必须各自创建 transport/runtime/context。Task-T 使用任务级实例，Authorization-T 一次请求后释放，
+Notification-T 使用工作台级长连接实例。
 
 ### 2.2 Layer 1 - 遍历层
 
@@ -98,7 +99,7 @@ SDK 暴露两个用户实现的接口，按职责拆分。
 | `onRoute`        | 执行器       | 在条件步骤选择分支                          |
 | `onNegotiation`  | 客户端自动循环 | 在 INPUT_REQUIRED 时提供澄清文本            |
 
-Authorization-T 和 Notification-T 是预置操作，通过 `ExtensionSender` 在工作流启动前发送，不在工作流执行中回调。
+Authorization-T 和 Notification-T 是工作台独立触发的协议操作，不是工作流 DAG 节点。
 
 ---
 
@@ -116,16 +117,15 @@ Authorization-T 和 Notification-T 是预置操作，通过 `ExtensionSender` �
   提取协商上下文和消息。这驱动自动循环：引擎调用 `ControlPoint.onNegotiation` 获取澄清，
   重发后续消息，重复直到达到配置的轮次上限。
 
-### 4.2 前置下发扩展
+### 4.2 独立生命周期扩展
 
-在工作流启动前通过 `ExtensionSender` 建立，并与单次工作流 transport 解耦：
+在工作台选定的业务时机通过 `ExtensionSender` 触发，并与单次工作流 transport 解耦：
 
-- **Authorization-T** — 发送一次性授权前置请求。当前直接使用调用方提供的自然语言输入作为 metadata 值。
-- **Notification-T** — 建立结果订阅。打开长连接 SSE 流，后续抢通结果通过该流返回。
+- **Authorization-T** — 通过 SDK schema-aware 管线渲染和校验新增/修改/删除/查询请求。有效白名单是 OMC 自动抢通的前置条件。
+- **Notification-T** — 通过 SDK schema-aware 管线建立结果订阅，返回 `NotificationSubscription`。ACK 与流结束分离；收到抢通结果、取消或服务关闭时显式关闭。
 
-订阅结果（如后续推送的抢通结果）通过 `sendNotification` 响应流返回，
-不通过 `onNotification`。该钩子仅在智能体在 `sendMessage` 任务响应中主动包含
-Notification-T 载荷时触发。
+订阅 ACK 从 `NotificationSubscription.acknowledgement()` 获取，后续抢通事件通过订阅回调返回。
+它们不进入工作流的 `ControlPoint` 或全局任务事件流。
 
 ### 4.3 扩展处理器链
 
@@ -140,9 +140,9 @@ graph TD
     SM --> BS --> TS --> AR --> AN
 ```
 
-`ExtensionRegistry.getHandlersForExtensions` 将智能体声明的扩展 URI 与处理器关键字
-（不区分大小写）匹配，返回该智能体的处理器链。Authorization-T / Notification-T 处理器类
-保留给需要内联处理智能体推送数据的调用方，但不自动注册 — 这是前置下发的关注点。
+`ExtensionRegistry.getHandlersForExtensions` 对内置 Task-T/Negotiation-T 要求 AgentCard 中的规范 URI
+精确匹配，返回去重的处理器链。Authorization-T / Notification-T 不注册到工作流处理器链，
+只由 `ExtensionSender` 及独立生命周期处理。
 
 ---
 
@@ -253,8 +253,8 @@ SDK 是独立的：不依赖编排中心。
    并可使用任务级或工作台级 transport 生命周期。
    避免强制门面耦合和通信代码重复。
 
-2. **工作流内扩展 vs 前置下发扩展** — Task-T 和 Negotiation-T 是 `sendMessage` 链的一部分；
-   Authorization-T 是工作流启动前的一次性请求，Notification-T 是工作流启动前建立的长连接订阅。
+2. **工作流内扩展 vs 独立生命周期扩展** — Task-T 和 Negotiation-T 是 `sendMessage` 链的一部分；
+   Authorization-T 是工作台独立触发的一次性请求，Notification-T 是工作台级长连接订阅。
    注册表只自动注册工作流内的一对。
 
 3. **自动协商循环** — 引擎拥有重发循环，宿主只提供澄清文本（`onNegotiation`），

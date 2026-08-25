@@ -1,5 +1,8 @@
 # 引擎核心代码检视报告——二次审核意见
 
+> **归档状态（2026-08-25）**：本文只记录旧 commit 的审核过程。已采纳项的当前实现与验证结果见
+> [CHANGELOG](../../CHANGELOG.md)、[API 参考](API_REFERENCE.md) 和 [架构设计](DESIGN.md)；下文不是当前接口契约。
+
 > **审核对象**: `docs/zh/engine-code-review.md`  
 > **审核范围**: `workflow-engine`、`spring-boot-starter`，并交叉核验同目录下的 `a2a-java`、`a2a-t-sdk-java`  
 > **审核日期**: 2026-08-18  

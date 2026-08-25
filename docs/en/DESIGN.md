@@ -59,18 +59,20 @@ state, and metadata.
 - **`WorkflowEngineClient`** - the workflow execution send path. Owns Task-T prompt generation (before send), the
   Negotiation-T auto-loop (after receive), the global `EventCallback`, and the `ControlPoint` wiring.
   This is the facade the executor calls during workflow execution.
-- **`ExtensionSender`** - pre-positioning facade. Sends one-shot Authorization-T requests or establishes long-lived
-  Notification-T subscriptions *before* the workflow starts. It bypasses Task-T generation and the negotiation loop;
+- **`ExtensionSender`** - independent protocol-operation facade. Sends one-shot Authorization-T requests or establishes
+  long-lived Notification-T subscriptions at a workbench-selected business time. It bypasses Task-T generation and the negotiation loop;
   Notification-T events use the subscription callback rather than the workflow-global callback.
 
 #### Why reusable transport machinery with two facades?
 
-Both the workflow send path and the pre-positioning path need the same wire-level machinery: an HTTP client,
+Both the workflow send path and the independent-extension path need the same wire-level machinery: an HTTP client,
 TLS configuration, auth interceptors, agent-card resolution, and SSE parsing. Putting that machinery on either facade
-would either (a) force a caller that only wants to pre-position to hold the full workflow facade, or (b) duplicate the
+would either (a) force a caller that only needs an independent extension to hold the full workflow facade, or (b) duplicate the
 wire code across two classes. The reusable transport / two-facade design avoids both:
 the wire layer is written once on `A2ATransport`, and each facade delegates all wire work to it while keeping its own
-orchestration concern isolated. The facades may use task-scoped or workbench-scoped transport lifetimes.
+orchestration concern isolated. The implementation is reusable, but instances are not shared: Task-T,
+Authorization-T, and Notification-T each require an independent transport/runtime/context. Authorization
+uses a one-shot lifetime; Notification uses a workbench-scoped long-lived lifetime.
 
 ### 2.2 Layer 1 - Traversal
 
@@ -110,7 +112,8 @@ decision:
 | `onRoute`       | executor         | Choose a branch at a conditional step        |
 | `onNegotiation` | client auto-loop | Supply clarification on INPUT_REQUIRED       |
 
-Authorization-T and Notification-T are pre-positioning concerns handled via `ExtensionSender` before the workflow starts, not in-workflow callbacks.
+Authorization-T and Notification-T are independently triggered workbench protocol operations handled via
+`ExtensionSender`; they are not workflow DAG nodes.
 
 ---
 
@@ -131,21 +134,19 @@ both):
   `ControlPoint.onNegotiation`
   for a clarification, resends the follow-up, and repeats up to a configured round limit.
 
-### 4.2 Pre-positioning extensions
+### 4.2 Independent-lifecycle extensions
 
-Established through `ExtensionSender` before a workflow and decoupled from any single workflow transport:
+Triggered through `ExtensionSender` at a workbench-selected business time and decoupled from any single workflow transport:
 
-- **Authorization-T** - Sends a one-shot authorization request. The current implementation uses the caller-supplied natural-language input directly as the metadata value.
-- **Notification-T** - Establishes a result subscription. Opens a long-lived SSE stream so later recovery results flow
-  back through the response stream.
+- **Authorization-T** - Uses the SDK schema-aware generation and validation pipeline for add, modify,
+  delete, and query operations. A valid whitelist is a prerequisite for automatic OMC recovery.
+- **Notification-T** - Uses the SDK schema-aware pipeline and returns a `NotificationSubscription`.
+  ACK and stream completion are separate; the handle is closed after the recovery result, cancellation,
+  or workbench shutdown.
 
-The subscription *result* (e.g. a recovery outcome pushed later) flows back through the `sendNotification` response
-stream, not through
-`onNotification`. That hook only fires when an agent voluntarily includes a Notification-T payload in a `sendMessage`
-task response.
-
-Task-T uses the SDK's `generateTaskPrompt`. Authorization-T and Notification-T currently use caller-supplied metadata
-values because the upstream SDK does not expose corresponding prompt generators.
+The subscription ACK is exposed by `NotificationSubscription.acknowledgement()` and subsequent recovery
+events flow through the subscription callback. They do not enter workflow `ControlPoint` callbacks or the
+global task-event stream.
 
 ### 4.3 Extension handler chain
 
@@ -160,10 +161,10 @@ graph TD
     SM --> BS --> TS --> AR --> AN
 ```
 
-`ExtensionRegistry.getHandlersForExtensions` matches an agent's declared extension URIs against handler keywords
-(case-insensitive) and returns the handler chain for that agent. Authorization-T / Notification-T handler classes are
-retained for callers that need inline handling of agent-pushed data, but they are not auto-registered - that is a
-pre-positioning concern.
+`ExtensionRegistry.getHandlersForExtensions` requires exact canonical AgentCard URIs for the built-in
+Task-T and Negotiation-T handlers and returns a deduplicated chain. Authorization-T / Notification-T are
+not registered in the workflow handler chain; they are solely an `ExtensionSender` and
+independent-lifecycle concern.
 
 ---
 
@@ -277,9 +278,10 @@ The SDK is standalone: it does not depend on the orchestration center.
    `A2ATransport`; `WorkflowEngineClient` and `ExtensionSender` each own one orchestration concern and delegate wire
    work, with task-scoped or workbench-scoped transport lifetimes. Avoids forced-facade coupling and wire-code duplication.
 
-2. **In-workflow vs pre-positioning extensions** - Task-T and Negotiation-T are part of the `sendMessage` chain;
-   Authorization-T is a one-shot request sent before the workflow, while Notification-T is a long-lived subscription
-   established before the workflow. The registry auto-registers only the in-workflow pair.
+2. **In-workflow vs independent-lifecycle extensions** - Task-T and Negotiation-T are part of the
+   `sendMessage` chain. Authorization-T is an independently triggered one-shot request, while
+   Notification-T is a workbench-scoped long-lived subscription. The registry auto-registers only
+   the in-workflow pair.
 
 3. **Auto-negotiation loop** - the engine owns the resend loop so hosts only supply clarification text
    (`onNegotiation`), never the protocol mechanics of resending.

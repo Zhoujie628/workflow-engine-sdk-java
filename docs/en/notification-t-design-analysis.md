@@ -2,9 +2,10 @@
 
 > **Superseded.** This historical analysis has been folded into
 > [DESIGN.md](DESIGN.md), sections 4 (A2A-T Extension Model) and 7
-> (Interaction Sequences). The pre-positioning flow described below now
-> lives on `ExtensionSender` (see DESIGN.md, "Shared transport with two
-> facades"), not on `WorkflowEngineClient`. Kept for reference only.
+> (Interaction Sequences). The pre-positioning/shared-channel wording below is obsolete:
+> Authorization-T and Notification-T now use `ExtensionSender` at independent business times,
+> with transport/runtime/context instances isolated from Task-T and from each other. Kept for
+> historical reference only.
 
 ---
 

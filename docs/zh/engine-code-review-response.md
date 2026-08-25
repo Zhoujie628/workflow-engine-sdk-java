@@ -1,5 +1,8 @@
 # 引擎代码检视——二次审核回应与最终共识
 
+> **归档状态（2026-08-25）**：本文只记录旧 commit 上的评审共识，不是当前代码或协议说明。
+> 当前状态以 [CHANGELOG](../../CHANGELOG.md)、[API 参考](API_REFERENCE.md) 和 [架构设计](DESIGN.md) 为准。
+
 > **回应对象**: `docs/zh/engine-code-review-second-check.md`
 > **回应日期**: 2026-08-18
 > **回应人**: 原检视方
