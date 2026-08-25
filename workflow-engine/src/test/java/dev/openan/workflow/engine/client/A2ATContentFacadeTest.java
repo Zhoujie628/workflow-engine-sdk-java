@@ -23,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.negotiation.content.NegotiationAbortData;
@@ -52,26 +51,22 @@ import java.util.Map;
  */
 class A2ATContentFacadeTest {
 
-    private static final String ENV_PATH = resolveSampleEnv();
+    private static final String ENV_PATH = resolveTestEnv();
 
-    private static String resolveSampleEnv() {
-        // The facade needs a real A2ATClient; use the engine repo's .env when present so the
-        // template language resolves to zh-CN. Walk up from the module dir to the repo root.
-        java.nio.file.Path dir = java.nio.file.Path.of("").toAbsolutePath();
-        while (dir != null) {
-            java.nio.file.Path candidate = dir.resolve(".env");
-            if (java.nio.file.Files.exists(candidate)) {
-                return candidate.toString();
+    private static String resolveTestEnv() {
+        try {
+            java.net.URL resource =
+                    A2ATContentFacadeTest.class.getClassLoader().getResource("a2at-test.env");
+            if (resource == null) {
+                throw new IllegalStateException("Missing test resource a2at-test.env");
             }
-            dir = dir.getParent();
+            return java.nio.file.Path.of(resource.toURI()).toString();
+        } catch (java.net.URISyntaxException e) {
+            throw new IllegalStateException("Invalid a2at-test.env resource URI", e);
         }
-        return null;
     }
 
     private A2ATContentFacade facade() {
-        if (ENV_PATH == null) {
-            return null;
-        }
         return new A2ATContentFacade(new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(ENV_PATH)));
     }
 
@@ -82,7 +77,6 @@ class A2ATContentFacadeTest {
     @Test
     void rendersInformationProposeFromData() {
         A2ATContentFacade facade = facade();
-        assumeTrue(facade != null, ".env not found; SDK-dependent assertions skipped");
         net.openan.a2at.sdk.core.model.MetadataContent mc =
                 facade.generateProposeFromData(
                         new NegotiationProposeData(
@@ -116,7 +110,6 @@ class A2ATContentFacadeTest {
     @Test
     void rendersAcceptFromData() {
         A2ATContentFacade facade = facade();
-        assumeTrue(facade != null, ".env not found; SDK-dependent assertions skipped");
         net.openan.a2at.sdk.core.model.MetadataContent mc =
                 facade.generateAcceptFromData(
                         new NegotiationEndingData(
@@ -133,7 +126,6 @@ class A2ATContentFacadeTest {
     @Test
     void rendersRejectFromData() {
         A2ATContentFacade facade = facade();
-        assumeTrue(facade != null, ".env not found; SDK-dependent assertions skipped");
         net.openan.a2at.sdk.core.model.MetadataContent mc =
                 facade.generateRejectFromData(
                         new NegotiationEndingData(
@@ -148,7 +140,6 @@ class A2ATContentFacadeTest {
     @Test
     void rendersAbortFromData() {
         A2ATContentFacade facade = facade();
-        assumeTrue(facade != null, ".env not found; SDK-dependent assertions skipped");
         net.openan.a2at.sdk.core.model.MetadataContent mc =
                 facade.generateAbortFromData(
                         new NegotiationAbortData(
@@ -160,7 +151,6 @@ class A2ATContentFacadeTest {
     @Test
     void negotiationTemplateQueriesResolve() {
         A2ATContentFacade facade = facade();
-        assumeTrue(facade != null, ".env not found; SDK-dependent assertions skipped");
         var prompts = facade.getNegotiationPrompts();
         // 3 types x 2 phases + common abort
         assertEquals(7, prompts.size(), "bundled negotiation templates must be enumerable");

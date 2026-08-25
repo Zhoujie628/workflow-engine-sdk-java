@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 class CredentialCryptoTest {
     private static final String KEY =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static final String OTHER_KEY =
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     @AfterEach
     void clearKey() {
@@ -37,5 +39,15 @@ class CredentialCryptoTest {
     @Test
     void plaintextRemainsBackwardCompatible() {
         assertEquals("plain", CredentialCrypto.decryptIfNeeded("plain"));
+    }
+
+    @Test
+    void instanceScopedKeyTakesPrecedenceOverJvmProperty() {
+        System.setProperty("A2AT_CRED_KEY", KEY);
+        String encrypted = CredentialCrypto.encrypt("city-specific-secret");
+        System.setProperty("A2AT_CRED_KEY", OTHER_KEY);
+
+        assertEquals(
+                "city-specific-secret", CredentialCrypto.decryptIfNeeded(encrypted, KEY));
     }
 }

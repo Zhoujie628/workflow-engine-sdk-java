@@ -308,6 +308,29 @@ class ExecutePsopTest {
     }
 
     @Test
+    void injectedClientRemainsCallerOwnedAfterExecution() {
+        AtomicInteger closeCalls = new AtomicInteger();
+        StubWorkflowEngineClient client =
+                new StubWorkflowEngineClient("A", "B") {
+                    @Override
+                    public void close() {
+                        closeCalls.incrementAndGet();
+                    }
+                };
+
+        ExecutionResult result =
+                ExecutePsop.builder()
+                        .psop(linearWorkflow())
+                        .controlPoint(autoCp())
+                        .engineClient(client)
+                        .execute()
+                        .join();
+
+        assertTrue(result.isSuccess());
+        assertEquals(0, closeCalls.get());
+    }
+
+    @Test
     void errorLifecycleOnTaskFailure() {
         StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B");
         ControlPoint failCp =
