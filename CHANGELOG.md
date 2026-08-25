@@ -31,7 +31,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Protocol headers are redacted by default; sensitive values require an explicit diagnostic opt-in
 - Agent clients and transport executors are reused and closed through their owning runtime
 - Task-T, Authorization-T, and Notification-T use independent transport/runtime/context instances
-- Direct OMC and Eastcom Order SDK forwarding modes share the same protocol semantics; Order is the sample default
 - Negotiation-T uses the latest stateless content APIs and canonical `negotiationContext`; removed SDK state-machine APIs are not used
 - SDK `.env` paths remain instance-local instead of being copied into JVM-wide system properties
 - Extension subscription and task-control capabilities are explicit interface contracts instead of
@@ -39,7 +38,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Eastcom Order SDK 1.1.18 outbound request buffers consumed by its Netty-to-RPC bridge are released by an isolated compatibility handler, preventing pooled direct-memory leaks without replacing the vendor jar
 - Task success is derived from the A2A task state instead of non-empty response text alone
 - Conflicting authentication headers from `AuthProvider` and credential configuration now fail fast
 - Extension URI matching now uses exact URI path segments instead of substring matching

@@ -25,11 +25,10 @@ generation and validation fail closed; raw text is never sent under an A2A-T URI
 
 In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the workbench. The workbench loads the PSOP,
 dispatches two city-specific OMC diagnoses in parallel, joins both branches exactly once, and
-returns the real merged result. Outbound OMC calls support both `direct` and Eastcom `order` modes
-(`order` is the production-oriented default). Task-T, Authorization-T, and Notification-T each use
-an independent transport/runtime/context. Authorization and Notification are independently
-triggered workbench operations rather than DAG nodes; Notification keeps an explicit long-lived
-subscription until the recovery result, cancellation, or shutdown.
+returns the real merged result over direct HTTP+JSON transport. Task-T, Authorization-T, and
+Notification-T each use an independent transport/runtime/context. Authorization and Notification
+are independently triggered workbench operations rather than DAG nodes; Notification keeps an
+explicit long-lived subscription until the recovery result, cancellation, or shutdown.
 
 ## Quick Start
 
