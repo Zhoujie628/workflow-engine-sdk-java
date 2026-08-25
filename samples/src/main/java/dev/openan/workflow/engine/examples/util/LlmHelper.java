@@ -26,10 +26,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -59,22 +59,12 @@ public final class LlmHelper {
         }
         try {
             String body = buildRequestBody(config, system, user);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(config.baseUrl + "/v1/chat/completions"))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + config.apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .timeout(Duration.ofSeconds(config.timeoutSeconds))
-                    .build();
-            HttpResponse<String> response = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                log.warn("[LlmHelper] HTTP {}: {}", response.statusCode(), response.body());
+            HttpResponse response = post(config, body);
+            if (response.statusCode != 200) {
+                log.warn("[LlmHelper] HTTP {}: {}", response.statusCode, response.body);
                 return fallback;
             }
-            String content = extractContent(response.body());
+            String content = extractContent(response.body);
             if (content == null || content.isBlank()) {
                 log.warn("[LlmHelper] empty model reply, using fallback");
                 return fallback;
@@ -83,6 +73,39 @@ public final class LlmHelper {
         } catch (Exception e) {
             log.warn("[LlmHelper] LLM call failed, using fallback: {}", e.getMessage());
             return fallback;
+        }
+    }
+
+    private static HttpResponse post(Config config, String body) throws IOException {
+        HttpURLConnection connection =
+                (HttpURLConnection)
+                        URI.create(config.baseUrl + "/v1/chat/completions")
+                                .toURL()
+                                .openConnection();
+        try {
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
+            connection.setReadTimeout(
+                    Math.toIntExact(Duration.ofSeconds(config.timeoutSeconds).toMillis()));
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            connection.setRequestProperty("Authorization", "Bearer " + config.apiKey);
+            connection.setDoOutput(true);
+            try (var output = connection.getOutputStream()) {
+                output.write(body.getBytes(StandardCharsets.UTF_8));
+            }
+            int status = connection.getResponseCode();
+            InputStream responseStream =
+                    status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String responseBody =
+                    responseStream == null
+                            ? ""
+                            : new String(responseStream.readAllBytes(), StandardCharsets.UTF_8);
+            if (responseStream != null) {
+                responseStream.close();
+            }
+            return new HttpResponse(status, responseBody);
+        } finally {
+            connection.disconnect();
         }
     }
 
@@ -235,4 +258,6 @@ public final class LlmHelper {
             this.timeoutSeconds = timeoutSeconds;
         }
     }
+
+    private record HttpResponse(int statusCode, String body) {}
 }

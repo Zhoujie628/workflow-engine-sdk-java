@@ -19,12 +19,16 @@
 
 package dev.openan.workflow.engine.examples.agents;
 
+import dev.openan.workflow.engine.examples.extension.AuthorizationPolicy;
+import dev.openan.workflow.engine.examples.extension.PrePositionedExtensionHandler;
 import dev.openan.workflow.engine.examples.util.LlmHelper;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -37,7 +41,7 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  * it replies INPUT_REQUIRED to start a Negotiation-T round, and on the follow-up it runs the
  * diagnosis/recovery business. City1 side has a FAULT (port Down, optical power -28dBm).
  * Diagnosis/recovery text is LLM-generated (deepseek) when the A2A-T .env is configured, else
- * deterministic. Authorization-T and Notification-T are pre-positioned before the workflow starts,
+ * deterministic. Authorization-T and Notification-T are initiated on independent channels,
  * so this agent no longer injects them in response metadata.
  */
 public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
@@ -62,6 +66,14 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                     + "7. 业务抢通方案详情：将受影响的隧道列表调优到新的路径列表，业务恢复。\n"
                     + "8. 业务抢通方案执行结束时间：2026-05-11T08:31:46Z\n"
                     + "9. 业务抢通方案执行结果：成功";
+
+    public SpnDomainAgentCity1Executor() {
+        super();
+    }
+
+    public SpnDomainAgentCity1Executor(PrePositionedExtensionHandler extensionHandler) {
+        super(extensionHandler);
+    }
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
@@ -92,18 +104,19 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     }
 
     /**
-     * After diagnosis, check the pre-positioned Authorization-T whitelist policy. If the repair
+     * After diagnosis, check the active Authorization-T whitelist policy. If the repair
      * action matches the whitelist, execute recovery and return the result (reported as
      * Notification-T metadata by the base class). If not in whitelist, return a refusal message.
      */
     private String selfTriggerRecovery(RequestContext ctx, String diagnosisResult) {
-        String policy = getAuthorizationPolicy();
+        AuthorizationPolicy policy = getAuthorizationPolicy();
         boolean inWhitelist =
                 policy != null
-                        && !policy.isEmpty()
-                       && (policy.contains("业务抢通")
-                               || policy.contains("光模块")
-                               || policy.contains("授权"));
+                        && policy.authorizes(
+                                "业务投诉诊断",
+                                "业务抢通",
+                                "隧道调优",
+                                LocalDate.now(ZoneId.of("Asia/Shanghai")));
         if (inWhitelist) {
             log.info("[SPN-Domain-Agent] Fault in whitelist, self-triggering recovery");
             String recoveryResult = llmRecoveryResult(diagnosisResult, RECOVERY_RESULT);

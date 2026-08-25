@@ -23,6 +23,8 @@ import net.openan.a2at.sdk.client.A2ATClient;
 import net.openan.a2at.sdk.core.model.FilledParamData;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.server.A2ATServer;
+import net.openan.a2at.sdk.core.exception.A2ATErrorCodes;
+import net.openan.a2at.sdk.core.validation.ContentValidationException;
 
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.ServerCallContext;
@@ -46,7 +48,10 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import dev.openan.workflow.engine.examples.extension.AuthorizationPolicy;
+import dev.openan.workflow.engine.examples.extension.NotificationPolicy;
 import dev.openan.workflow.engine.examples.extension.PrePositionedExtensionHandler;
+import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
 /**
  * Server-side negotiation base, mirroring the Python reference
@@ -57,33 +62,39 @@ import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
  * negotiation and replies with INPUT_REQUIRED carrying the negotiation context in task metadata; on
  * a Negotiation-T reply (metadata has Negotiation-T key, no Task-T key) it re-executes the business and completes.
  *
- * <p>Negotiation triggers on every new task (deterministic), so the demo exercises the full
- * Negotiation-T round-trip each run. When the A2A-T .env is absent or LLM is disabled, the
- * negotiation context falls back to a minimal in-process context and the business text falls back
- * to the subclass default.
+ * <p>Negotiation is triggered by the extension header or incomplete SDK-validated task data. A
+ * configured A2A-T client/server is mandatory for protocol generation and validation; the sample
+ * never manufactures protocol-shaped fallback text.
  */
 public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(NegotiationBaseAgentExecutor.class);
     // Pre-positioned extensions (Authorization-T / Notification-T) are handled
     // by a dedicated handler, keeping this class focused on Negotiation-T.
-    private final PrePositionedExtensionHandler prePositionedHandler =
-            new PrePositionedExtensionHandler();
+    private final PrePositionedExtensionHandler prePositionedHandler;
     private final BlockingQueue<String> notificationQueue = new LinkedBlockingQueue<>();
     private volatile A2ATClient a2atClient;
 
-    /** The pre-positioned Authorization-T whitelist policy text, or null. */
-    protected final String getAuthorizationPolicy() {
+    protected NegotiationBaseAgentExecutor() {
+        this(new PrePositionedExtensionHandler());
+    }
+
+    protected NegotiationBaseAgentExecutor(PrePositionedExtensionHandler prePositionedHandler) {
+        this.prePositionedHandler = java.util.Objects.requireNonNull(prePositionedHandler);
+    }
+
+    /** The active SDK-validated Authorization-T whitelist, or null. */
+    protected final AuthorizationPolicy getAuthorizationPolicy() {
         return prePositionedHandler.getAuthorizationPolicy();
     }
 
-    /** The pre-positioned Notification-T subscription text, or null. */
-    protected final String getNotificationSubscription() {
+    /** The active Notification-T subscription, or null. */
+    protected final NotificationPolicy getNotificationSubscription() {
         return prePositionedHandler.getNotificationSubscription();
     }
 
     protected void reportRecoveryResult(AgentEmitter emitter, String result) {
-        String notifUri = "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1";
+        String notifUri = A2ATExtension.NOTIFICATION_T.uri();
         Map<String, Object> notifMeta = new LinkedHashMap<>();
         notifMeta.put(notifUri, result);
         List<Part<?>> rParts = List.of(new TextPart(result));
@@ -92,23 +103,25 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     }
 
     protected void pushNotificationResult(String result) {
+        if (getNotificationSubscription() == null) {
+            log.warn(
+                    "[{}] Dropping recovery result because no validated Notification-T subscription is active",
+                    getClass().getSimpleName());
+            return;
+        }
         if (!notificationQueue.offer(result)) {
             log.warn("[{}] Notification queue rejected a result", getClass().getSimpleName());
         }
     }
 
     /**
-     * Resolve the A2A-T .env path; null disables A2ATClient (negotiation still works with fallback
-     * context).
+     * Resolve the A2A-T .env path; null means Negotiation-T cannot be served.
      */
     protected abstract String resolveEnvPath();
 
     private A2ATClient a2at() {
         if (a2atClient != null) {
             return a2atClient;
-        }
-        if (Boolean.getBoolean("a2at.llm.disabled")) {
-            return null;
         }
         String env = resolveEnvPath();
         if (env == null || env.isBlank()) {
@@ -119,11 +132,8 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
             log.info("[{}] A2ATClient ready for negotiation", getClass().getSimpleName());
             return a2atClient;
         } catch (Exception e) {
-            log.warn(
-                    "[{}] A2ATClient init failed, negotiation will use fallback context: {}",
-                    getClass().getSimpleName(),
-                    e.getMessage());
-            return null;
+            throw new IllegalStateException(
+                    "A2A-T client initialization failed for " + getClass().getSimpleName(), e);
         }
     }
 
@@ -134,9 +144,6 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         if (a2atServer != null) {
             return a2atServer;
         }
-        if (Boolean.getBoolean("a2at.llm.disabled")) {
-            return null;
-        }
         String env = resolveEnvPath();
         if (env == null || env.isBlank()) {
             return null;
@@ -145,11 +152,8 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
             a2atServer = new net.openan.a2at.sdk.server.A2ATServer(Path.of(env));
             return a2atServer;
         } catch (Exception e) {
-            log.warn(
-                    "[{}] A2ATServer init failed, task validation disabled: {}",
-                    getClass().getSimpleName(),
-                    e.getMessage());
-            return null;
+            throw new IllegalStateException(
+                    "A2A-T server initialization failed for " + getClass().getSimpleName(), e);
         }
     }
 
@@ -203,7 +207,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         try {
             String prePositionedExt = PrePositionedExtensionHandler.detect(ctx);
             if (prePositionedExt != null) {
-                if (prePositionedExt.contains("Notification")) {
+                if (A2ATExtension.NOTIFICATION_T.uri().equals(prePositionedExt)) {
                     handleNotificationSubscription(ctx, emitter);
                 } else {
                     prePositionedHandler.handle(
@@ -249,6 +253,26 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         String agentTag = getClass().getSimpleName();
         String notifUri =
                 "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1";
+        Map<String, Object> requestMetadata = ctx.getMessage().metadata();
+        Object promptValue = requestMetadata.entrySet().stream()
+                .filter(entry -> entry.getKey().contains("Notification-T"))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse("");
+        String prompt = promptValue instanceof String text ? text : String.valueOf(promptValue);
+        Object templateUri = requestMetadata.get(
+                net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);
+        try {
+            prePositionedHandler.acceptNotification(prompt, templateUri, agentTag);
+        } catch (Exception validationError) {
+            log.warn(
+                    "[{}] Notification-T rejected: {}",
+                    agentTag,
+                    validationError.getMessage());
+            emitter.fail(buildStatusMessage(
+                    contextId, taskId, "Notification-T validation failed"));
+            return;
+        }
         log.info(
                 "[{}] NOTIFICATION_SUBSCRIBED taskId={}, contextId={}, action=keep-stream-open",
                 agentTag,
@@ -265,8 +289,19 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 "订阅成功，启动业务抢通事件上报任务",
                 Map.of());
         while (!Thread.currentThread().isInterrupted()) {
-            String result = notificationQueue.poll(30, TimeUnit.SECONDS);
+            long heartbeatSeconds = Math.max(
+                    1L, Long.getLong("a2at.notification.heartbeat.seconds", 30L));
+            String result = notificationQueue.poll(heartbeatSeconds, TimeUnit.SECONDS);
             if (result == null) {
+                emitStatus(
+                        emitter,
+                        TaskState.TASK_STATE_WORKING,
+                        contextId,
+                        taskId,
+                        "Notification-T heartbeat",
+                        Map.of(
+                                "notificationHeartbeat", true,
+                                "timestamp", java.time.Instant.now().toString()));
                 continue;
             }
             log.info(
@@ -290,7 +325,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         } else {
             log.info(
                     "[{}] Parameters sufficient, skipping negotiation", getClass().getSimpleName());
-            runBusinessAndComplete(ctx, emitter, input, null);
+            runBusinessAndComplete(ctx, emitter, input);
         }
     }
 
@@ -298,11 +333,8 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         ServerCallContext callContext = ctx.getCallContext();
         if (callContext == null) return false;
         String negUri = NegotiationUtils.NEGOTIATION_T_URI;
-        if (callContext.isExtensionRequested(negUri)) return true;
-        for (String ext : callContext.getRequestedExtensions()) {
-            if (ext.toUpperCase(java.util.Locale.ROOT).contains("NEGOTIATION-T")) return true;
-        }
-        return false;
+        return callContext.isExtensionRequested(negUri)
+                || callContext.getRequestedExtensions().contains(negUri);
     }
 
     private boolean isNegotiationReply(RequestContext ctx) {
@@ -323,60 +355,27 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 ctx.getMessage() != null ? ctx.getMessage().metadata() : null;
         net.openan.a2at.sdk.core.model.NegotiationContext negotiationCtx =
                 parseNegotiationContext(meta);
-        String acceptText = null;
         if (client != null) {
             try {
-                FilledParamData filled = client.validateProposePromptAndDataFilling(
+                FilledParamData filled = client.validateAcceptPromptAndDataFilling(
                         cleanInput, negotiationCtx, buildNegotiationParamSchema(),
-                        StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE);
+                        StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
                 if (filled != null && filled.data() != null && !filled.data().isEmpty()) {
                     log.info("[{}] Negotiation params validated and filled: {} keys",
                             getClass().getSimpleName(), filled.data().keySet());
                 }
             } catch (Exception e) {
-                log.warn("[{}] validateProposePromptAndDataFilling failed: {}",
+                log.warn("[{}] validateAcceptPromptAndDataFilling rejected the follow-up: {}",
                         getClass().getSimpleName(), e.getMessage());
+                emitter.fail(buildStatusMessage(
+                        ctx.getContextId(),
+                        ctx.getTaskId(),
+                        "Negotiation-T Accept validation failed"));
+                return;
             }
-            acceptText = renderAcceptText(client, negotiationCtx);
         }
         log.info("[{}] Follow-up received, re-executing business", getClass().getSimpleName());
-        runBusinessAndComplete(ctx, emitter, cleanInput, acceptText);
-    }
-
-    /**
-     * Renders the Negotiation-T Accept for the received propose. Rendering failures are logged
-     * only (null return); the business proceeds regardless.
-     */
-    private String renderAcceptText(
-            A2ATClient client, net.openan.a2at.sdk.core.model.NegotiationContext negotiationCtx) {
-        try {
-            net.openan.a2at.sdk.core.model.NegotiationContext acceptCtx =
-                    negotiationCtx != null
-                            ? negotiationCtx
-                            : new net.openan.a2at.sdk.core.model.NegotiationContext(
-                                    java.util.UUID.randomUUID().toString(),
-                                    1,
-                                    net.openan.a2at.sdk.core.model.NegotiationContext
-                                            .DEFAULT_MAX_ROUNDS);
-            net.openan.a2at.sdk.core.model.MetadataContent mc =
-                    client.generateNegotiationAcceptPromptFromText(
-                            "同意补充所缺参数，信息已完整",
-                            acceptCtx,
-                            StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
-            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
-                log.info(
-                        "[{}] Negotiation Accept rendered via {}",
-                        getClass().getSimpleName(),
-                        mc.templateUri());
-                return mc.promptText();
-            }
-        } catch (Exception e) {
-            log.warn(
-                    "[{}] Accept rendering failed: {}",
-                    getClass().getSimpleName(),
-                    e.getMessage());
-        }
-        return null;
+        runBusinessAndComplete(ctx, emitter, cleanInput);
     }
 
     /**
@@ -395,19 +394,12 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     private void requestNegotiation(RequestContext ctx, AgentEmitter emitter, String input) {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
-        String negId = java.util.UUID.randomUUID().toString();
-        String negText = renderProposeText(negId, input);
-        // The content layer is stateless — the agent owns the session context. Serialize it
-        // into the propose metadata (negotiation_context key) so the client-side engine can
-        // parse it and advance rounds itself, mirroring the official demo pattern.
-        Map<String, Object> contextMap = new LinkedHashMap<>();
-        contextMap.put("id", negId);
-        contextMap.put("round", 1);
-        contextMap.put(
-                "maxRounds",
-                net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-        Map<String, Object> metadata =
-                NegotiationUtils.negotiationResponseMetadata(negText, contextMap);
+        net.openan.a2at.sdk.core.model.NegotiationContext negotiationContext =
+                new net.openan.a2at.sdk.core.model.NegotiationContext(
+                        java.util.UUID.randomUUID().toString(),
+                        1,
+                        net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+        Map<String, Object> metadata = renderProposeMetadata(negotiationContext, input);
         Message proposeMessage =
                 Message.builder()
                         .messageId(java.util.UUID.randomUUID().toString())
@@ -424,49 +416,42 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     }
 
     /**
-     * Renders the propose text through the SDK content engine when available: the subclass's
+     * Renders the propose text through the SDK content engine: the subclass's
      * {@link #proposeTemplateUri()} picks the template, {@link #buildProposeContent(String)}
-     * supplies the typed content, and the SDK renders deterministically (no LLM). Falls back to
-     * {@link #defaultNegotiationText()} when the SDK client is unavailable or rendering fails.
+     * supplies the typed content, and the SDK renders deterministically (no LLM). Missing SDK
+     * configuration, missing typed content, or rendering failure rejects the task.
      */
-    private String renderProposeText(String negotiationId, String input) {
+    private Map<String, Object> renderProposeMetadata(
+            net.openan.a2at.sdk.core.model.NegotiationContext negotiationContext,
+            String input) {
         A2ATClient client = a2at();
         net.openan.a2at.sdk.negotiation.content.NegotiationProposeContent content =
                 buildProposeContent(input);
-        if (client == null || content == null) {
-            return defaultNegotiationText().replace("PLACEHOLDER_NEGOTIATION_ID", negotiationId);
+        if (client == null) {
+            throw new IllegalStateException("A2A-T client is required for Negotiation-T propose");
         }
-        try {
-            net.openan.a2at.sdk.core.model.NegotiationContext contentCtx =
-                    new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            negotiationId,
-                            1,
-                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-            net.openan.a2at.sdk.core.model.MetadataContent mc =
-                    client.generateNegotiationProposePromptFromData(
-                            new net.openan.a2at.sdk.negotiation.content.NegotiationProposeData(
-                                    contentCtx, content),
-                            proposeTemplateUri());
-            if (mc != null && mc.promptText() != null && !mc.promptText().isEmpty()) {
-                log.info(
-                        "[{}] SDK-rendered propose via {}: {} chars",
-                        getClass().getSimpleName(),
-                        mc.templateUri(),
-                        mc.promptText().length());
-                return mc.promptText();
-            }
-        } catch (Exception e) {
-            log.warn(
-                    "[{}] SDK propose rendering failed ({}); using default negotiation text",
-                    getClass().getSimpleName(),
-                    e.getMessage());
+        if (content == null) {
+            throw new IllegalStateException("Typed Negotiation-T propose content is required");
         }
-        return defaultNegotiationText().replace("PLACEHOLDER_NEGOTIATION_ID", negotiationId);
+        net.openan.a2at.sdk.core.model.MetadataContent mc =
+                client.generateNegotiationProposePromptFromData(
+                        new net.openan.a2at.sdk.negotiation.content.NegotiationProposeData(
+                                negotiationContext, content),
+                        proposeTemplateUri());
+        if (mc == null || mc.promptText() == null || mc.promptText().isEmpty()) {
+            throw new IllegalStateException("A2A-T SDK returned empty Negotiation-T propose");
+        }
+        log.info(
+                "[{}] SDK-rendered propose via {}: {} chars",
+                getClass().getSimpleName(),
+                mc.templateUri(),
+                mc.promptText().length());
+        return new LinkedHashMap<>(mc.buildMetadataContent());
     }
 
     /** Run business logic, emit artifact, and complete the task. */
     private void runBusinessAndComplete(
-            RequestContext ctx, AgentEmitter emitter, String input, String acceptText) {
+            RequestContext ctx, AgentEmitter emitter, String input) {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
         long started = System.nanoTime();
@@ -478,13 +463,6 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 input != null ? input.length() : 0);
         String response = executeBusiness(ctx, emitter, input);
         Map<String, Object> metadata = buildResponseMetadata(ctx, response);
-        if (acceptText != null && !acceptText.isEmpty()) {
-            // Negotiation Accept rides with the result artifact (not as a standalone agent
-            // Message, which would close the SSE stream before the final artifact). A dedicated
-            // key — NOT the Negotiation-T extension URI, which the engine treats as the
-            // "negotiation needed" trigger signal and would loop on.
-            metadata.put("negotiation_accept", acceptText);
-        }
         List<Part<?>> parts = List.of(new TextPart(response));
         emitter.addArtifact(parts, "result", buildArtifactName(), metadata, false, true);
         emitStatus(
@@ -543,7 +521,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
      * </ul>
      *
      * @param input the task input text
-     * @return typed content, or null to fall back to {@link #defaultNegotiationText()}
+     * @return typed content; null rejects negotiation because raw fallbacks are not protocol-safe
      */
     protected net.openan.a2at.sdk.negotiation.content.NegotiationProposeContent buildProposeContent(
             String input) {
@@ -569,19 +547,33 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                     input, buildTaskParamSchema(), taskTemplateUri());
             Map<String, Object> data = filled != null ? filled.data() : null;
             if (data == null) {
-                return false;
+                log.info("[{}] Task validation returned no data; negotiation needed",
+                        getClass().getSimpleName());
+                return true;
             }
-            for (Map.Entry<String, Object> entry : data.entrySet()) {
-                Object value = entry.getValue();
+            Object properties = buildTaskParamSchema().get("properties");
+            java.util.Set<String> expectedFields =
+                    properties instanceof Map<?, ?> propertyMap
+                            ? propertyMap.keySet().stream().map(String::valueOf)
+                                    .collect(java.util.stream.Collectors.toCollection(
+                                            java.util.LinkedHashSet::new))
+                            : data.keySet();
+            for (String field : expectedFields) {
+                Object value = data.get(field);
                 if (value == null || (value instanceof String s && s.isBlank())) {
                     log.info("[{}] Task param '{}' is blank; negotiation needed",
-                            getClass().getSimpleName(), entry.getKey());
+                            getClass().getSimpleName(), field);
                     return true;
                 }
             }
             return false;
-        } catch (Exception e) {
-            // Validation rejected (semantic/rule failure) means the prompt is not usable as-is.
+        } catch (ContentValidationException e) {
+            if (!A2ATErrorCodes.VALIDATION_SEMANTIC_REJECTED.equals(e.getCode())
+                    && !A2ATErrorCodes.SLOT_VALIDATION_ERROR.equals(e.getCode())) {
+                throw e;
+            }
+            // A semantic/slot rejection is resolvable through Negotiation-T. Infrastructure and
+            // configuration failures are propagated instead of misreported as missing data.
             log.info("[{}] Task validation failed ({}); negotiation needed",
                     getClass().getSimpleName(), e.getMessage());
             return true;
@@ -610,20 +602,10 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         return getClass().getSimpleName() + " result";
     }
 
-    /** Default negotiation text shown when A2ATClient is unavailable. */
-    protected String defaultNegotiationText() {
-        // Mirrors the SDK information-propose template without the context section (the SDK
-        // carries id/round/maxRounds in the negotiationContext metadata key since 2026-08).
-        return "## 信息协商\n请根据<所需信息项>补充相关内容。\n\n"
-                + "## 所需信息项\n1. 接入端口名称，举例：P533-珠江旧城-PTN3900-23-TPA1EG24-1\n"
-                + "2. 投诉分类，举例：专线质差\n"
-                + "缺失项之间的关系：以上参数均为必选，缺少无法启动诊断";
-    }
-
     /**
      * Parameter JSON Schema for the SDK validate-and-fill pipeline: the business parameters this
-     * agent expects the negotiation follow-up to carry. Mirrors the missing-info items of
-     * {@link #defaultNegotiationText()}.
+     * agent expects the negotiation follow-up to carry. Mirrors the typed information-propose
+     * items returned by {@link #buildProposeContent(String)}.
      */
     protected Map<String, Object> buildNegotiationParamSchema() {
         Map<String, Object> properties = new LinkedHashMap<>();
@@ -643,59 +625,20 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     /**
      * Parses the SDK-carried negotiation context for the validate APIs.
      *
-     * <p>Primary source: the {@code negotiationContext} metadata key — but the SDK's {@code
-     * buildMetadataContent} only embeds {@code id} there, so as a fallback the stateful {@code
-     * negotiation_context} map is synthesized (covering both the raw context shape and the
-     * receiveNegotiation-result shape wrapping it under "context"). Returns null when neither is
-     * usable; the SDK validate APIs treat a null context as not-a-negotiation-message.
+     * <p>The latest SDK serializes {@code id}, {@code round}, and {@code maxRounds} under the
+     * canonical {@code negotiationContext} metadata key. The content layer remains stateless;
+     * callers own and advance this value.
      */
     protected static net.openan.a2at.sdk.core.model.NegotiationContext parseNegotiationContext(
             Map<String, Object> metadata) {
         if (metadata == null) {
             return null;
         }
-        Object raw =
-                metadata.get(
-                        net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
-        if (raw instanceof Map<?, ?> contextMap) {
-            try {
-                Object id = contextMap.get("id");
-                Object round = contextMap.get("round");
-                Object maxRounds = contextMap.get("maxRounds");
-                if (id instanceof String s && round instanceof Number r && maxRounds instanceof Number m) {
-                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s, r.intValue(), m.intValue());
-                }
-            } catch (IllegalArgumentException e) {
-                log.debug(
-                        "[{}] Malformed negotiationContext metadata: {}",
-                        NegotiationBaseAgentExecutor.class.getSimpleName(),
-                        e.getMessage());
-            }
-        }
-        Object stateful = metadata.get("negotiation_context");
-        if (stateful instanceof Map<?, ?> outer) {
-            Map<?, ?> stateMap = outer;
-            Object inner = outer.get("context");
-            if (inner instanceof Map<?, ?> innerMap && innerMap.get("negotiationId") != null) {
-                stateMap = innerMap;
-            }
-            Object id = stateMap.get("negotiationId") != null
-                    ? stateMap.get("negotiationId")
-                    : stateMap.get("id");
-            Object round = stateMap.get("round");
-            if (id instanceof String s && round instanceof Number r) {
-                try {
-                    return new net.openan.a2at.sdk.core.model.NegotiationContext(
-                            s,
-                            r.intValue(),
-                            net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
-                } catch (IllegalArgumentException ignored) {
-                    // fall through
-                }
-            }
-        }
-        return null;
+        Object raw = metadata.get(
+                net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY);
+        return raw instanceof Map<?, ?> contextMap
+                ? dev.openan.workflow.engine.client.A2ATContentFacade.contextFromMap(contextMap)
+                : null;
     }
 
     private static long elapsedMillis(long startedNanos) {

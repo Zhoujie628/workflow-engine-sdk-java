@@ -22,8 +22,6 @@ package dev.openan.workflow.engine.examples.workbench;
 import dev.openan.workflow.engine.examples.util.LlmHelper;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.DefaultControlPoint;
-import dev.openan.workflow.engine.client.A2ATExtension;
-import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
 import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.TaskRequest;
@@ -32,7 +30,6 @@ import dev.openan.workflow.engine.model.TaskResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -44,7 +41,7 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  *
  * <p>Handles task dispatch (with city-specific message enrichment), route decisions (fault-based
  * routing to recovery steps), and negotiation responses. Authorization-T and Notification-T are
- * pre-positioned before the workflow starts, not handled here.
+ * initiated independently of the workflow, not handled here.
  *
  * <p>SRP: this class only contains workflow decision logic, separating it from the agent executor
  * that handles message I/O.
@@ -104,14 +101,15 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
     /**
      * Build the city-scoped structured data for the target agent's step. The upstream context
      * (which mixes both cities' info) is NOT forwarded — each sub-agent receives a clean,
-     * self-contained complaint with only its own scope. City1 goes out with blank slots (spec
-     * case 7.3: triggers negotiation); City2 with complete parameters.
+     * self-contained complaint with only its own scope. Both production workflow branches carry
+     * complete diagnosis input. Negotiation-T protocol cases are exercised independently and do
+     * not alter this main business flow.
      */
     private static java.util.Map<String, Object> buildTaskData(String step) {
         return switch (step) {
             case "diagnosis_city1" ->
                     dev.openan.workflow.engine.examples.demo.SpnCasePrompts
-                            .privateLineComplaintDataBlankObject();
+                            .privateLineComplaintData();
             case "diagnosis_city2" ->
                     dev.openan.workflow.engine.examples.demo.SpnCasePrompts
                             .privateLineComplaintDataCity2();
@@ -127,28 +125,16 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
         String step = request.getStepName();
         String agentName = request.getAgentName();
         // Structured-data track: hand over the city-scoped complaint fields + schema; the SDK
-        // renders the Task-T prompt deterministically (no hand-written prompt text).
-        // For diagnosis_city1, activate Negotiation-T extension alongside (spec case 7.3:
-        // missing params trigger negotiation). The ExtensionInterceptor adds it to the
-        // A2A-Extensions header when the metadata key is present.
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        if ("diagnosis_city1".equals(step)) {
-            metadata.put(NegotiationUtils.NEGOTIATION_T_URI, "");
-        }
+        // renders the Task-T prompt through its schema-aware pipeline (no hand-written prompt).
         String partsText = "创建专线业务投诉诊断任务";
         Map<String, Object> taskData = buildTaskData(step);
-        return engineClient
-                .sendMessageFromData(
-                        agentName,
-                        partsText,
-                        taskData,
-                        dev.openan.workflow.engine.examples.demo.SpnCasePrompts
-                                .privateLineComplaintSchema(),
-                        net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT,
-                        metadata)
+        return sendTaskWithRenderingRetry(
+                        engineClient, agentName, partsText, taskData, 1)
                 .thenApply(
                         r -> {
-                            boolean success = r.getText() != null && !r.getText().isEmpty();
+                            boolean success =
+                                    r.getTaskState() != null
+                                            && r.getTaskState().contains("TASK_STATE_COMPLETED");
                             log.info(
                                     "[onTask] Response from {}: {} chars, success={}",
                                     agentName,
@@ -157,6 +143,9 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                             return TaskResponse.builder()
                                     .success(success)
                                     .output(r.getText())
+                                    .error(success
+                                            ? null
+                                            : "Agent returned state=" + r.getTaskState())
                                     .build();
                         })
                 .exceptionally(
@@ -167,6 +156,48 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                                     .error("Agent call failed: " + e.getMessage())
                                     .build();
                         });
+    }
+
+    private CompletableFuture<dev.openan.workflow.engine.model.SendMessageResult>
+            sendTaskWithRenderingRetry(
+                    WorkflowEngineClient engineClient,
+                    String agentName,
+                    String message,
+                    Map<String, Object> taskData,
+                    int attempt) {
+        return engineClient
+                .sendMessageFromData(
+                        agentName,
+                        message,
+                        taskData,
+                        dev.openan.workflow.engine.examples.demo.SpnCasePrompts
+                                .privateLineComplaintSchema(),
+                        net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT)
+                .exceptionallyCompose(error -> {
+                    Throwable cause = unwrap(error);
+                    if (attempt < 3
+                            && cause.getMessage() != null
+                            && cause.getMessage().contains("Task-T fromData rendering failed")) {
+                        log.warn(
+                                "[onTask] SDK Task-T rendering failed for {}, retry={}/3: {}",
+                                agentName,
+                                attempt + 1,
+                                cause.getMessage());
+                        return sendTaskWithRenderingRetry(
+                                engineClient, agentName, message, taskData, attempt + 1);
+                    }
+                    return CompletableFuture.failedFuture(cause);
+                });
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while ((current instanceof java.util.concurrent.CompletionException
+                        || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     @Override
@@ -190,7 +221,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
             String stepName, Map<String, Object> results, List<JumpCondition> conditions) {
         // merge_analysis has an unconditional next -> endNode, so the executor
         // never calls onRoute for it. Recovery is self-triggered by SPN agents
-        // via the pre-positioned Authorization-T whitelist and reported through
+        // via the active Authorization-T whitelist and reported through
         // the Notification-T channel. Just delegate to the default routing.
         return super.onRoute(stepName, results, conditions);
     }
