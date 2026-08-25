@@ -26,8 +26,10 @@ import java.util.function.Predicate;
  *
  * <p>Replaces the previous {@code StreamingOrderHttpSessionClient} which relied on the internal
  * RSocket-RPC {@code OrderHttpSessionClient} and directly accessed the vendor's shaded
- * {@code HttpSessionService} field. This adapter uses only the public API surface described in
- * the Eastcom instruction-platform interface specification v1.8 (2026-01-27):
+ * {@code HttpSessionService} field. Requests use the public API surface described in the Eastcom
+ * instruction-platform interface specification v1.8 (2026-01-27). Client construction additionally
+ * installs the isolated {@link EastcomOrder118ByteBufWorkaround} required by the pinned vendor
+ * version:
  * <ul>
  *   <li>{@code HttpClient.create(serverInfo, config)} - no explicit login/init/logout
  *   <li>{@code .post().uri(path).header(name, value).body(obj).send()} - synchronous HTTP
@@ -57,7 +59,7 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
         HttpRequestConfig config = HttpRequestConfig.builder()
                 .deviceName(ne)
                 .build();
-        this.httpClient = HttpClient.create(serverInfo, config);
+        this.httpClient = EastcomOrder118ByteBufWorkaround.createClient(serverInfo, config);
         // HTTPS to the target device is handled by the platform internally.
         // HttpClient.secure() would configure TLS on the RSocket transport and corrupt
         // the connection. Do not call .secure() here.

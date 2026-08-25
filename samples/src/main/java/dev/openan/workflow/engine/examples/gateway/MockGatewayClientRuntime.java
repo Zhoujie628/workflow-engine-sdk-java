@@ -91,14 +91,14 @@ public final class MockGatewayClientRuntime
     public org.a2aproject.sdk.spec.Task getTask(
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
-        throw new UnsupportedOperationException("getTask not supported by gateway runtime");
+        return delegate.getTask(agentCard, taskId, callContext);
     }
 
     @Override
     public org.a2aproject.sdk.spec.Task cancelTask(
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
-        throw new UnsupportedOperationException("cancelTask not supported by gateway runtime");
+        return delegate.cancelTask(agentCard, taskId, callContext);
     }
 
     @Override
@@ -106,7 +106,7 @@ public final class MockGatewayClientRuntime
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext,
             java.util.function.Consumer<ClientEvent> eventSink) {
-        throw new UnsupportedOperationException("subscribeToTask not supported by gateway runtime");
+        return delegate.subscribeToTask(agentCard, taskId, callContext, eventSink);
     }
 
     @Override

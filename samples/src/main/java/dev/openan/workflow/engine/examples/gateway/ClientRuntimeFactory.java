@@ -50,7 +50,6 @@ public final class ClientRuntimeFactory {
     private final Mode mode;
     private final String mockGatewayUrl;
     private final OrderGatewayClientRuntime.OrderConfig orderConfig;
-    private volatile OrderGatewayClientRuntime sharedOrderRuntime;
 
     public ClientRuntimeFactory(
             WorkbenchClientProperties workbench,
@@ -65,11 +64,9 @@ public final class ClientRuntimeFactory {
                             + "simulator at 127.0.0.1:26401; otherwise configure the real "
                             + "Eastcom platform host and port");
         }
-        // TESTING: use HttpClient API even with simulator enabled
-        Mode effectiveMode = parsedMode;
-        this.mode = effectiveMode;
+        this.mode = parsedMode;
         this.orderConfig =
-                effectiveMode == Mode.ORDER
+                parsedMode == Mode.ORDER
                         ? buildOrderConfig(
                                 order.getHost(),
                                 order.getPort(),
@@ -93,12 +90,7 @@ public final class ClientRuntimeFactory {
         return switch (mode) {
             case DIRECT -> null;
             case MOCK -> new MockGatewayClientRuntime(mockGatewayUrl);
-            case ORDER -> {
-                if (sharedOrderRuntime == null) {
-                    sharedOrderRuntime = new OrderGatewayClientRuntime(orderConfig);
-                }
-                yield sharedOrderRuntime;
-            }
+            case ORDER -> new OrderGatewayClientRuntime(orderConfig);
         };
     }
 

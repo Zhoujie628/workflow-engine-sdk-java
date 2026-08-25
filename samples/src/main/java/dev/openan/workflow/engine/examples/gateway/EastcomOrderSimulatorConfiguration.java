@@ -6,7 +6,7 @@ package dev.openan.workflow.engine.examples.gateway;
 
 import dev.openan.workflow.engine.examples.gateway.EastcomOrderSimulatorServer;
 import dev.openan.workflow.engine.examples.config.OrderGatewayProperties;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,7 +14,9 @@ import java.util.Map;
 
 /** Spring-managed lifecycle for the sample-only Eastcom protocol simulator. */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "a2a.order.simulator-enabled", havingValue = "true")
+@ConditionalOnExpression(
+        "'${a2a.transport-mode:order}'.equalsIgnoreCase('order')"
+                + " && '${a2a.order.simulator-enabled:false}'.equalsIgnoreCase('true')")
 public class EastcomOrderSimulatorConfiguration {
 
     @Bean(destroyMethod = "close")

@@ -26,7 +26,10 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.google.protobuf.util.JsonFormat;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
+import dev.openan.workflow.engine.client.A2ATExtension;
+import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.ConversationScopedA2AJavaClientRuntime;
+import dev.openan.workflow.engine.model.SendMessageResult;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
@@ -36,6 +39,7 @@ import org.a2aproject.sdk.grpc.SendMessageRequest;
 import org.a2aproject.sdk.grpc.utils.ProtoUtils;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.MessageSendParams;
+import org.a2aproject.sdk.spec.Task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +50,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.TimeUnit;
@@ -56,10 +61,11 @@ import java.util.function.Predicate;
 /**
  * A2A client runtime backed by the Eastcom Order SDK.
  *
- * <p>The adapter is deliberately split into routing, conversation-scoped session management and
- * response parsing. An authenticated Order session is reused for all A2A requests in the same
- * {@code contextId + NE} conversation, including Negotiation-T follow-ups, and access to that
- * mutable vendor client is serialized. Agent-to-NE routing is supplied by {@link
+ * <p>The adapter is deliberately split into routing, conversation-scoped client management and
+ * response parsing. A logical Order client is reused for A2A requests in the same {@code contextId
+ * + NE + channel} conversation and access to that client is serialized. The public vendor {@code
+ * HttpClient} API does not expose login/init/logout semantics, so this logical lifecycle must not
+ * be interpreted as a physical platform session. Agent-to-NE routing is supplied by {@link
  * AgentGatewayRouteResolver}. The selected endpoint and response consumption mode follow the
  * streaming capability declared by the AgentCard.
  */
@@ -84,8 +90,12 @@ public final class OrderGatewayClientRuntime
     }
     private static final String INCLUDE_SENSITIVE_HEADERS =
             "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS";
+    private static final String INCLUDE_BODY = "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY";
+    private static final String MAX_BODY_CHARS = "WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS";
+    private static final int DEFAULT_MAX_BODY_CHARS = 100_000;
     private static final String REQUEST_CHANNEL = "request";
     private static final String NOTIFICATION_CHANNEL = "notification";
+    private static final String TASK_SUBSCRIPTION_CHANNEL = "task-subscription";
 
     private final OrderConfig config;
     private final AgentGatewayRouteResolver routeResolver;
@@ -236,22 +246,134 @@ public final class OrderGatewayClientRuntime
     public org.a2aproject.sdk.spec.Task getTask(
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
-        throw new UnsupportedOperationException("getTask not supported by gateway runtime");
+        AgentGatewayRoute route = routeResolver.resolve(agentCard);
+        return executeTaskRequest(
+                agentCard,
+                route,
+                taskId,
+                "GET",
+                route.taskPath(null, taskId, ""),
+                "",
+                callContext);
     }
 
     @Override
     public org.a2aproject.sdk.spec.Task cancelTask(
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext) {
-        throw new UnsupportedOperationException("cancelTask not supported by gateway runtime");
+        AgentGatewayRoute route = routeResolver.resolve(agentCard);
+        return executeTaskRequest(
+                agentCard,
+                route,
+                taskId,
+                "POST",
+                route.taskPath(null, taskId, ":cancel"),
+                "{}",
+                callContext);
     }
 
     @Override
-    public java.util.concurrent.CompletableFuture<dev.openan.workflow.engine.model.SendMessageResult> subscribeToTask(
+    public CompletableFuture<SendMessageResult> subscribeToTask(
             AgentCard agentCard, String taskId,
             org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext callContext,
             java.util.function.Consumer<ClientEvent> eventSink) {
-        throw new UnsupportedOperationException("subscribeToTask not supported by gateway runtime");
+        if (!supportsStreaming(agentCard)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException(
+                            "subscribeToTask requires agent streaming capability: "
+                                    + agentCard.name()));
+        }
+        return CompletableFuture.supplyAsync(
+                () -> subscribeToTaskBlocking(agentCard, taskId, callContext, eventSink));
+    }
+
+    private Task executeTaskRequest(
+            AgentCard agentCard,
+            AgentGatewayRoute route,
+            String taskId,
+            String method,
+            String path,
+            String body,
+            ClientCallContext callContext) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        ConversationSessionHandle handle = null;
+        try {
+            // Task query/cancel has no conversation id in the A2A client API. Use an ephemeral
+            // authenticated Order session so it cannot interfere with a workflow or Notification.
+            handle = sessionManager.acquire(null, route, REQUEST_CHANNEL);
+            OrderHttpSessionStrRequest request =
+                    OrderHttpSessionStrRequest.newBuilder()
+                            .setUriPath(path)
+                            .setMethod(method)
+                            .putAllHeaders(extractHeaders(callContext, false))
+                            .setBody(body)
+                            .build();
+            logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
+            OrderHttpSessionStrResponse response =
+                    handle.session().execute(request, config.timeoutMillis);
+            logProtocolResponse(requestId, agentCard.name(), 1, response);
+            validateResponse(response);
+            org.a2aproject.sdk.grpc.Task.Builder task =
+                    org.a2aproject.sdk.grpc.Task.newBuilder();
+            JsonFormat.parser().merge(response.getBody(), task);
+            handle.release();
+            handle = null;
+            log.info(
+                    "[OrderGateway] TASK_{} requestId={}, agent={}, ne={}, taskId={}, path={}",
+                    method,
+                    requestId,
+                    agentCard.name(),
+                    route.ne(),
+                    taskId,
+                    path);
+            return ProtoUtils.FromProto.task(task.build());
+        } catch (Exception e) {
+            if (handle != null) handle.invalidate();
+            throw new IllegalStateException(
+                    "Eastcom gateway task " + method + " failed for " + taskId + ": "
+                            + e.getMessage(),
+                    e);
+        }
+    }
+
+    private SendMessageResult subscribeToTaskBlocking(
+            AgentCard agentCard,
+            String taskId,
+            ClientCallContext callContext,
+            Consumer<ClientEvent> eventSink) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        AgentGatewayRoute route = routeResolver.resolve(agentCard);
+        ConversationSessionHandle handle = null;
+        try {
+            handle = sessionManager.acquire(taskId, route, TASK_SUBSCRIPTION_CHANNEL);
+            OrderHttpSessionStrRequest request =
+                    OrderHttpSessionStrRequest.newBuilder()
+                            .setUriPath(route.taskPath(null, taskId, ":subscribe"))
+                            .setMethod("POST")
+                            .putAllHeaders(extractHeaders(callContext, true))
+                            .setBody("{}")
+                            .build();
+            logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
+            List<ClientEvent> events =
+                    executeStreaming(
+                            handle.session(), request, eventSink, requestId, agentCard.name());
+            // A task subscription ends at the terminal event; do not retain its authenticated
+            // vendor session. Notification-T has its own explicitly managed long-lived lane.
+            handle.invalidate();
+            handle = null;
+            return SendMessageResult.builder()
+                    .text(A2ATransport.extractResponseText(events))
+                    .task(A2ATransport.extractResponseTask(events))
+                    .taskState(A2ATransport.extractResponseTaskState(events))
+                    .metadata(A2ATransport.extractResponseMetadata(events))
+                    .build();
+        } catch (Exception e) {
+            if (handle != null) handle.invalidate();
+            throw new IllegalStateException(
+                    "Eastcom gateway subscribeToTask failed for " + taskId + ": "
+                            + e.getMessage(),
+                    e);
+        }
     }
 
     @Override
@@ -349,7 +471,7 @@ public final class OrderGatewayClientRuntime
                 requestId,
                 agentName,
                 frame,
-                formatSseFrame(sseFrame));
+                formatProtocolBody(formatSseFrame(sseFrame)));
     }
 
     /**
@@ -435,7 +557,7 @@ public final class OrderGatewayClientRuntime
                 request.getMethod(),
                 request.getUriPath(),
                 formatProtocolHeaders(request.getHeadersMap()),
-                prettyJson(request.getBody()));
+                formatProtocolBody(prettyJson(request.getBody())));
     }
 
     private static void logProtocolResponse(
@@ -456,7 +578,7 @@ public final class OrderGatewayClientRuntime
                 frame,
                 response.getStatus(),
                 formatProtocolHeaders(response.getHeadersMap()),
-                prettyJson(response.getBody()));
+                formatProtocolBody(prettyJson(response.getBody())));
     }
 
     private static String formatProtocolHeaders(Map<String, String> headers) {
@@ -479,11 +601,48 @@ public final class OrderGatewayClientRuntime
     }
 
     private static boolean includeSensitiveHeaders() {
-        String configured = System.getProperty(INCLUDE_SENSITIVE_HEADERS);
-        if (configured == null || configured.isBlank()) {
-            configured = System.getenv(INCLUDE_SENSITIVE_HEADERS);
+        return booleanSetting(INCLUDE_SENSITIVE_HEADERS, false);
+    }
+
+    static String formatProtocolBody(String body) {
+        if (!booleanSetting(INCLUDE_BODY, false)) {
+            return "(body logging disabled)";
         }
-        return Boolean.parseBoolean(configured);
+        String value = body != null ? body : "";
+        int maxChars = intSetting(MAX_BODY_CHARS, DEFAULT_MAX_BODY_CHARS);
+        if (value.length() <= maxChars) {
+            return value;
+        }
+        return value.substring(0, maxChars)
+                + "\n... (truncated, originalChars="
+                + value.length()
+                + ")";
+    }
+
+    private static boolean booleanSetting(String name, boolean defaultValue) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(name);
+        }
+        return value == null || value.isBlank()
+                ? defaultValue
+                : Boolean.parseBoolean(value);
+    }
+
+    private static int intSetting(String name, int defaultValue) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(name);
+        }
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            return parsed > 0 ? parsed : defaultValue;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
     }
 
     private static boolean isSensitiveHeader(String name) {
@@ -516,8 +675,7 @@ public final class OrderGatewayClientRuntime
         if (params.message() == null || params.message().metadata() == null) {
             return REQUEST_CHANNEL;
         }
-        return params.message().metadata().keySet().stream()
-                        .anyMatch(key -> key != null && key.contains("Notification-T"))
+        return params.message().metadata().containsKey(A2ATExtension.NOTIFICATION_T.uri())
                 ? NOTIFICATION_CHANNEL
                 : REQUEST_CHANNEL;
     }
@@ -607,7 +765,7 @@ public final class OrderGatewayClientRuntime
             }
 
             ConversationSessionKey key =
-                    new ConversationSessionKey(route.ne(), channel);
+                    new ConversationSessionKey(contextId, route.ne(), channel);
             while (true) {
                 ensureOpen();
                 ManagedSession entry = sessions.computeIfAbsent(key, ignored -> new ManagedSession());
@@ -651,11 +809,9 @@ public final class OrderGatewayClientRuntime
         }
 
         private boolean closeConversation(String contextId, String ne, String channel) {
-            // Sessions are keyed by NE (not contextId) and reused across conversations.
-            // An explicit closeConversation releases the session for that NE+channel so
-            // a fresh login happens on the next request. During a multi-round negotiation
-            // (follow-up messages) the session stays alive and is reused.
-            ConversationSessionKey key = new ConversationSessionKey(ne, channel);
+            // A conversation owns its logical client. Independent channels targeting the same NE
+            // cannot block or close one another's adapter.
+            ConversationSessionKey key = new ConversationSessionKey(contextId, ne, channel);
             ManagedSession entry = sessions.get(key);
             if (entry == null) {
                 return false;
@@ -680,7 +836,7 @@ public final class OrderGatewayClientRuntime
 
         @Override
         public void close() {
-        if (!closed.compareAndSet(false, true)) {
+            if (!closed.compareAndSet(false, true)) {
                 return;
             }
             for (var entry : new java.util.ArrayList<>(sessions.values())) {
@@ -703,7 +859,7 @@ public final class OrderGatewayClientRuntime
         }
     }
 
-    private record ConversationSessionKey(String ne, String channel) {}
+    private record ConversationSessionKey(String contextId, String ne, String channel) {}
 
     private static final class ManagedSession {
         private final ReentrantLock lock = new ReentrantLock();

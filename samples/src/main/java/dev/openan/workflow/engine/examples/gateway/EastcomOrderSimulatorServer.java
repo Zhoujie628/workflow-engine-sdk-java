@@ -26,6 +26,7 @@ import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.ByteString;
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.StringValue;
 import com.eastcom.apollo.orders.internal.shaded.reactor.core.publisher.Flux;
 import com.eastcom.apollo.orders.internal.shaded.reactor.core.publisher.Mono;
+import com.eastcom.apollo.orders.internal.shaded.reactor.core.Disposable;
 import com.eastcom.apollo.orders.internal.shaded.reactor.core.scheduler.Schedulers;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.order.transport.rpc.RpcServer;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.order.transport.rpc.Transport;
@@ -59,6 +60,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,6 +73,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
@@ -87,10 +92,12 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     private static final Pattern A2A_TERMINAL_STATE =
             Pattern.compile(
                     "\\\"state\\\"\\s*:\\s*\\\"TASK_STATE_(?:COMPLETED|FAILED|CANCELED|REJECTED|INPUT_REQUIRED|AUTH_REQUIRED)\\\"");
-    private static final Pattern A2A_ANY_STATE =
-            Pattern.compile("\\\"state\\\"\\s*:\\s*\\\"TASK_STATE_");
     private static final Pattern A2A_FINAL_EVENT =
             Pattern.compile("\\\"isFinal\\\"\\s*:\\s*true");
+    private static final Pattern RECOVERY_RESULT_ARTIFACT =
+            Pattern.compile(
+                    "\\\"(?:name|artifactId)\\\"\\s*:\\s*\\\"recovery-result\\\"");
+    private static final AtomicBoolean legacyRequestEncodingLogged = new AtomicBoolean();
 
     private final String host;
     private final int port;
@@ -124,6 +131,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         if (server != null) {
             return;
         }
+        service.prepareStart();
         log.info(
                 "[EastcomSimulator] START host={}:{}, transport=TCP, neMappings={}",
                 host,
@@ -144,6 +152,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         if (server == null) {
             return;
         }
+        service.beginShutdown();
+        service.awaitForwardShutdown();
         connectionLogger.closeAll();
         server.stop();
         server = null;
@@ -176,6 +186,26 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
 
     private static String emptyToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    static String decodeRequestData(ByteString data) {
+        try {
+            return StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(data.asReadOnlyByteBuffer())
+                    .toString();
+        } catch (CharacterCodingException invalidUtf8) {
+            // Eastcom SDK 1.1.18 encodes String request bodies with the JVM default charset.
+            // On Windows/JDK 17 that is commonly GBK. The wire model carries no charset, so
+            // the local simulator must recover this legacy encoding.
+            if (legacyRequestEncodingLogged.compareAndSet(false, true)) {
+                log.warn(
+                        "[EastcomSimulator] REQUEST_ENCODING_FALLBACK charset=GB18030, reason=invalid_utf8");
+            }
+            return new String(data.toByteArray(), Charset.forName("GB18030"));
+        }
     }
 
     private static final class SimulatorConnectionLogger
@@ -227,6 +257,10 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         private final String clientId;
         private final String clientSecret;
         private final Map<String, String> neTargets;
+        private final AtomicBoolean shuttingDown = new AtomicBoolean();
+        private final java.util.Set<HttpURLConnection> activeForwardConnections =
+                ConcurrentHashMap.newKeySet();
+        private final Object forwardShutdownMonitor = new Object();
         private volatile String lastResolvedTarget;
         private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
         private final SSLContext sslContext = SslContextFactory.createTrustAll();
@@ -246,6 +280,45 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
 
         private java.util.Set<String> targetNames() {
             return neTargets.keySet();
+        }
+
+        private void prepareStart() {
+            shuttingDown.set(false);
+        }
+
+        private void beginShutdown() {
+            shuttingDown.set(true);
+            // Stop the forwarded HTTP exchanges before disposing the RSocket server. Otherwise a
+            // Notification-T reader can still try to complete its response after the Netty channel
+            // has gone away, which surfaces as a misleading ClosedChannelException on clean exit.
+            activeForwardConnections.forEach(
+                    connection ->
+                            Schedulers.boundedElastic().schedule(connection::disconnect));
+        }
+
+        private void awaitForwardShutdown() {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            synchronized (forwardShutdownMonitor) {
+                while (!activeForwardConnections.isEmpty()) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        log.warn(
+                                "[EastcomSimulator] FORWARD_SHUTDOWN_TIMEOUT active={}, timeoutSeconds=2",
+                                activeForwardConnections.size());
+                        return;
+                    }
+                    try {
+                        TimeUnit.NANOSECONDS.timedWait(forwardShutdownMonitor, remaining);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn(
+                                "[EastcomSimulator] FORWARD_SHUTDOWN_INTERRUPTED active={}",
+                                activeForwardConnections.size());
+                        return;
+                    }
+                }
+            }
+            log.info("[EastcomSimulator] FORWARD_SHUTDOWN_DONE active=0");
         }
 
         @Override
@@ -339,14 +412,29 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             return Flux.create(sink -> {
                 AtomicBoolean headersParsed = new AtomicBoolean(false);
                 AtomicBoolean forwarded = new AtomicBoolean(false);
+                AtomicReference<Disposable> requestSubscription = new AtomicReference<>();
+                AtomicReference<Disposable> forwardSubscription = new AtomicReference<>();
+                Disposable cancelChildren =
+                        () -> {
+                            Disposable forward = forwardSubscription.getAndSet(null);
+                            if (forward != null) {
+                                forward.dispose();
+                            }
+                            Disposable request = requestSubscription.getAndSet(null);
+                            if (request != null) {
+                                request.dispose();
+                            }
+                        };
+                sink.onCancel(cancelChildren);
+                sink.onDispose(cancelChildren);
                 StringBuilder bodyBuf = new StringBuilder();
                 String[] parsedMethod = {"POST"};
                 String[] parsedPath = {"/"};
                 Map<String, String> parsedHeaders = new LinkedHashMap<>();
 
-                requests.subscribe(
+                Disposable requestDisposable = requests.subscribe(
                     req -> {
-                        String data = req.getData().toStringUtf8();
+                        String data = decodeRequestData(req.getData());
                         if (!headersParsed.get() && (data.startsWith("POST") || data.startsWith("GET")
                                 || data.startsWith("PUT") || data.startsWith("DELETE"))) {
                             // Parse HTTP request headers
@@ -404,16 +492,27 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             boolean streaming = forwardUrl.endsWith("/message:stream");
                            log.info("[EastcomSimulator] FORWARD_START method={}, mode={}, target={}, bodyChars={}",
                                    httpMethod, streaming ? "stream" : "send", forwardUrl, body.length());
-                           forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
-                                    .subscribeOn(Schedulers.boundedElastic())
-                                   .subscribe(
-                                       sink::next,
-                                       sink::error,
-                                       () -> {
-                                            // Response Flux completed - complete the sink
-                                            // to close the RSocket channel
-                                            sink.complete();
-                                        });
+                            Disposable forwardDisposable =
+                                    forwardParsed(
+                                                    httpMethod,
+                                                    httpPath,
+                                                    parsedHeaders,
+                                                    body,
+                                                    forwardUrl,
+                                                    streaming)
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .subscribe(
+                                                    sink::next,
+                                                    sink::error,
+                                                    () -> {
+                                                        // Response Flux completed - complete the
+                                                        // sink to close the RSocket channel.
+                                                        sink.complete();
+                                                    });
+                            forwardSubscription.set(forwardDisposable);
+                            if (sink.isCancelled()) {
+                                forwardDisposable.dispose();
+                            }
                         }
                     },
                     sink::error,
@@ -424,6 +523,10 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                         }
                         // If already forwarded, the forwardParsed completion will call sink.complete()
                     });
+                requestSubscription.set(requestDisposable);
+                if (sink.isCancelled()) {
+                    requestDisposable.dispose();
+                }
             });
         }
 
@@ -445,7 +548,13 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                         boolean terminalRound = false;
                         try {
                             connection = openConnection(fForwardUrl);
+                            activeForwardConnections.add(connection);
                             HttpURLConnection activeConnection = connection;
+                            if (shuttingDown.get()) {
+                                activeConnection.disconnect();
+                                sink.complete();
+                                return;
+                            }
                             AtomicBoolean disconnectScheduled = new AtomicBoolean();
                             Runnable disconnect =
                                     () -> {
@@ -458,12 +567,15 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             sink.onDispose(disconnect::run);
                             connection.setRequestMethod(fMethod.isBlank() ? "POST" : fMethod);
                             connection.setDoOutput(true);
-            connection.setConnectTimeout(30_000);
-            // Read timeout must cover LLM-backed OMC processing (A2AT_LLM_TIMEOUT_SECONDS
-            // defaults to 60s). Notification-T streams are no longer long-lived
-            // (ack-and-release), so this only applies to active diagnosis requests.
-            connection.setReadTimeout(65_000);
-            copyHeaders(fHeaders, connection);
+                            connection.setConnectTimeout(30_000);
+                            // The read timeout must cover LLM-backed OMC processing. A
+                            // Notification-T stream remains open until a recovery event or
+                            // lifecycle shutdown explicitly cancels it.
+                            // A short socket timeout is only a cancellation poll for streaming
+                            // calls. Idle Notification-T subscriptions remain open; shutdown can
+                            // nevertheless release their reader promptly and deterministically.
+                            connection.setReadTimeout(streaming ? 1_000 : 65_000);
+                            copyHeaders(fHeaders, connection);
                             try (OutputStream output = connection.getOutputStream()) {
                                 output.write(fBody.getBytes(StandardCharsets.UTF_8));
                             }
@@ -479,19 +591,28 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                 char[] buffer = new char[4096];
                                 StringBuilder terminalScan = new StringBuilder();
                                 boolean terminal = false;
-                                int length;
-                                while (!sink.isCancelled()
-                                        && (length = reader.read(buffer)) != -1) {
+                                while (!sink.isCancelled() && !shuttingDown.get()) {
+                                    int length;
+                                    try {
+                                        length = reader.read(buffer);
+                                    } catch (java.net.SocketTimeoutException idlePoll) {
+                                        continue;
+                                    }
+                                    if (length == -1) {
+                                        break;
+                                    }
                                     chunks++;
                                     String chunk = new String(buffer, 0, length);
                                     log.debug("[EastcomSimulator] FORWARD_CHUNK index={}, chars={}, elapsedMs={}",
                                             chunks, chunk.length(), elapsedMillis(started));
                                     sink.next(chunks == 1 ? responseWithHeader(chunk) : responseChunk(chunk));
                                     terminalScan.append(chunk);
-                                    if (containsA2ATerminalEvent(terminalScan)) {
+                                    if (containsForwardingCompletionEvent(terminalScan)) {
                                         terminal = true;
                                         terminalRound = true;
-                                        log.info("[EastcomSimulator] FORWARD_TERMINAL index={}, action=terminal-drain", chunks);
+                                        log.info(
+                                                "[EastcomSimulator] FORWARD_COMPLETION index={}, action=close-forward",
+                                                chunks);
                                         // Close immediately; do not drain the OMC stream
                                         // (it may stay open and cause read timeout)
                                         sink.next(responseEnd());
@@ -501,9 +622,20 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                         disconnect.run();
                                         return;
                                     }
-if (terminalScan.length() > 32_768) {
+                                    if (terminalScan.length() > 32_768) {
                                         terminalScan.delete(0, terminalScan.length() - 16_384);
                                     }
+                                }
+                                if (sink.isCancelled() || shuttingDown.get()) {
+                                    log.info(
+                                            "[EastcomSimulator] FORWARD_CANCELLED chunks={}, elapsedMs={}, reason={}",
+                                            chunks,
+                                            elapsedMillis(started),
+                                            shuttingDown.get()
+                                                    ? "simulator_shutdown"
+                                                    : "downstream_cancelled");
+                                    sink.complete();
+                                    return;
                                 }
                                 if (!terminal && !sink.isCancelled()) {
                                     input.close();
@@ -523,7 +655,20 @@ if (terminalScan.length() > 32_768) {
                                         status, chunks, elapsedMillis(started));
                             }
                         } catch (Exception e) {
-                            if (e instanceof java.net.SocketTimeoutException && !terminalRound) {
+                            if ((sink.isCancelled() || shuttingDown.get()) && streaming) {
+                                // Closing a long-lived Notification-T channel interrupts the
+                                // forwarded chunked response. HttpURLConnection reports that
+                                // expected cancellation as "Premature EOF".
+                                log.info(
+                                        "[EastcomSimulator] FORWARD_CANCELLED chunks={}, elapsedMs={}, reason={}",
+                                        chunks,
+                                        elapsedMillis(started),
+                                        shuttingDown.get()
+                                                ? "simulator_shutdown"
+                                                : "downstream_cancelled");
+                                sink.complete();
+                            } else if (e instanceof java.net.SocketTimeoutException
+                                    && !terminalRound) {
                                 // Notification-T idle read timeout: complete the response
                                 // gracefully so the RSocket channel releases for the next NE.
                                 // If no data was received (chunks=0), send a proper HTTP
@@ -542,9 +687,16 @@ if (terminalScan.length() > 32_768) {
                                 sink.error(e);
                             }
                         } finally {
-                            if (connection != null && !terminalRound) {
-                                HttpURLConnection connectionToClose = connection;
-                                Schedulers.boundedElastic().schedule(connectionToClose::disconnect);
+                            if (connection != null) {
+                                activeForwardConnections.remove(connection);
+                                synchronized (forwardShutdownMonitor) {
+                                    forwardShutdownMonitor.notifyAll();
+                                }
+                                if (!terminalRound) {
+                                    HttpURLConnection connectionToClose = connection;
+                                    Schedulers.boundedElastic()
+                                            .schedule(connectionToClose::disconnect);
+                                }
                             }
                         }
                     });
@@ -625,48 +777,15 @@ if (terminalScan.length() > 32_768) {
                     .build();
         }
 
-        private static boolean containsA2ATerminalEvent(CharSequence payload) {
+        private static boolean containsForwardingCompletionEvent(CharSequence payload) {
             String normalized = payload.toString().replace("\r\n", "\n");
             int frameStart = 0;
             int frameEnd;
             while ((frameEnd = normalized.indexOf("\n\n", frameStart)) >= 0) {
                 String completeFrame = normalized.substring(frameStart, frameEnd);
                 if (A2A_TERMINAL_STATE.matcher(completeFrame).find()
-                        || A2A_FINAL_EVENT.matcher(completeFrame).find()) {
-                    return true;
-                }
-                frameStart = frameEnd + 2;
-            }
-            return false;
-        }
-
-        private static boolean containsA2AAnyState(CharSequence payload) {
-            String normalized = payload.toString().replace("\r\n", "\n");
-            return A2A_ANY_STATE.matcher(normalized).find()
-                    || A2A_FINAL_EVENT.matcher(normalized).find();
-        }
-
-        /**
-         * Detects any A2A state event within a COMPLETE SSE frame (delimited by \n\n).
-         * Unlike containsA2AAnyState which may match partial data, this method only
-         * returns true when a full SSE frame containing a state field has been received.
-         * This prevents JSON truncation when the state appears mid-frame.
-         *
-         * For Notification-T, the initial TASK_STATE_WORKING frame triggers completion,
-         * allowing the RSocket channel to close and unblock subsequent NE requests.
-         * For Task-T, terminal states (COMPLETED, INPUT_REQUIRED, etc.) trigger completion.
-         * Intermediate WORKING frames for Task-T also trigger completion, but the engine
-         * re-opens a new stream for follow-up requests (Negotiation-T).
-         */
-        private static boolean containsA2AStateInCompleteFrame(CharSequence payload) {
-            String normalized = payload.toString().replace("\r\n", "\n");
-            int frameStart = 0;
-            int frameEnd;
-            while ((frameEnd = normalized.indexOf("\n\n", frameStart)) >= 0) {
-                String completeFrame = normalized.substring(frameStart, frameEnd);
-                if (A2A_ANY_STATE.matcher(completeFrame).find()
                         || A2A_FINAL_EVENT.matcher(completeFrame).find()
-                        || A2A_TERMINAL_STATE.matcher(completeFrame).find()) {
+                        || RECOVERY_RESULT_ARTIFACT.matcher(completeFrame).find()) {
                     return true;
                 }
                 frameStart = frameEnd + 2;
