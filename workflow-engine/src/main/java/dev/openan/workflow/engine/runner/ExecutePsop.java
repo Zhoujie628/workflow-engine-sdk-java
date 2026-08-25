@@ -41,6 +41,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -92,6 +93,8 @@ public class ExecutePsop {
                     onFinish,
             Function<Map<String, Object>, Object> onEvent) {
 
+        Objects.requireNonNull(psop, "psop");
+        Objects.requireNonNull(controlPoint, "controlPoint");
         EventCallback emitter = eventCallback != null ? eventCallback : new EventCallback();
         List<Map<String, Object>> collected = Collections.synchronizedList(new ArrayList<>());
         EventCallback collectingCallback = createCollectingCallback(emitter, collected, onEvent);
@@ -106,6 +109,7 @@ public class ExecutePsop {
                                 credentialsConfigPath,
                                 a2atEnvPath,
                                 collectingCallback);
+        boolean closeClientOnFinish = engineClient == null;
         WorkflowExecutor executor =
                 new WorkflowExecutor(
                         psop,
@@ -127,7 +131,12 @@ public class ExecutePsop {
                 .thenCompose(
                         result ->
                                 finalizeResult(
-                                        result, client, collectingCallback, collected, onFinish));
+                                        result,
+                                        client,
+                                        closeClientOnFinish,
+                                        collectingCallback,
+                                        collected,
+                                        onFinish));
     }
 
     /** Simplified overload without SSL/auth/A2AT config (legacy compatibility). */
@@ -227,9 +236,13 @@ public class ExecutePsop {
         collected.add(m);
         Object typeObj = m.get("type");
         Object dataObj = m.get("data");
-        emitter.onEvent(
-                typeObj != null ? typeObj.toString() : defaultType,
-                dataObj instanceof Map ? (Map<String, Object>) dataObj : Map.of());
+        try {
+            emitter.onEvent(
+                    typeObj != null ? typeObj.toString() : defaultType,
+                    dataObj instanceof Map ? (Map<String, Object>) dataObj : Map.of());
+        } catch (Exception e) {
+            log.warn("[execute_psop] Event callback failed: {}", e.getMessage());
+        }
     }
 
     private static WorkflowEngineClient createEngineClient(
@@ -240,17 +253,16 @@ public class ExecutePsop {
             String credentialsConfigPath,
             String a2atEnvPath,
             EventCallback callback) {
+        WorkflowEngineClientConfig config =
+                WorkflowEngineClientConfig.builder()
+                        .sslVerify(sslVerify)
+                        .caCertsPath(caCertsPath)
+                        .credentialsConfigPath(credentialsConfigPath)
+                        .a2atEnvPath(a2atEnvPath)
+                        .build();
         A2ATransport transport =
-                new A2ATransport(
-                        agentCards,
-                        a2aClientRuntime,
-                        WorkflowEngineClientConfig.builder()
-                                .sslVerify(sslVerify)
-                                .caCertsPath(caCertsPath)
-                                .credentialsConfigPath(credentialsConfigPath)
-                                .a2atEnvPath(a2atEnvPath)
-                                .build());
-        WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
+                new A2ATransport(agentCards, a2aClientRuntime, config);
+        WorkflowEngineClient client = DefaultWorkflowEngineClient.owning(transport, config);
         client.setEventCallback(callback);
         return client;
     }
@@ -268,22 +280,35 @@ public class ExecutePsop {
     private static CompletableFuture<ExecutionResult> finalizeResult(
             ExecutionResult result,
             WorkflowEngineClient client,
+            boolean closeClientOnFinish,
             EventCallback callback,
             List<Map<String, Object>> collected,
             BiFunction<ExecutionResult, List<Map<String, Object>>, CompletableFuture<Void>>
                     onFinish) {
-        emitResultEvent(result, callback);
+        try {
+            emitResultEvent(result, callback);
+        } catch (Exception e) {
+            log.warn("[execute_psop] Result event callback failed: {}", e.getMessage());
+        }
         CompletableFuture<Void> finishFuture = invokeOnFinish(result, collected, onFinish);
         return finishFuture.thenApply(
                 v -> {
-                    log.info(
-                            "[execute_psop] Finished: workflow success={}, history={}",
-                            result.isSuccess(),
-                            result.getHistory() != null ? result.getHistory().size() : 0);
-                    callback.onEvent(EventType.CLOSE, Map.of());
                     try {
-                        client.close();
-                    } catch (Exception ignored) {
+                        log.info(
+                                "[execute_psop] Finished: workflow success={}, history={}",
+                                result.isSuccess(),
+                                result.getHistory() != null ? result.getHistory().size() : 0);
+                        callback.onEvent(EventType.CLOSE, Map.of());
+                    } finally {
+                        if (closeClientOnFinish) {
+                            try {
+                                client.close();
+                            } catch (Exception e) {
+                                log.warn(
+                                        "[execute_psop] Owned client close failed: {}",
+                                        e.getMessage());
+                            }
+                        }
                     }
                     return result;
                 });
@@ -317,12 +342,26 @@ public class ExecutePsop {
         if (onFinish == null) {
             return CompletableFuture.completedFuture(null);
         }
-        return onFinish.apply(result, new ArrayList<>(collected))
-                .exceptionally(
-                        e -> {
-                            log.error("[execute_psop] on_finish failed: {}", e.getMessage());
-                            return null;
-                        });
+        try {
+            List<Map<String, Object>> eventSnapshot;
+            synchronized (collected) {
+                eventSnapshot = new ArrayList<>(collected);
+            }
+            CompletableFuture<Void> completion =
+                    onFinish.apply(result, eventSnapshot);
+            if (completion == null) {
+                log.warn("[execute_psop] on_finish returned null; treating as completed");
+                return CompletableFuture.completedFuture(null);
+            }
+            return completion.exceptionally(
+                    e -> {
+                        log.error("[execute_psop] on_finish failed: {}", e.getMessage());
+                        return null;
+                    });
+        } catch (Exception e) {
+            log.error("[execute_psop] on_finish failed synchronously: {}", e.getMessage());
+            return CompletableFuture.completedFuture(null);
+        }
     }
 
     @SuppressWarnings("unchecked")

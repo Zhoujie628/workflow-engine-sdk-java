@@ -27,13 +27,14 @@ import dev.openan.workflow.engine.model.WorkflowSearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.HttpsURLConnection;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -60,9 +61,7 @@ public class LoadPsop {
         }
         String url = urlBuilder.toString();
         log.info("[Registry] Loading PSOP from {} (ssl_verify={})", url, sslVerify);
-        HttpClient client = createHttpClient(sslVerify);
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
-        HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResult resp = execute("GET", url, null, sslVerify);
         if (resp.statusCode() != 200) {
             throw new RuntimeException("Orchestration center returned " + resp.statusCode());
         }
@@ -79,21 +78,6 @@ public class LoadPsop {
         return load(baseUrl, psopId, null, true);
     }
 
-    /**
-     * @param sslVerify set false for self-signed certs (dev only)
-     * @return ranked list of workflow summaries
-     */
-    private static HttpClient createHttpClient(boolean sslVerify) {
-        HttpClient.Builder b =
-                HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(30))
-                        .followRedirects(HttpClient.Redirect.ALWAYS);
-        if (!sslVerify) {
-            b.sslContext(SslContextFactory.createTrustAll());
-        }
-        return b.build();
-    }
-
     public static List<WorkflowSearchResult> search(
             String baseUrl, String intent, int topN, String accessToken, boolean sslVerify)
             throws Exception {
@@ -106,14 +90,7 @@ public class LoadPsop {
         String url = urlBuilder.toString();
         log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", url, intent, topN);
         String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
-        HttpClient client = createHttpClient(sslVerify);
-        HttpRequest request =
-                HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                        .build();
-        HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResult resp = execute("POST", url, jsonBody, sslVerify);
         if (resp.statusCode() != 200) {
             throw new RuntimeException("Orchestration center returned " + resp.statusCode());
         }
@@ -146,6 +123,42 @@ public class LoadPsop {
         log.info("[Registry] Search returned {} workflow(s)", results.size());
         return results;
     }
+
+    private static HttpResult execute(
+            String method, String url, String jsonBody, boolean sslVerify) throws Exception {
+        HttpURLConnection connection =
+                (HttpURLConnection) URI.create(url).toURL().openConnection();
+        if (!sslVerify && connection instanceof HttpsURLConnection https) {
+            // Trust policy and hostname policy remain independent: this accepts an untrusted
+            // development CA, but still rejects a certificate issued for another host.
+            https.setSSLSocketFactory(SslContextFactory.createTrustAll().getSocketFactory());
+        }
+        try {
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(30_000);
+            connection.setReadTimeout(30_000);
+            connection.setRequestMethod(method);
+            if (jsonBody != null) {
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            int status = connection.getResponseCode();
+            InputStream input =
+                    status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String body = input == null ? "" : new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            if (input != null) {
+                input.close();
+            }
+            return new HttpResult(status, body);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private record HttpResult(int statusCode, String body) {}
 
     /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
     public static List<WorkflowSearchResult> search(String baseUrl, String intent)
