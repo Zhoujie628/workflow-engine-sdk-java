@@ -129,13 +129,13 @@ public final class OfflineA2ATLlmClient implements LLMClient {
     private static Map<String, Object> authorizationData(String prompt) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("授权策略的操作类型", authorizationOperation(prompt));
-        int ruleIndex = prompt.indexOf("业务投诉诊断/业务抢通/隧道调优/");
+        int ruleIndex = prompt.indexOf("业务投诉诊断，业务抢通，隧道调优，");
         int idIndex = prompt.indexOf("7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3");
         data.put(
                 "动网操作的授权策略列表",
                 idIndex >= 0 && (ruleIndex < 0 || idIndex < ruleIndex)
                         ? "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"
-                        : "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18");
+                        : "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18");
         return data;
     }
 

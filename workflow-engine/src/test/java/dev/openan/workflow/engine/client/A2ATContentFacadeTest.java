@@ -22,6 +22,7 @@ package dev.openan.workflow.engine.client;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.openan.a2at.sdk.core.model.StandardTemplates;
@@ -121,6 +122,31 @@ class A2ATContentFacadeTest {
         assertTrue(mc.promptText().contains("Accept"), "accept must carry the Accept conclusion");
         // The round travels in metadata, not in the rendered text.
         assertFalse(mc.promptText().contains("round: 1"));
+        Map<String, Object> metadata = A2ATContentFacade.toMetadata(mc);
+        assertEquals(
+                1,
+                ((Map<?, ?>)
+                                metadata.get(
+                                        net.openan.a2at.sdk.core.model.MetadataContent
+                                                .NEGOTIATION_CONTEXT_METADATA_KEY))
+                        .get("round"),
+                "an ending message must preserve the received propose round");
+    }
+
+    @Test
+    void rejectsFractionalOrOutOfRangeNegotiationContextNumbers() {
+        assertNull(
+                A2ATContentFacade.contextFromMap(
+                        Map.of("id", "context", "round", 1.5, "maxRounds", 5)));
+        assertNull(
+                A2ATContentFacade.contextFromMap(
+                        Map.of(
+                                "id",
+                                "context",
+                                "round",
+                                1,
+                                "maxRounds",
+                                (long) Integer.MAX_VALUE + 1)));
     }
 
     @Test

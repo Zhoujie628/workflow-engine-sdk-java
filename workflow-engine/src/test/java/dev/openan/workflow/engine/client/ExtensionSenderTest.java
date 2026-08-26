@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import net.openan.a2at.sdk.core.model.MetadataContent;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
+import net.openan.a2at.sdk.core.model.TemplateUri;
 import net.openan.a2at.sdk.llm.LLMClient;
 import net.openan.a2at.sdk.llm.LLMClientConfig;
 import net.openan.a2at.sdk.llm.LLMClientFactory;
@@ -56,6 +57,7 @@ class ExtensionSenderTest {
                         String.class,
                         String.class,
                         String.class,
+                        TemplateUri.class,
                         java.util.function.Consumer.class);
 
         assertTrue(Modifier.isAbstract(method.getModifiers()));
@@ -72,8 +74,9 @@ class ExtensionSenderTest {
                             "下发授权策略",
                             Map.of(
                                     "授权策略的操作类型", "新增授权策略",
-                                    "动网操作的授权策略列表", "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18"),
+                                    "动网操作的授权策略列表", "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18"),
                             schema("授权策略的操作类型", "动网操作的授权策略列表"),
+                            StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT,
                             A2ATExtension.AUTHORIZATION_T)
                     .join();
 
@@ -103,6 +106,7 @@ class ExtensionSenderTest {
                                             "订阅条件", "",
                                             "上报通知数据格式", "业务抢通方案执行状态、任务流水号、执行结果"),
                                     schema("订阅条件", "上报通知数据格式"),
+                                    StandardTemplates.SERVICE_RECOVERY,
                                     ignored -> {})
                             .join();
             subscription.acknowledgement().join();
@@ -114,6 +118,75 @@ class ExtensionSenderTest {
                     StandardTemplates.SERVICE_RECOVERY.uri(),
                     metadata.get(MetadataContent.TEMPLATE_URI_METADATA_KEY));
             assertTrue(metadata.containsKey(A2ATExtension.NOTIFICATION_T.uri()));
+        } finally {
+            transport.close();
+        }
+    }
+
+    @Test
+    void notificationTemplateIsCallerSelectedFromTheCurrentSdkCatalog() throws Exception {
+        AtomicReference<MessageSendParams> captured = new AtomicReference<>();
+        A2ATransport transport = transport(captured);
+        try {
+            MetadataContent content =
+                    new DefaultExtensionSender(transport)
+                            .generateExtensionPrompt(
+                                    A2ATExtension.NOTIFICATION_T,
+                                    "订阅严重告警事件",
+                                    StandardTemplates.SUBSCRIBE_INCIDENT);
+
+            assertNotNull(content);
+            assertEquals(StandardTemplates.SUBSCRIBE_INCIDENT.uri(), content.templateUri());
+        } finally {
+            transport.close();
+        }
+    }
+
+    @Test
+    void notificationCannotUseTheOneShotAuthorizationApi() throws Exception {
+        AtomicReference<MessageSendParams> captured = new AtomicReference<>();
+        A2ATransport transport = transport(captured);
+        try {
+            CompletionException error =
+                    assertThrows(
+                            CompletionException.class,
+                            () ->
+                                    new DefaultExtensionSender(transport)
+                                            .sendExtensionMessage(
+                                                    "Test Agent",
+                                                    "subscribe",
+                                                    "订阅抢通结果",
+                                                    StandardTemplates.SERVICE_RECOVERY,
+                                                    A2ATExtension.NOTIFICATION_T)
+                                            .join());
+
+            assertTrue(error.getCause().getMessage().contains("openNotification"));
+            assertNull(captured.get());
+        } finally {
+            transport.close();
+        }
+    }
+
+    @Test
+    void authorizationRejectsTemplateFromAnotherExtensionFamily() throws Exception {
+        AtomicReference<MessageSendParams> captured = new AtomicReference<>();
+        A2ATransport transport = transport(captured);
+        try {
+            CompletionException error =
+                    assertThrows(
+                            CompletionException.class,
+                            () ->
+                                    new DefaultExtensionSender(transport)
+                                            .sendExtensionMessage(
+                                                    "Test Agent",
+                                                    "authorize",
+                                                    "新增授权策略",
+                                                    StandardTemplates.SERVICE_RECOVERY,
+                                                    A2ATExtension.AUTHORIZATION_T)
+                                            .join());
+
+            assertTrue(error.getCause().getMessage().contains("does not belong"));
+            assertNull(captured.get());
         } finally {
             transport.close();
         }
@@ -291,7 +364,7 @@ class ExtensionSenderTest {
         private static String slotValue(String name) {
             if (name.contains("操作类型")) return "新增授权策略";
             if (name.contains("策略列表")) {
-                return "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18";
+                return "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18";
             }
             if (name.contains("订阅条件")) return "全部地市";
             if (name.contains("上报通知数据格式")) return "执行状态、任务流水号、执行结果";

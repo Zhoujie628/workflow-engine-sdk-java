@@ -76,32 +76,39 @@ class AuthorizationPolicyTest {
     }
 
     @Test
-    void sdkPermanentAndFullSevenFieldRulesAreSupported() {
+    void sdkCanonicalPermanentAndLimitedRulesAreSupported() {
         AuthorizationPolicy permanent = AuthorizationPolicy.fromValidated(Map.of(
                 AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.ADD,
                 AuthorizationPolicy.POLICY_LIST_FIELD,
-                "载波调度/业务抢通/载波调度/永久生效"));
-        AuthorizationPolicy full = AuthorizationPolicy.fromValidated(Map.of(
+                "载波调度，业务抢通，载波调度，永久生效"));
+        AuthorizationPolicy limited = AuthorizationPolicy.fromValidated(Map.of(
                 AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.ADD,
                 AuthorizationPolicy.POLICY_LIST_FIELD,
-                "policy-1/业务投诉诊断/业务抢通/隧道调优/"
-                        + "2026-06-01T12:00:00Z~2030-06-18T12:00:00Z/"
-                        + "2026-06-01T12:00:00Z/2026-06-18T12:00:00Z"));
+                "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18"));
 
         assertTrue(permanent.authorizes(
                 "载波调度", "业务抢通", "载波调度", LocalDate.of(2099, 1, 1)));
-        assertTrue(full.authorizes(
+        assertTrue(limited.authorizes(
                 "业务投诉诊断", "业务抢通", "隧道调优", LocalDate.of(2028, 1, 1)));
     }
 
     @Test
-    void sdkLimitedValidityWrapperIsSupported() {
-        AuthorizationPolicy policy = AuthorizationPolicy.fromValidated(Map.of(
-                AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.ADD,
-                AuthorizationPolicy.POLICY_LIST_FIELD,
-                "业务投诉诊断/业务抢通/隧道调优/限期生效（2026-06-01~2030-06-18）"));
+    void oldSlashSeparatedRuleIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AuthorizationPolicy.fromValidated(Map.of(
+                        AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.ADD,
+                        AuthorizationPolicy.POLICY_LIST_FIELD,
+                        "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18")));
+    }
 
-        assertTrue(policy.authorizes(
-                "业务投诉诊断", "业务抢通", "隧道调优", LocalDate.of(2028, 1, 1)));
+    @Test
+    void currentModifyShapeIsNotMisreadAsAnAddRule() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AuthorizationPolicy.fromValidated(Map.of(
+                        AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.MODIFY,
+                        AuthorizationPolicy.POLICY_LIST_FIELD,
+                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3，永久生效")));
     }
 }

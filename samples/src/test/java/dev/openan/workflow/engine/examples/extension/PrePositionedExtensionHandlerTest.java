@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -28,14 +29,18 @@ import net.openan.a2at.sdk.core.resources.ClasspathResourceStreams;
 class PrePositionedExtensionHandlerTest {
 
     @Test
-    void sampleOverridesTheSdkValidatorPromptToMatchItsRenderedMessageContract()
+    void validationUsesTheCurrentSdkPromptWithoutSampleResourceShadowing()
             throws IOException {
+        String resourcePath = "prompt_resources/prompts/content_validation/zh-CN/system.md";
+        URL resource = ClasspathResourceStreams.class.getClassLoader().getResource(resourcePath);
+        assertNotNull(resource);
+        assertTrue(resource.toExternalForm().contains("a2a-t-resources"));
         try (InputStream stream = ClasspathResourceStreams.open(
-                "prompt_resources/prompts/content_validation/zh-CN/system.md")) {
+                resourcePath)) {
             assertNotNull(stream);
             String prompt = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(prompt.contains("渲染器会有意删除"));
-            assertTrue(prompt.contains("无明确反证则通过"));
+            assertTrue(prompt.contains("输入内容的结构"));
+            assertTrue(prompt.contains("条目级检查"));
         }
     }
 
@@ -52,12 +57,21 @@ class PrePositionedExtensionHandlerTest {
                 (Map<String, Object>) properties.get(AuthorizationPolicy.OPERATION_TYPE_FIELD);
         assertFalse(String.valueOf(operation.get("description")).isBlank());
         assertNotNull(operation.get("x-a2at-value-constraint"));
+        assertFalse(((List<?>) operation.get("examples")).isEmpty());
+        assertTrue(
+                String.valueOf(operation.get("x-a2at-value-constraint"))
+                        .contains("导出"));
+        assertEquals(schema, SpnCasePrompts.authorizationSchema());
 
         Map<String, Object> notificationSchema =
                 SdkSlotSchemaLoader.load(StandardTemplates.SERVICE_RECOVERY, "zh-CN");
         assertEquals(
                 List.of(NotificationPolicy.REPORT_FORMAT_FIELD),
                 notificationSchema.get("required"));
+        assertEquals(notificationSchema, SpnCasePrompts.serviceRecoverySchema());
+        assertEquals(
+                SdkSlotSchemaLoader.load(StandardTemplates.PRIVATE_LINE_COMPLAINT, "zh-CN"),
+                SpnCasePrompts.privateLineComplaintSchema());
     }
 
     @Test
@@ -66,7 +80,7 @@ class PrePositionedExtensionHandlerTest {
                 "## 授权策略的操作类型\n"
                         + "新增授权策略\n\n"
                         + "## 动网操作的授权策略列表\n"
-                        + "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18\n";
+                        + "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18\n";
         Map<String, Object> exact = SpnCasePrompts.addAuthorizationData();
 
         PrePositionedExtensionHandler.requireExtractedSectionsMatch(
@@ -140,6 +154,25 @@ class PrePositionedExtensionHandlerTest {
                         Map.of(
                                 AuthorizationPolicy.OPERATION_TYPE_FIELD,
                                 AuthorizationPolicy.DELETE),
+                        "template",
+                        "test"));
+        assertSame(existing, handler.getAuthorizationPolicy());
+    }
+
+    @Test
+    void modifyRequiresAnIntegratingPolicyStoreAndKeepsTheExistingWhitelist() {
+        PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
+        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        AuthorizationPolicy existing = handler.getAuthorizationPolicy();
+
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> handler.applyAuthorization(
+                        Map.of(
+                                AuthorizationPolicy.OPERATION_TYPE_FIELD,
+                                AuthorizationPolicy.MODIFY,
+                                AuthorizationPolicy.POLICY_LIST_FIELD,
+                                "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3，永久生效"),
                         "template",
                         "test"));
         assertSame(existing, handler.getAuthorizationPolicy());
