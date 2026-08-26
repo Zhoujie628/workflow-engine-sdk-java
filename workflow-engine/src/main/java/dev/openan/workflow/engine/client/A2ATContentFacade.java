@@ -44,9 +44,9 @@ import java.util.Optional;
  * pipeline, and the template queries. Callers get compile-time {@link TemplateUri} constants from
  * {@link StandardTemplates} instead of hand-written URI strings.
  *
- * <p>All methods throw {@link net.openan.a2at.sdk.core.exception.A2ATError} subtypes on failure;
- * callers are expected to catch and degrade (see {@code buildFallbackMeta} in {@code
- * DefaultWorkflowEngineClient}).
+ * <p>All methods throw {@link net.openan.a2at.sdk.core.exception.A2ATError} subtypes on failure.
+ * Callers propagate a protocol failure rather than manufacturing legacy metadata or raw-text
+ * fallbacks.
  *
  * <p>Instances are cheap views over the shared {@link A2ATClient}; create one per transport or
  * reuse freely.
@@ -233,8 +233,9 @@ public final class A2ATContentFacade {
      *
      * <p>The content layer is stateless by design — session identity and round tracking stay
      * with the caller (see SDK developer guide §1.10). The engine owns the context: it
-     * serializes it here for the wire and advances rounds itself via {@code
-     * NegotiationContext.nextRound()}.
+     * serializes it here for the wire. An ending message preserves the received Propose context;
+     * only an initiator creating a genuinely new round owns a {@link
+     * NegotiationContext#nextRound()} transition.
      *
      * @param context the engine-held session context
      * @return wire map for the canonical {@code negotiationContext} metadata key
@@ -260,18 +261,30 @@ public final class A2ATContentFacade {
         }
         Object id = map.get("id");
         Object round = map.get("round");
-        if (id instanceof String s && round instanceof Number r && r.intValue() > 0) {
+        if (id instanceof String s && isPositiveInteger(round)) {
             Object maxRounds = map.get("maxRounds");
-            if (!(maxRounds instanceof Number m) || m.intValue() <= 0) {
+            if (!isPositiveInteger(maxRounds)) {
                 return null;
             }
             try {
-                return new NegotiationContext(s, r.intValue(), m.intValue());
+                return new NegotiationContext(
+                        s, ((Number) round).intValue(), ((Number) maxRounds).intValue());
             } catch (IllegalArgumentException ignored) {
                 // fall through
             }
         }
         return null;
+    }
+
+    private static boolean isPositiveInteger(Object value) {
+        if (!(value instanceof Number number)) {
+            return false;
+        }
+        double decimal = number.doubleValue();
+        return Double.isFinite(decimal)
+                && decimal > 0
+                && decimal == Math.rint(decimal)
+                && decimal <= Integer.MAX_VALUE;
     }
 
     // ------------------------------------------------------------------

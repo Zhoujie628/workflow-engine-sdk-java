@@ -117,6 +117,8 @@ public class ExtensionPrePositioner {
                                         "订阅业务抢通事件",
                                         notifData,
                                         notifSchema,
+                                        net.openan.a2at.sdk.core.model.StandardTemplates
+                                                .SERVICE_RECOVERY,
                                         notificationCallback)
                                 .join();
                 subscriptions.add(subscription);
@@ -166,6 +168,8 @@ public class ExtensionPrePositioner {
                             "新增动网操作授权",
                             authData,
                             authSchema,
+                            net.openan.a2at.sdk.core.model.StandardTemplates
+                                    .AUTHORIZATION_POLICY_MANAGEMENT,
                             dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
                     .join();
             boolean retryableValidationFailure =

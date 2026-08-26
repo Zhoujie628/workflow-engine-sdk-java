@@ -200,16 +200,21 @@ class TaskTHandler implements ExtensionHandler {
             Map<String, Object> typedData = (Map<String, Object>) data;
             @SuppressWarnings("unchecked")
             Map<String, Object> typedSchema = (Map<String, Object>) schema;
+            if (templateUriStr == null || templateUriStr.isBlank()) {
+                throw new IllegalArgumentException("Structured Task-T template URI is required");
+            }
             net.openan.a2at.sdk.core.model.TemplateUri templateUri =
-                    templateUriStr != null
-                            ? net.openan.a2at.sdk.core.model.TemplateUri.parse(templateUriStr)
-                                    .orElseThrow(
-                                            () ->
-                                                    new IllegalArgumentException(
-                                                            "Invalid Task-T template URI: "
-                                                                    + templateUriStr))
-                            : net.openan.a2at.sdk.core.model.StandardTemplates
-                                    .PRIVATE_LINE_COMPLAINT;
+                    net.openan.a2at.sdk.core.model.TemplateUri.parse(templateUriStr)
+                            .orElseThrow(
+                                    () ->
+                                            new IllegalArgumentException(
+                                                    "Invalid Task-T template URI: "
+                                                            + templateUriStr));
+            if (!net.openan.a2at.sdk.core.model.StandardTemplates.TASK_EXTENSION_NAME.equals(
+                    templateUri.extensionName())) {
+                throw new IllegalArgumentException(
+                        "Structured task template is not Task-T: " + templateUri.uri());
+            }
             net.openan.a2at.sdk.core.model.MetadataContent content =
                     a2atClient.generateTaskPromptFromDataWithSchema(
                             typedData, typedSchema, templateUri);

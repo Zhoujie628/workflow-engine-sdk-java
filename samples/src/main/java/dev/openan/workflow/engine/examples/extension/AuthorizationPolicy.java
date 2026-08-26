@@ -7,7 +7,6 @@
 package dev.openan.workflow.engine.examples.extension;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,9 +31,8 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
 
     public AuthorizationPolicy {
         operationType = requireText(operationType, OPERATION_TYPE_FIELD);
-        if (!ADD.equals(operationType) && !MODIFY.equals(operationType)) {
-            throw new IllegalArgumentException(
-                    "Authorization operation must be " + ADD + " or " + MODIFY);
+        if (!ADD.equals(operationType)) {
+            throw new IllegalArgumentException("Authorization policy creation requires " + ADD);
         }
         rules = List.copyOf(Objects.requireNonNull(rules, "Authorization rules are required"));
         if (rules.isEmpty()) {
@@ -46,13 +44,13 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
     public static AuthorizationPolicy fromValidated(Map<String, Object> data) {
         Objects.requireNonNull(data, "Validated Authorization-T data is required");
         String operationType = operationFromValidated(data);
-        if (!ADD.equals(operationType) && !MODIFY.equals(operationType)) {
+        if (!ADD.equals(operationType)) {
             throw new IllegalArgumentException(
-                    "Only add/modify operations can create an active authorization policy");
+                    "Only add operations can create an active authorization policy");
         }
         String policyList = requireText(data.get(POLICY_LIST_FIELD), POLICY_LIST_FIELD);
         List<Rule> rules = new ArrayList<>();
-        for (String entry : policyList.split("[;\uff1b\\r\\n]+")) {
+        for (String entry : policyList.split("\uff1b", -1)) {
             if (!entry.isBlank()) {
                 rules.add(Rule.parse(entry.strip()));
             }
@@ -113,21 +111,19 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
         }
 
         private static Rule parse(String entry) {
-            String[] fields = entry.split("/", -1);
-            if (fields.length != 4 && fields.length != 7) {
+            String[] fields = entry.split("\uff0c", -1);
+            if (fields.length != 4) {
                 throw new IllegalArgumentException(
-                        "Authorization rule must contain either the four required fields or all "
-                                + "seven SDK fields: "
+                        "Authorization rule must contain the four fields defined by the current "
+                                + "SDK, separated by full-width commas: "
                                 + entry);
             }
-            int scenarioIndex = fields.length == 4 ? 0 : 1;
-            int validityIndex = fields.length == 4 ? 3 : 4;
-            String validity = normalizeValidity(fields[validityIndex]);
+            String validity = fields[3].strip();
             if ("永久生效".equals(validity)) {
                 return new Rule(
-                        fields[scenarioIndex].strip(),
-                        fields[scenarioIndex + 1].strip(),
-                        fields[scenarioIndex + 2].strip(),
+                        fields[0].strip(),
+                        fields[1].strip(),
+                        fields[2].strip(),
                         LocalDate.MIN,
                         LocalDate.MAX);
             }
@@ -135,42 +131,25 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
             if (range.length != 2) {
                 throw new IllegalArgumentException(
                         "Authorization validity must be start~end or 永久生效: "
-                                + fields[validityIndex]);
+                                + validity);
             }
             try {
                 return new Rule(
-                        fields[scenarioIndex].strip(),
-                        fields[scenarioIndex + 1].strip(),
-                        fields[scenarioIndex + 2].strip(),
+                        fields[0].strip(),
+                        fields[1].strip(),
+                        fields[2].strip(),
                         parseDate(range[0]),
                         parseDate(range[1]));
             } catch (DateTimeParseException e) {
                 throw new IllegalArgumentException(
-                        "Authorization validity must use ISO dates or offset date-times: "
-                                + fields[validityIndex],
+                        "Authorization validity must use ISO dates: "
+                                + fields[3],
                         e);
             }
         }
 
-        private static String normalizeValidity(String value) {
-            String normalized = value.strip();
-            if (normalized.startsWith("限期生效")) {
-                normalized = normalized.substring("限期生效".length()).strip();
-            }
-            if ((normalized.startsWith("(") && normalized.endsWith(")"))
-                    || (normalized.startsWith("（") && normalized.endsWith("）"))) {
-                normalized = normalized.substring(1, normalized.length() - 1).strip();
-            }
-            return normalized;
-        }
-
         private static LocalDate parseDate(String value) {
-            String normalized = value.strip();
-            try {
-                return LocalDate.parse(normalized);
-            } catch (DateTimeParseException dateOnlyFailure) {
-                return OffsetDateTime.parse(normalized).toLocalDate();
-            }
+            return LocalDate.parse(value.strip());
         }
 
         private boolean authorizes(

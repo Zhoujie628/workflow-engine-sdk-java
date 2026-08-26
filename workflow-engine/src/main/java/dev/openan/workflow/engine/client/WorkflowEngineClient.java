@@ -83,7 +83,7 @@ public interface WorkflowEngineClient {
      * @param data structured task input (string-to-object map)
      * @param schema JSON schema describing the meaning of each data field
      * @param templateUri template the data renders through (e.g. {@code
-     *     StandardTemplates.PRIVATE_LINE_COMPLAINT}); null uses the SDK default
+     *     StandardTemplates.PRIVATE_LINE_COMPLAINT}); must not be null
      * @return future completing with response text, task, metadata, task state
      */
     default CompletableFuture<SendMessageResult> sendMessageFromData(
@@ -109,15 +109,24 @@ public interface WorkflowEngineClient {
             Map<String, Object> schema,
             net.openan.a2at.sdk.core.model.TemplateUri templateUri,
             Map<String, Object> extraMetadata) {
+        java.util.Objects.requireNonNull(data, "Task-T structured data is required");
+        java.util.Objects.requireNonNull(schema, "Task-T data schema is required");
+        java.util.Objects.requireNonNull(templateUri, "Task-T template URI is required");
+        if (schema.isEmpty()) {
+            throw new IllegalArgumentException("Task-T data schema must not be empty");
+        }
+        if (!net.openan.a2at.sdk.core.model.StandardTemplates.TASK_EXTENSION_NAME.equals(
+                templateUri.extensionName())) {
+            throw new IllegalArgumentException(
+                    "Structured task template is not Task-T: " + templateUri.uri());
+        }
         Map<String, Object> metadata =
                 extraMetadata != null
                         ? new java.util.LinkedHashMap<>(extraMetadata)
                         : new java.util.LinkedHashMap<>();
         metadata.put(A2ATExtension.TASK_DATA_META_KEY, data);
         metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, schema);
-        if (templateUri != null) {
-            metadata.put(A2ATExtension.TASK_TEMPLATE_META_KEY, templateUri.uri());
-        }
+        metadata.put(A2ATExtension.TASK_TEMPLATE_META_KEY, templateUri.uri());
         return sendMessage(agentName, message, null, metadata);
     }
 

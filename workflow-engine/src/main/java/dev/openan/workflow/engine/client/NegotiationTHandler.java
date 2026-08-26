@@ -144,22 +144,15 @@ class NegotiationTHandler implements ExtensionHandler {
         Object raw = metadata.get(
                 net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);
         TemplateUri parsed = null;
-        if (raw instanceof TemplateUri template) {
-            parsed = template;
-        } else if (raw instanceof String text) {
+        if (raw instanceof String text) {
             parsed = TemplateUri.parse(text).orElse(null);
-        } else if (raw instanceof Map<?, ?> map
-                && map.get("extensionName") instanceof String extensionName
-                && map.get("pathSegments") instanceof java.util.List<?> pathSegments
-                && map.get("templateVersion") instanceof String version) {
-            parsed = TemplateUri.of(
-                    extensionName,
-                    pathSegments.stream().map(String::valueOf).toList(),
-                    version);
         }
         if (parsed == null
-                || !"Negotiation-T".equals(parsed.extensionName())
-                || !parsed.pathSegments().contains("propose")) {
+                || !java.util.List.of(
+                                StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE,
+                                StandardTemplates.TARGET_NEGOTIATION_PROPOSE,
+                                StandardTemplates.FEASIBILITY_NEGOTIATION_PROPOSE)
+                        .contains(parsed)) {
             throw new IllegalArgumentException("Missing or invalid Negotiation-T propose templateUri");
         }
         return parsed;

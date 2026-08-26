@@ -279,11 +279,6 @@ public class SpringSpnDemo {
         }
     }
 
-    /** Backward-compatible programmatic entry point; production defaults to the Order SDK. */
-    public void run() throws Exception {
-        run(new String[0]);
-    }
-
     private static String resolveTransportMode(String[] args) {
         for (String arg : args) {
             if (arg.startsWith("--a2a.transport-mode=")) {

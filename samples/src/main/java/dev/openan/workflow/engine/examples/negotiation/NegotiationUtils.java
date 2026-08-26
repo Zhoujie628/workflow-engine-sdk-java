@@ -21,7 +21,6 @@ package dev.openan.workflow.engine.examples.negotiation;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -57,15 +56,6 @@ public final class NegotiationUtils {
         return metadata.containsKey(TASK_PROMPT_KEY);
     }
 
-    /** Build the Negotiation-T metadata for an OMC-side Message(ROLE_AGENT) propose. */
-    public static Map<String, Object> negotiationResponseMetadata(String negotiationText) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        if (negotiationText != null && !negotiationText.isEmpty()) {
-            metadata.put(NEGOTIATION_T_URI, negotiationText);
-        }
-        return metadata;
-    }
-
     /**
      * Metadata key carrying the negotiation session context map ({@code id} / {@code round} /
      * {@code maxRounds}).
@@ -77,20 +67,4 @@ public final class NegotiationUtils {
     public static final String NEGOTIATION_CONTEXT_KEY =
             net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
 
-    /**
-     * Builds Negotiation-T propose metadata carrying the session context: the rendered propose
-     * text under the extension URI plus the canonical {@code negotiationContext} key holding the
-     * engine-format context map ({@code id}/{@code round}/{@code maxRounds}).
-     *
-     * @param negotiationText rendered propose text
-     * @param contextMap the session context map; null omits the key (fallback path)
-     */
-    public static Map<String, Object> negotiationResponseMetadata(
-            String negotiationText, Map<String, Object> contextMap) {
-        Map<String, Object> metadata = negotiationResponseMetadata(negotiationText);
-        if (contextMap != null && !contextMap.isEmpty()) {
-            metadata.put(NEGOTIATION_CONTEXT_KEY, contextMap);
-        }
-        return metadata;
-    }
 }
