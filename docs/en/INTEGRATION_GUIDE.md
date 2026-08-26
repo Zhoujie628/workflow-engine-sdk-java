@@ -485,13 +485,15 @@ so mTLS and `crlPath` cannot be combined with that mode and fail fast instead of
 
 ## 9. Logging
 
-The dedicated `PROTOCOL` logger emits protocol requests and responses. Bodies are enabled by default and truncated to a configurable size. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are redacted by default. Configure the logger in `log4j2.properties`:
+The dedicated `PROTOCOL` logger emits protocol request/response summaries. Bodies are disabled by
+default. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are
+redacted by default. Enable DEBUG and bodies only in a controlled integration environment:
 
 ```properties
-logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=info
-logger.PROTOCOL.additivity=false
-logger.PROTOCOL.appenderRef=console
+logger.protocol.name=PROTOCOL
+logger.protocol.level=DEBUG
+# Reuse the root console/file appenders; do not set false without a valid appenderRef
+logger.protocol.additivity=true
 ```
 
 Control the content with environment variables or same-named JVM system properties:
