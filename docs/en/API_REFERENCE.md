@@ -117,7 +117,7 @@ After receiving:
 2. Metadata extraction (task-level + artifact-level)
 3. Negotiation-T auto-loop (triggered when metadata carries the Negotiation-T key; see "Negotiation auto-loop behavior" below)
 
-#### sendMessageFromData (structured-data dual track)
+#### sendMessageFromData (structured-data input path)
 
 ```java
 CompletableFuture<SendMessageResult> sendMessageFromData(
@@ -134,7 +134,7 @@ CompletableFuture<SendMessageResult> sendMessageFromData(
 | `message`     | `String`              | Short accompanying message text (A2A message parts text)           |
 | `data`        | `Map<String, Object>` | Structured business data (raw fields, not a rendered prompt)       |
 | `schema`      | `Map<String, Object>` | JSON schema describing what each data field means                  |
-| `templateUri` | `TemplateUri`         | Target template; null uses the SDK default (PRIVATE_LINE_COMPLAINT)|
+| `templateUri` | `TemplateUri`         | Explicit current SDK target template; must not be null             |
 
 **Choosing a track**: when the caller holds structured data (e.g. complaint-ticket fields) prefer
 this method — the SDK uses the schema-aware
@@ -143,9 +143,11 @@ mapping may still invoke the SDK-configured LLM. With free-form
 natural-language input use `sendMessage` (the SDK scenario-recognition pipeline). Both tracks run
 through the full Negotiation-T auto-loop, auth, and extension-header injection.
 
-`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
+`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, templateUri, extension)`
 provides the same structured-data track for independent Authorization-T operations;
-`openNotificationFromData` is the preferred structured Notification-T subscription API.
+`openNotificationFromData` is the preferred structured Notification-T subscription API. All
+Notification-T entry points require an explicit SDK template so callers can select either
+`SERVICE_RECOVERY` or `SUBSCRIBE_INCIDENT`.
 
 #### Negotiation auto-loop behavior
 
@@ -155,7 +157,7 @@ provides the same structured-data track for independent Authorization-T operatio
 - **Each round**: `validateProposePromptAndDataFilling` validates and extracts the Propose →
   `ControlPoint.onNegotiation` decides → the SDK content layer renders Accept / Reject / Abort →
   Accept is checked with `validateAcceptPromptAndDataFilling` before sending → the engine copies
-  and advances the stateless `NegotiationContext` → send → recurse.
+  the ending message preserves the received Propose `NegotiationContext` and round → send → recurse.
 - **Clarification conventions** (the onNegotiation return value):
   - `data:{...json...}` — deterministic fromData Accept rendering (no LLM call; the JSON body is
     the filled-parameter map)
@@ -164,8 +166,9 @@ provides the same structured-data track for independent Authorization-T operatio
 - **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
   via the SDK abort template (best effort — delivery failures are logged only), a
   `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
-- **Negotiation context**: the latest SDK removed `startNegotiation`, `receiveNegotiation`, and
-  `continueNegotiation`. The engine accepts only canonical `negotiationContext` with
+- **Negotiation context**: the engine does not support the legacy `startNegotiation`,
+  `receiveNegotiation`, or `continueNegotiation` state-machine entry points. It accepts only
+  canonical `negotiationContext` with
   `{id, round, maxRounds}` and does not read legacy `negotiation_context` metadata.
 
 #### Template queries
@@ -193,7 +196,8 @@ generation and the Negotiation-T auto-loop; later Notification-T events are deli
 public interface ExtensionSender {
     CompletableFuture<SendMessageResult> sendExtensionMessage(
             String agentName, String instruction,
-            String naturalLanguageInput, A2ATExtension extension);
+            String naturalLanguageInput, TemplateUri templateUri,
+            A2ATExtension extension); // Authorization-T only
 
     // Convenience: Authorization-T
     CompletableFuture<SendMessageResult> sendAuthorization(
@@ -201,12 +205,14 @@ public interface ExtensionSender {
 
     // Convenience: Notification-T (long-lived SSE)
     CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction, String naturalLanguageInput);
+            String agentName, String instruction, String naturalLanguageInput,
+            TemplateUri templateUri, Consumer<Map<String, Object>> eventCallback);
 
     // Interface contract: Notification-T (long-lived SSE + event callback)
     CompletableFuture<NotificationSubscription> openNotification(
             String agentName, String instruction,
-            String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
+            String naturalLanguageInput, TemplateUri templateUri,
+            Consumer<Map<String, Object>> eventCallback);
 }
 ```
 
@@ -215,11 +221,14 @@ public interface ExtensionSender {
 | `agentName`            | `String`        | Target agent name (must match `AgentCard.name`) |
 | `instruction`          | `String`        | Short instruction text; becomes `parts[].text` in the A2A message body |
 | `naturalLanguageInput` | `String`        | Natural-language track input; production should prefer the SDK-rendered structured-data methods |
+| `templateUri`          | `TemplateUri`   | Explicit current-SDK template (bundled or caller-provided resource) |
 | `extension`            | `A2ATExtension` | Extension enum (never hardcode URIs)            |
 | `eventCallback`        | `Consumer<Map<String, Object>>` | Optional SSE event callback. The stable Map includes `event_kind`, `agent`, `task_id` and event-specific state/artifact fields |
 
 `NotificationSubscription` separates the initial ACK (`acknowledgement()`) from stream completion
 (`completion()`), and exposes `heartbeat()`, `isHealthy(maximumIdle)`, and idempotent `close()`.
+Notification-T is deliberately rejected by the generic one-shot methods; use
+`openNotification` / `openNotificationFromData` so the lifecycle handle cannot be lost.
 Task, Authorization, and Notification must use different transport/runtime instances. Completing a
 workflow must not close a Notification-T subscription.
 

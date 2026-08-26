@@ -1,12 +1,12 @@
 # A2A-T SDK Negotiation-T 适配说明
 
-> 状态：已按 2026-08-25 锁定的 SDK 版本完成。本文只描述当前实现，不保留旧版迁移方案。
+> 状态：已按 2026-08-26 锁定的 SDK 版本完成。本文只描述当前实现，不保留旧版迁移方案。
 
 ## 版本基线
 
-- 仓库：`Zhoujie628/a2a-t-sdk-java`
-- commit：`0ef79d37f49a9b7a2dbe16b6d9fd1ccdb6d9538d`
-- Maven 版本：`1.0.0-0ef79d3`
+- 仓库：`project-openan/a2a-t-sdk-java`
+- commit：`34485504675800a436d68cfaa913f14931086506`
+- Maven 版本：`1.0.0-3448550`
 - 引擎入口：`A2ATContentFacade`、`NegotiationTHandler`、`DefaultWorkflowEngineClient`
 - Agent 入口：`NegotiationBaseAgentExecutor`
 
@@ -25,7 +25,8 @@
 - `validateAndFillingProposeData/AcceptData/RejectData`
 - `getNegotiationPrompts/getNegotiationPrompt`
 
-旧协商运行时状态机接口已从 SDK 删除，引擎不兼容、不反射调用、不降级回该类接口。
+旧协商运行时状态机接口不属于执行引擎支持边界。引擎不调用、不反射探测，也不降级到
+`startNegotiation`、`receiveNegotiation` 或 `continueNegotiation`。
 
 ## 协商上下文与 metadata
 
@@ -64,8 +65,10 @@
 2. OMC 用 typed propose data 渲染 prompt，在 A2A `INPUT_REQUIRED` 事件中返回 SDK metadata。
 3. `NegotiationTHandler` 校验 URI、模板、上下文和 prompt，将已填充参数交给集成方的
    `ControlPoint.onNegotiation` 作业务决策。
-4. 引擎把决策映射为 typed accept/reject/abort，推进 `round`，通过同一 A2A task/context
-   发送 follow-up。
+4. 引擎根据收到的 Propose 类型映射为对应 Information/Target/Feasibility 的 typed
+   accept/reject，或映射为 common abort；ending 保留收到的 `negotiationContext` 与当前
+   `round`，通过同一 A2A task/context 发送 follow-up。只有发起新一轮 Propose 的一方
+   才调用 `nextRound()`。
 5. 轮次耗尽、明确拒绝或校验失败时终止，不使用手工 prompt 或原文 metadata 降级。
 
 ## 失败策略

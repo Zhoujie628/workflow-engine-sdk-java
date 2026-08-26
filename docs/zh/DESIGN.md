@@ -33,7 +33,7 @@ SDK 分为四层，每层构建在下一层之上，单一职责，入口清晰�
 graph TD
     L2["Layer 2 - 编排层<br/>ExecutePsop<br/>生命周期、事件流、取消、onFinish 持久化"]
     L1["Layer 1 - 遍历层<br/>WorkflowExecutor<br/>DAG 遍历、并行下发、上下文组装、路由"]
-    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（一次性前置下发）"]
+    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（独立协议操作）"]
     F["基础层 - 决策<br/>ControlPoint<br/>用户实现的业务决策"]
 
     L2 --> L1 --> L0

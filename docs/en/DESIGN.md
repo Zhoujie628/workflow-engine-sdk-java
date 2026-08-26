@@ -36,7 +36,7 @@ entry point.
 graph TD
     L2["Layer 2 - Orchestration<br/>execute_psop / ExecutePsop<br/>lifecycle, event stream, cancellation, onFinish persistence"]
     L1["Layer 1 - Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
-    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (one-shot)"]
+    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (independent operations)"]
     F["Foundation - Decision<br/>ControlPoint<br/>user-implemented business decisions"]
 
     L2 --> L1 --> L0
