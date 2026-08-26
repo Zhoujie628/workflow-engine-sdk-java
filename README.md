@@ -39,10 +39,10 @@ This revision intentionally targets an A2A-T SDK build that has not yet been pub
 Central. Install the pinned SDK revision first (do not use an older locally cached `1.0.0`):
 
 ```bash
-git clone https://github.com/Zhoujie628/a2a-t-sdk-java.git
+git clone https://github.com/project-openan/a2a-t-sdk-java.git
 cd a2a-t-sdk-java
-git checkout 0ef79d37f49a9b7a2dbe16b6d9fd1ccdb6d9538d
-mvn -B -Drevision=1.0.0-0ef79d3 -DskipTests \
+git checkout 34485504675800a436d68cfaa913f14931086506
+mvn -B -Drevision=1.0.0-3448550 -DskipTests \
   -pl a2a-t-client,a2a-t-server -am install
 ```
 

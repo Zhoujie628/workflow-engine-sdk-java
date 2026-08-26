@@ -116,7 +116,7 @@ public interface WorkflowEngineClient {
 2. 提取 metadata（task 级 + artifact 级合并）
 3. Negotiation-T 自动循环（metadata 携带 Negotiation-T key 时触发；见下方「协商自动循环行为」）
 
-#### sendMessageFromData（结构化数据双轨）
+#### sendMessageFromData（结构化数据输入路径）
 
 ```java
 CompletableFuture<SendMessageResult> sendMessageFromData(
@@ -133,17 +133,18 @@ CompletableFuture<SendMessageResult> sendMessageFromData(
 | `message`      | `String`              | 伴随的短消息文本（A2A 消息 parts 文本）                 |
 | `data`         | `Map<String, Object>` | 结构化业务数据（原始字段，非渲染后的提示词）            |
 | `schema`       | `Map<String, Object>` | JSON Schema，描述各数据字段的含义                      |
-| `templateUri`  | `TemplateUri`         | 目标模板；null 用 SDK 默认（PRIVATE_LINE_COMPLAINT）    |
+| `templateUri`  | `TemplateUri`         | 明确指定当前 SDK 目标模板；不得为 null                  |
 
-**双轨选型**：业务方持有结构化数据（如投诉工单字段）时优先用本方法——SDK 走
+**输入方式选型**：业务方持有结构化数据（如投诉工单字段）时优先用本方法——SDK 走
 `generateTaskPromptFromDataWithSchema` schema-aware 管线（跳过场景识别，但 slot 映射可能调用
 SDK 配置的 LLM）；持有自然语言
 描述时用 `sendMessage`（SDK 场景识别管线）。两条轨道都完整经过 Negotiation-T 自动循环、
 认证和扩展头注入。
 
-`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, extension)`
+`ExtensionSender.sendExtensionMessageFromData(agentName, instruction, data, schema, templateUri, extension)`
 为独立 Authorization-T 操作提供同样的结构化数据轨道；Notification-T 结构化订阅优先使用
-`openNotificationFromData`。
+`openNotificationFromData`。所有 Notification-T 入口都必须显式指定 SDK 模板，因此通用
+发送器同时支持 `SERVICE_RECOVERY` 与 `SUBSCRIBE_INCIDENT`，不再暗含 SPN 场景默认值。
 
 #### 协商自动循环行为
 
@@ -153,15 +154,15 @@ SDK 配置的 LLM）；持有自然语言
 - **每轮**：`NegotiationTHandler` 用 `validateProposePromptAndDataFilling` 按 `templateUri`
   校验 Propose 并抽取参数 → `ControlPoint.onNegotiation` 生成决策 → SDK 内容层渲染
   Accept / Reject / Abort → Accept 在发出前再用 `validateAcceptPromptAndDataFilling` 校验 →
-  引擎复制并递增无状态 `NegotiationContext` → 发送给 agent → 递归检查下一轮。
+  结束报文保留收到的 Propose `NegotiationContext` 及轮次 → 发送给 agent → 递归检查下一轮。
 - **澄清文本约定**（onNegotiation 返回值）：
   - `data:{...json...}` — 确定性 fromData 渲染 Accept（无 LLM 调用，JSON 为补充参数 map）
   - `reject:原因` / `abort:原因` — 渲染 Reject / Abort 终态模板
   - 其他文本 — fromText 渲染 Accept（一次 LLM 抽取）
 - **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
   （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
-- **协商上下文**：最新 SDK 已删除 `startNegotiation` / `receiveNegotiation` /
-  `continueNegotiation`。引擎只接受规范键 `negotiationContext`，结构固定为
+- **协商上下文**：执行引擎不支持 `startNegotiation` / `receiveNegotiation` /
+  `continueNegotiation` 旧状态机入口。引擎只接受规范键 `negotiationContext`，结构固定为
   `{id, round, maxRounds}`；不再读取 `negotiation_context` 等旧键。
 
 #### 模板查询
@@ -186,7 +187,8 @@ Task-T 提示词生成和 Negotiation-T 自动循环；Notification-T 后续事�
 public interface ExtensionSender {
     CompletableFuture<SendMessageResult> sendExtensionMessage(
             String agentName, String instruction,
-            String naturalLanguageInput, A2ATExtension extension);
+            String naturalLanguageInput, TemplateUri templateUri,
+            A2ATExtension extension); // 仅 Authorization-T
 
     // 便捷方法：Authorization-T
     CompletableFuture<SendMessageResult> sendAuthorization(
@@ -194,12 +196,14 @@ public interface ExtensionSender {
 
     // 便捷方法：Notification-T（长连接 SSE）
     CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction, String naturalLanguageInput);
+            String agentName, String instruction, String naturalLanguageInput,
+            TemplateUri templateUri, Consumer<Map<String, Object>> eventCallback);
 
     // 接口契约：Notification-T（长连接 SSE + 事件回调）
     CompletableFuture<NotificationSubscription> openNotification(
             String agentName, String instruction,
-            String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
+            String naturalLanguageInput, TemplateUri templateUri,
+            Consumer<Map<String, Object>> eventCallback);
 }
 ```
 
@@ -208,11 +212,14 @@ public interface ExtensionSender {
 | `agentName`            | `String`        | 目标智能体名称（须匹配 `AgentCard.name`） |
 | `instruction`          | `String`        | 简短指令文本；成为 A2A 消息体的 `parts[].text` |
 | `naturalLanguageInput` | `String`        | 自然语言轨道输入；生产优先使用 `sendExtensionMessageFromData` / `openNotificationFromData`，由 SDK 生成完整 metadata |
+| `templateUri`          | `TemplateUri`   | 显式指定当前 SDK 模板（内置或集成方提供的资源） |
 | `extension`            | `A2ATExtension` | 扩展枚举（勿硬编码 URI）            |
 | `eventCallback`        | `Consumer<Map<String, Object>>` | 可选 SSE 事件回调。Map 含 `event_kind`、`agent`、`task_id` 及对应的状态/产物字段 |
 
 `NotificationSubscription` 将首个 ACK（`acknowledgement()`）与长连接终止
 （`completion()`）分开，并提供 `heartbeat()`、`isHealthy(maximumIdle)` 和幂等 `close()`。
+通用一次性发送方法会明确拒绝 Notification-T；必须调用
+`openNotification` / `openNotificationFromData`，避免丢失长连接关闭句柄。
 Task、Authorization、Notification 必须使用不同的 transport/runtime 实例；关闭单次工作流不得关闭订阅。
 
 **报文格式**：发送给智能体的 A2A 消息结构为 `parts[].text = instruction`，`metadata = { "<扩展URI>": "<扩展值>" }`。以 Authorization-T 为例：

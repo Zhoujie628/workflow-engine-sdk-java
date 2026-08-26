@@ -712,7 +712,8 @@ CompletableFuture<SendMessageResult> sendNotification(
 3. **`ExtensionInterceptor`**: 只注入当前消息 metadata 中实际存在的扩展 URI,而非 AgentCard 上声明的所有扩展——正确行为
 4. **`NegotiationTHandler.afterReceive`**: 使用最新 SDK 的无状态
    `validateProposePromptAndDataFilling` 校验提议内容并提取参数；缺少或非法
-   `negotiationContext` 时失败关闭，不再调用已删除的 `receiveNegotiation`，也不保留绕过 SDK 的提取 fallback
+   `negotiationContext` 时失败关闭；执行引擎不调用旧状态机入口
+   `receiveNegotiation`，也不保留绕过 SDK 的提取 fallback
 5. **`DefaultWorkflowEngineClient.autoNegotiate`**: 递归协商循环有 `maxNegotiationRounds` 上限(默认 3),防止无限循环
 6. **`SslContextFactory` mTLS 支持**: `loadKeyManagers` 支持客户端证书 + 私钥,RSA 密钥格式正确
 7. **`CredentialCrypto` AES-GCM**: 使用 12 字节 IV + 128 位 tag,符合 NIST 推荐;IV 使用 `SecureRandom` 生成,无 IV 重用风险
