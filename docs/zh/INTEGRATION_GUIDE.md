@@ -472,10 +472,10 @@ HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局�
 `Authorization`、Cookie、API Key、Token、Secret 等敏感 Header 默认脱敏。只能在受控联调环境临时开启 DEBUG 和 body：
 
 ```properties
-logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=debug
-logger.PROTOCOL.additivity=false
-logger.PROTOCOL.appenderRef=console
+logger.protocol.name=PROTOCOL
+logger.protocol.level=DEBUG
+# 复用 root 的 console/file appender；不要在没有正确 appenderRef 时设为 false
+logger.protocol.additivity=true
 ```
 
 以下环境变量或同名 JVM system property 控制内容：

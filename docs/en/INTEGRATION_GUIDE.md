@@ -481,10 +481,10 @@ default. Sensitive headers such as Authorization, cookies, API keys, tokens, and
 redacted by default. Enable DEBUG and bodies only temporarily in a controlled diagnostic environment:
 
 ```properties
-logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=debug
-logger.PROTOCOL.additivity=false
-logger.PROTOCOL.appenderRef=console
+logger.protocol.name=PROTOCOL
+logger.protocol.level=DEBUG
+# Reuse the root console/file appenders; do not set false without a valid appenderRef
+logger.protocol.additivity=true
 ```
 
 Control the content with environment variables or same-named JVM system properties:
