@@ -194,6 +194,11 @@ public interface ExtensionSender {
     CompletableFuture<SendMessageResult> sendAuthorization(
             String agentName, String instruction, String naturalLanguageInput);
 
+    CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
+            String agentName, String instruction,
+            Map<String, Object> data, Map<String, Object> schema,
+            TemplateUri templateUri, A2ATExtension extension);
+
     // 便捷方法：Notification-T（长连接 SSE）
     CompletableFuture<SendMessageResult> sendNotification(
             String agentName, String instruction, String naturalLanguageInput,
@@ -203,6 +208,12 @@ public interface ExtensionSender {
     CompletableFuture<NotificationSubscription> openNotification(
             String agentName, String instruction,
             String naturalLanguageInput, TemplateUri templateUri,
+            Consumer<Map<String, Object>> eventCallback);
+
+    CompletableFuture<NotificationSubscription> openNotificationFromData(
+            String agentName, String instruction,
+            Map<String, Object> data, Map<String, Object> schema,
+            TemplateUri templateUri,
             Consumer<Map<String, Object>> eventCallback);
 }
 ```
