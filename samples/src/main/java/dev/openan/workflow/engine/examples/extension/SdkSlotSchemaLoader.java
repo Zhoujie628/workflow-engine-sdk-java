@@ -17,13 +17,14 @@ import net.openan.a2at.sdk.core.model.A2ATConfig;
 import net.openan.a2at.sdk.core.model.TemplateUri;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 
-/** Loads the validation slot schema bundled with the active A2A-T SDK version. */
-final class SdkSlotSchemaLoader {
+/** Loads the slot schema bundled with the active A2A-T SDK version. */
+public final class SdkSlotSchemaLoader {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private SdkSlotSchemaLoader() {}
 
-    static Map<String, Object> loadConfigured(TemplateUri templateUri) {
+    /** Loads a template's schema using the language configured for the sample SDK runtime. */
+    public static Map<String, Object> loadConfigured(TemplateUri templateUri) {
         String language = "zh-CN";
         String envPath = EnvResolver.resolveEnvPath();
         if (envPath != null && !envPath.isBlank()) {
@@ -32,7 +33,8 @@ final class SdkSlotSchemaLoader {
         return load(templateUri, language);
     }
 
-    static Map<String, Object> load(TemplateUri templateUri, String language) {
+    /** Loads a template's schema for an explicit SDK resource language. */
+    public static Map<String, Object> load(TemplateUri templateUri, String language) {
         Objects.requireNonNull(templateUri, "templateUri");
         if (language == null || language.isBlank() || language.contains("/") || language.contains("\\")) {
             throw new IllegalArgumentException("A2A-T prompt language must be a simple path segment");

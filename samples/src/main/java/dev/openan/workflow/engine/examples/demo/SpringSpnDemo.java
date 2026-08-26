@@ -242,11 +242,6 @@ public class SpringSpnDemo {
         }
     }
 
-    /** Backward-compatible programmatic entry point for direct transport. */
-    public void run() throws Exception {
-        run(new String[0]);
-    }
-
     private static long elapsedMillis(long startedNanos) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }

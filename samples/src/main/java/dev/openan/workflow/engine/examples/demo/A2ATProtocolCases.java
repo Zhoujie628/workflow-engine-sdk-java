@@ -193,6 +193,8 @@ public class A2ATProtocolCases {
                                 "新增动网操作授权",
                                 SpnCasePrompts.addAuthorizationData(),
                                 SpnCasePrompts.authorizationSchema(),
+                                net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
         log.info("[Case 7.5] state={}", result.getTaskState());
@@ -210,6 +212,8 @@ public class A2ATProtocolCases {
                                         "动网操作的授权策略列表",
                                         "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"),
                                 SpnCasePrompts.authorizationSchema(),
+                                net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
         log.info("[Case 7.6] state={}", result.getTaskState());
@@ -225,8 +229,10 @@ public class A2ATProtocolCases {
                                         "授权策略的操作类型",
                                         "查询授权策略",
                                         "动网操作的授权策略列表",
-                                        "业务投诉诊断/业务抢通/隧道调优"),
+                                        "业务场景：业务投诉诊断，处置类型：业务抢通，操作名称：隧道调优"),
                                 SpnCasePrompts.authorizationSchema(),
+                                net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
         log.info("[Case 7.7] state={}", result.getTaskState());
@@ -241,6 +247,7 @@ public class A2ATProtocolCases {
                                 "订阅业务抢通事件",
                                 SpnCasePrompts.subscribeServiceRecoveryData(),
                                 SpnCasePrompts.serviceRecoverySchema(),
+                                net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
                                 data -> {
                                     log.info("[Case 7.8] callback: keys={}", data.keySet());
                                     if ("recovery-result".equals(data.get("artifact_name"))) {

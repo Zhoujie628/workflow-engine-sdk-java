@@ -86,9 +86,8 @@ public enum A2ATExtension {
 
     /**
      * Engine-internal metadata key carrying the template URI string for the fromData rendering
-     * track (e.g. {@code "Task-T/private-line-complaint/v1"}). Optional; defaults to {@link
-     * net.openan.a2at.sdk.core.model.StandardTemplates#PRIVATE_LINE_COMPLAINT}. Engine-internal,
-     * never sent on the wire.
+     * track (e.g. {@code "Task-T/network-layer/private-line-complaint/v1"}). Required for
+     * structured Task-T rendering. Engine-internal, never sent on the wire.
      */
     public static final String TASK_TEMPLATE_META_KEY = "a2at.taskTemplate";
 

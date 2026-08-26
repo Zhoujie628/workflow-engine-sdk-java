@@ -51,6 +51,7 @@ import java.util.concurrent.TimeUnit;
 import dev.openan.workflow.engine.examples.extension.AuthorizationPolicy;
 import dev.openan.workflow.engine.examples.extension.NotificationPolicy;
 import dev.openan.workflow.engine.examples.extension.PrePositionedExtensionHandler;
+import dev.openan.workflow.engine.examples.extension.SdkSlotSchemaLoader;
 import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationUtils;
 /**
@@ -170,14 +171,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
      * agent requires. A blank/missing slot (or validation rejection) triggers Negotiation-T.
      */
     protected Map<String, Object> buildTaskParamSchema() {
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("任务对象", Map.of("type", "string"));
-        properties.put("任务上下文", Map.of("type", "string"));
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        schema.put("required", List.of("任务上下文"));
-        return schema;
+        return SdkSlotSchemaLoader.loadConfigured(taskTemplateUri());
     }
 
     @Override
@@ -251,14 +245,9 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
         String agentTag = getClass().getSimpleName();
-        String notifUri =
-                "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1";
+        String notifUri = A2ATExtension.NOTIFICATION_T.uri();
         Map<String, Object> requestMetadata = ctx.getMessage().metadata();
-        Object promptValue = requestMetadata.entrySet().stream()
-                .filter(entry -> entry.getKey().contains("Notification-T"))
-                .map(Map.Entry::getValue)
-                .findFirst()
-                .orElse("");
+        Object promptValue = requestMetadata.get(notifUri);
         String prompt = promptValue instanceof String text ? text : String.valueOf(promptValue);
         Object templateUri = requestMetadata.get(
                 net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);

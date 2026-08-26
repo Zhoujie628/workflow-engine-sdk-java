@@ -20,6 +20,9 @@
 package dev.openan.workflow.engine.examples.demo;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
+import dev.openan.workflow.engine.examples.extension.SdkSlotSchemaLoader;
+
+import net.openan.a2at.sdk.core.model.StandardTemplates;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,27 +56,19 @@ public final class SpnCasePrompts {
      * 任务上下文 carries the complaint context.
      */
     public static Map<String, Object> privateLineComplaintSchema() {
-        Map<String, Object> object = new LinkedHashMap<>();
-        object.put("type", "string");
-        object.put("description", "专线名称/专线业务标识/接入端口名称，三选一标识专线业务对象");
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("type", "string");
-        context.put(
-                "description",
-                "专线业务的故障现象描述和诊断任务上下文：投诉分类(专线中断/专线质差)、问题发生时间、"
-                        + "OSS侧事件流水号、投诉详情");
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("任务对象", object);
-        properties.put("任务上下文", context);
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        return schema;
+        return SdkSlotSchemaLoader.loadConfigured(StandardTemplates.PRIVATE_LINE_COMPLAINT);
     }
 
     /** Required business fields returned by Task-T validation for this scenario. */
+    @SuppressWarnings("unchecked")
     public static List<String> privateLineComplaintSchemaProperties() {
-        return List.of("任务对象", "任务上下文");
+        Object required = privateLineComplaintSchema().get("required");
+        if (!(required instanceof List<?> fields)
+                || fields.stream().anyMatch(field -> !(field instanceof String))) {
+            throw new IllegalStateException(
+                    "Current SDK private-line complaint schema has no string required list");
+        }
+        return (List<String>) fields;
     }
 
     /** Well-formed complaint (spec case 7.1): known faulty port in City1. */
@@ -140,21 +135,8 @@ public final class SpnCasePrompts {
 
     /** Schema mirroring the SDK's Authorization-T slot schema (授权策略的操作类型 + 策略列表). */
     public static Map<String, Object> authorizationSchema() {
-        Map<String, Object> operationType = new LinkedHashMap<>();
-        operationType.put("type", "string");
-        operationType.put("description", "授权策略的操作类型：新增/修改/删除/查询授权策略");
-        Map<String, Object> policyList = new LinkedHashMap<>();
-        policyList.put("type", "string");
-        policyList.put(
-                "description",
-                "动网操作的授权策略列表，每条包含：业务场景、处置类型、操作名称、有效期");
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("授权策略的操作类型", operationType);
-        properties.put("动网操作的授权策略列表", policyList);
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        return schema;
+        return SdkSlotSchemaLoader.loadConfigured(
+                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
     }
 
     /** Add-authorization data (spec case 7.5): whitelist the tunnel-tuning recovery action. */
@@ -163,7 +145,7 @@ public final class SpnCasePrompts {
         data.put("授权策略的操作类型", "新增授权策略");
         data.put(
                 "动网操作的授权策略列表",
-                "业务投诉诊断/业务抢通/隧道调优/2026-06-01~2030-06-18");
+                "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18");
         return data;
     }
 
@@ -173,21 +155,7 @@ public final class SpnCasePrompts {
 
     /** Schema mirroring the SDK's Notification-T service-recovery slot schema. */
     public static Map<String, Object> serviceRecoverySchema() {
-        Map<String, Object> condition = new LinkedHashMap<>();
-        condition.put("type", "string");
-        condition.put("description", "订阅条件，例如子网名称约束");
-        Map<String, Object> format = new LinkedHashMap<>();
-        format.put("type", "string");
-        format.put(
-                "description",
-                "上报通知数据格式：业务抢通事件的数据结构描述（执行状态/流水号/端口/授权/方案等字段）");
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("订阅条件", condition);
-        properties.put("上报通知数据格式", format);
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        return schema;
+        return SdkSlotSchemaLoader.loadConfigured(StandardTemplates.SERVICE_RECOVERY);
     }
 
     /** Service-recovery subscription data (spec case 7.8). */

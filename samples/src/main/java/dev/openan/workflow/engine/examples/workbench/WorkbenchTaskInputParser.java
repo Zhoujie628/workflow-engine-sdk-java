@@ -92,34 +92,20 @@ final class WorkbenchTaskInputParser {
         if (exact instanceof String prompt && !prompt.isBlank()) {
             return prompt;
         }
-        for (Map.Entry<String, Object> entry : metadata.entrySet()) {
-            if (entry.getKey().contains("/Task-T/")
-                    && entry.getValue() instanceof String prompt
-                    && !prompt.isBlank()) {
-                return prompt;
-            }
-        }
-        throw new IllegalArgumentException("Inbound Workbench request has no Task-T prompt payload");
+        throw new IllegalArgumentException(
+                "Inbound Workbench request has no canonical Task-T prompt payload");
     }
 
     private static TemplateUri extractTemplateUri(Map<String, Object> metadata) {
         Object raw = metadata.get(MetadataContent.TEMPLATE_URI_METADATA_KEY);
         if (raw == null) {
-            return StandardTemplates.PRIVATE_LINE_COMPLAINT;
+            throw new IllegalArgumentException(
+                    "Inbound Workbench Task-T is missing templateUri metadata");
         }
-        if (raw instanceof TemplateUri templateUri) {
-            return requireTaskTemplate(templateUri);
+        if (!(raw instanceof String candidate) || candidate.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Inbound Workbench Task-T has malformed templateUri metadata");
         }
-        String uri = null;
-        if (raw instanceof String text) {
-            uri = text;
-        } else if (raw instanceof Map<?, ?> map && map.get("uri") instanceof String text) {
-            uri = text;
-        }
-        if (uri == null) {
-            throw new IllegalArgumentException("Inbound Workbench Task-T has malformed templateUri metadata");
-        }
-        String candidate = uri;
         TemplateUri parsed =
                 TemplateUri.parse(candidate)
                         .orElseThrow(
@@ -131,9 +117,10 @@ final class WorkbenchTaskInputParser {
     }
 
     private static TemplateUri requireTaskTemplate(TemplateUri templateUri) {
-        if (!templateUri.uri().startsWith("Task-T/")) {
+        if (!StandardTemplates.PRIVATE_LINE_COMPLAINT.equals(templateUri)) {
             throw new IllegalArgumentException(
-                    "Inbound Workbench template is not a Task-T template: " + templateUri.uri());
+                    "Inbound Workbench template is not the SPN private-line complaint template: "
+                            + templateUri.uri());
         }
         return templateUri;
     }

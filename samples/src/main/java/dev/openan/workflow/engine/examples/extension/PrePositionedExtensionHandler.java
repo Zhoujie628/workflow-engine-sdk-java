@@ -236,7 +236,7 @@ public class PrePositionedExtensionHandler {
             Map<String, Object> validatedData, Object templateUri, String agentTag) {
         String operation = AuthorizationPolicy.operationFromValidated(validatedData);
         switch (operation) {
-            case AuthorizationPolicy.ADD, AuthorizationPolicy.MODIFY -> {
+            case AuthorizationPolicy.ADD -> {
                 AuthorizationPolicy candidate = AuthorizationPolicy.fromValidated(validatedData);
                 authorizationPolicy = candidate;
                 log.info(
@@ -246,6 +246,9 @@ public class PrePositionedExtensionHandler {
                         operation,
                         candidate.rules().size());
             }
+            case AuthorizationPolicy.MODIFY -> throw new UnsupportedOperationException(
+                    "The SPN sample has no persisted policy identifiers; Authorization-T modify "
+                            + "must be implemented by the integrating policy store");
             case AuthorizationPolicy.DELETE -> {
                 // This sample models one active whitelist per OMC agent. A production callback
                 // should use the validated selector/list to delete matching persisted policies.
@@ -390,33 +393,7 @@ public class PrePositionedExtensionHandler {
     }
 
     private static void requireTemplateUri(Object actualValue, TemplateUri expected) {
-        String actual = null;
-        if (actualValue instanceof TemplateUri template) {
-            actual = template.uri();
-        } else if (actualValue instanceof String text) {
-            actual = text;
-        } else if (actualValue instanceof Map<?, ?> map) {
-            Object uri = map.get("uri");
-            if (uri instanceof String text) {
-                actual = text;
-            } else {
-                Object extension = map.get("extensionName");
-                Object segments = map.get("pathSegments");
-                Object version = map.get("templateVersion");
-                if (extension instanceof String extensionName
-                        && segments instanceof List<?> pathSegments
-                        && version instanceof String templateVersion) {
-                    actual = String.join(
-                            "/",
-                            java.util.stream.Stream.concat(
-                                            java.util.stream.Stream.of(extensionName),
-                                            java.util.stream.Stream.concat(
-                                                    pathSegments.stream().map(String::valueOf),
-                                                    java.util.stream.Stream.of(templateVersion)))
-                                    .toList());
-                }
-            }
-        }
+        String actual = actualValue instanceof String text && !text.isBlank() ? text : null;
         if (!expected.uri().equals(actual)) {
             throw new IllegalArgumentException(
                     "Unexpected template URI: expected=" + expected.uri() + ", actual=" + actual);

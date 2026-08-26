@@ -21,6 +21,9 @@ package dev.openan.workflow.engine.client;
 
 import dev.openan.workflow.engine.model.SendMessageResult;
 
+import net.openan.a2at.sdk.core.model.StandardTemplates;
+import net.openan.a2at.sdk.core.model.TemplateUri;
+
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -40,24 +43,31 @@ import java.util.function.Consumer;
 public interface ExtensionSender {
 
     /**
-     * Send a one-shot independent extension message.
+     * Send a one-shot Authorization-T message.
      *
      * @param agentName target agent name
      * @param instruction short instruction text (becomes message parts)
      * @param naturalLanguageInput input for SDK prompt generation
-     * @param extension extension type (never hardcode URIs)
+     * @param templateUri current SDK template used to render the input
+     * @param extension must be {@link A2ATExtension#AUTHORIZATION_T}; Notification-T has a
+     *     different, long-lived lifecycle and must use {@link #openNotification}
      */
     CompletableFuture<SendMessageResult> sendExtensionMessage(
             String agentName,
             String instruction,
             String naturalLanguageInput,
+            TemplateUri templateUri,
             A2ATExtension extension);
 
-    /** Natural-language compatibility convenience for a one-shot Authorization-T operation. */
+    /** Natural-language variant for a one-shot Authorization-T operation. */
     default CompletableFuture<SendMessageResult> sendAuthorization(
             String agentName, String instruction, String naturalLanguageInput) {
         return sendExtensionMessage(
-                agentName, instruction, naturalLanguageInput, A2ATExtension.AUTHORIZATION_T);
+                agentName,
+                instruction,
+                naturalLanguageInput,
+                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT,
+                A2ATExtension.AUTHORIZATION_T);
     }
 
     /**
@@ -72,8 +82,9 @@ public interface ExtensionSender {
      * @param instruction short instruction text (becomes message parts)
      * @param data structured extension input (string-to-object map)
      * @param schema JSON schema describing the meaning of each data field
-     * @param extension extension type; only AUTHORIZATION_T and NOTIFICATION_T support
-     *     fromData rendering here
+     * @param templateUri current SDK template used to render the data
+     * @param extension must be {@link A2ATExtension#AUTHORIZATION_T}; Notification-T must use
+     *     {@link #openNotificationFromData}
      * @return future completing with the first response
      */
     CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
@@ -81,6 +92,7 @@ public interface ExtensionSender {
             String instruction,
             Map<String, Object> data,
             Map<String, Object> schema,
+            TemplateUri templateUri,
             A2ATExtension extension);
 
     /**
@@ -94,6 +106,7 @@ public interface ExtensionSender {
             String instruction,
             Map<String, Object> data,
             Map<String, Object> schema,
+            TemplateUri templateUri,
             Consumer<Map<String, Object>> eventCallback);
 
     /**
@@ -105,6 +118,7 @@ public interface ExtensionSender {
             String instruction,
             Map<String, Object> data,
             Map<String, Object> schema,
+            TemplateUri templateUri,
             Consumer<Map<String, Object>> eventCallback);
 
     /**
@@ -118,6 +132,7 @@ public interface ExtensionSender {
             String agentName,
             String instruction,
             String naturalLanguageInput,
+            TemplateUri templateUri,
             Consumer<Map<String, Object>> eventCallback);
 
     /** Opens a Notification-T subscription and returns an explicit close/health handle. */
@@ -125,11 +140,15 @@ public interface ExtensionSender {
             String agentName,
             String instruction,
             String naturalLanguageInput,
+            TemplateUri templateUri,
             Consumer<Map<String, Object>> eventCallback);
 
-    /** Natural-language compatibility convenience for a Notification-T subscription. */
+    /** Natural-language variant for a Notification-T subscription. */
     default CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction, String naturalLanguageInput) {
-        return sendNotification(agentName, instruction, naturalLanguageInput, null);
+            String agentName,
+            String instruction,
+            String naturalLanguageInput,
+            TemplateUri templateUri) {
+        return sendNotification(agentName, instruction, naturalLanguageInput, templateUri, null);
     }
 }

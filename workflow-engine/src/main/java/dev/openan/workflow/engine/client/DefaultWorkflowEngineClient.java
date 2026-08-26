@@ -463,8 +463,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
      * select the Reject or Abort terminal templates, anything else renders an Accept message via
      * {@code generateNegotiationAcceptPromptFromText} (one LLM extraction step). When the
      * negotiation context is available, the engine advances the stateless context so the
-     * follow-up payload carries the next round. Rendering failures are fatal: raw clarifications
-     * are never disguised as protocol messages.
+     * typed ending message preserves the received session/round context. Rendering failures are
+     * fatal: raw clarifications are never disguised as protocol messages.
      */
     private CompletableFuture<Map<String, Object>> buildNegotiationFollowUpMeta(
             String agentName, Map<String, Object> negMeta, String clarification) {
@@ -481,7 +481,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                     try {
                         MetadataContent mc = renderFollowUpMessage(content, agentName, negMeta, clarification);
                         if (mc.promptText() != null && !mc.promptText().isEmpty()) {
-                            return advanceContext(agentName, negMeta, clarification, mc);
+                            return A2ATContentFacade.toMetadata(mc);
                         }
                         throw new IllegalStateException("A2A-T SDK returned empty negotiation content");
                     } catch (Exception e) {
@@ -509,17 +509,24 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             String clarification) {
         net.openan.a2at.sdk.core.model.NegotiationContext contentCtx =
                 extractContentContext(negMeta);
+        net.openan.a2at.sdk.core.model.TemplateUri endingTemplate =
+                endingTemplateFor(negMeta);
         String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
         if (decision.startsWith("data:")) {
             // Deterministic fromData Accept: the JSON body carries the filled parameter map.
-            return renderAcceptFromData(content, agentName, contentCtx, clarification.substring("data:".length()));
+            return renderAcceptFromData(
+                    content,
+                    agentName,
+                    contentCtx,
+                    endingTemplate,
+                    clarification.substring("data:".length()));
         }
         if (decision.startsWith("reject:")) {
             log.info("[Negotiation] SDK generateNegotiationRejectPrompt for '{}'", agentName);
             return content.generateRejectFromText(
                     clarification.substring("reject:".length()).strip(),
                     requireContext(contentCtx, agentName),
-                    StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+                    endingTemplate);
         }
         if (decision.startsWith("abort:")) {
             log.info("[Negotiation] SDK generateNegotiationAbortPrompt for '{}'", agentName);
@@ -531,7 +538,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 content.generateAcceptFromText(
                         clarification,
                         requireContext(contentCtx, agentName),
-                        StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+                        endingTemplate);
         log.info(
                 "[Negotiation] SDK generateNegotiationAcceptPrompt: templateUri={}",
                 mc.templateUri());
@@ -546,75 +553,115 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             A2ATContentFacade content,
             String agentName,
             net.openan.a2at.sdk.core.model.NegotiationContext contentCtx,
+            net.openan.a2at.sdk.core.model.TemplateUri endingTemplate,
             String jsonBody) {
         requireContext(contentCtx, agentName);
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> params =
-                    new com.fasterxml.jackson.databind.ObjectMapper()
-                            .readValue(jsonBody.strip(), Map.class);
-            java.util.List<net.openan.a2at.sdk.negotiation.content.NegotiationItem> items =
-                    new java.util.ArrayList<>();
-            for (var entry : params.entrySet()) {
-                items.add(
-                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
-                                entry.getKey(), String.valueOf(entry.getValue())));
-            }
+            net.openan.a2at.sdk.negotiation.content.NegotiationEndingContent endingContent =
+                    buildAcceptEndingContent(endingTemplate, jsonBody);
             MetadataContent mc =
                     content.generateAcceptFromData(
                             new net.openan.a2at.sdk.negotiation.content.NegotiationEndingData(
-                                    contentCtx,
-                                    new net.openan.a2at.sdk.negotiation.content
-                                            .InformationEndingContent(
-                                            net.openan.a2at.sdk.negotiation.content
-                                                    .NegotiationConclusion.ACCEPT,
-                                            items)),
-                            StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT);
+                                    contentCtx, endingContent),
+                            endingTemplate);
             log.info(
-                    "[Negotiation] SDK generateNegotiationAcceptPromptFromData: templateUri={}, items={}",
+                    "[Negotiation] SDK generateNegotiationAcceptPromptFromData: templateUri={}, contentType={}",
                     mc.templateUri(),
-                    params.keySet());
+                    endingContent.getClass().getSimpleName());
             return mc;
         } catch (Exception e) {
             throw new IllegalStateException("fromData Accept rendering failed: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Builds the follow-up metadata from the rendered message and, when the session context is
-     * available, advances the engine-held round so the follow-up carries the next-round (or
-     * terminal) context alongside the message.
-     *
-     * <p>The content layer is stateless — session identity and round tracking stay with the
-     * caller (SDK guide §1.10). The engine owns the context: parses it from the propose
-     * metadata, advances via {@code nextRound()}, and re-serializes it for the wire.
-     */
-    private Map<String, Object> advanceContext(
-            String agentName,
-            Map<String, Object> negMeta,
-            String clarification,
-            MetadataContent mc) {
-        Map<String, Object> meta = A2ATContentFacade.toMetadata(mc);
-        net.openan.a2at.sdk.core.model.NegotiationContext ctx = extractContentContext(negMeta);
-        if (ctx == null) {
-            return meta;
+    static net.openan.a2at.sdk.core.model.TemplateUri endingTemplateFor(
+            Map<String, Object> negotiationMetadata) {
+        Object raw = negotiationMetadata.get(
+                net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);
+        net.openan.a2at.sdk.core.model.TemplateUri propose =
+                raw instanceof String text
+                        ? net.openan.a2at.sdk.core.model.TemplateUri.parse(text).orElse(null)
+                        : null;
+        if (StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE.equals(propose)) {
+            return StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT;
         }
-        String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
-        boolean terminal =
-                decision.startsWith("reject:") || decision.startsWith("abort:");
-        net.openan.a2at.sdk.core.model.NegotiationContext next =
-                terminal ? ctx : ctx.nextRound();
-        meta.put(
-                net.openan.a2at.sdk.core.model.MetadataContent
-                        .NEGOTIATION_CONTEXT_METADATA_KEY,
-                A2ATContentFacade.contextPayload(next));
-        log.info(
-                "[Negotiation] Context advanced for '{}' id={} round={} -> {}",
-                agentName,
-                next.id(),
-                ctx.round(),
-                terminal ? "terminal" : next.round());
-        return meta;
+        if (StandardTemplates.TARGET_NEGOTIATION_PROPOSE.equals(propose)) {
+            return StandardTemplates.TARGET_NEGOTIATION_ACCEPT_REJECT;
+        }
+        if (StandardTemplates.FEASIBILITY_NEGOTIATION_PROPOSE.equals(propose)) {
+            return StandardTemplates.FEASIBILITY_NEGOTIATION_ACCEPT_REJECT;
+        }
+        throw new IllegalArgumentException(
+                "Missing or unsupported Negotiation-T propose templateUri: " + raw);
+    }
+
+    static net.openan.a2at.sdk.negotiation.content.NegotiationEndingContent
+            buildAcceptEndingContent(
+                    net.openan.a2at.sdk.core.model.TemplateUri endingTemplate,
+                    String jsonBody)
+                    throws com.fasterxml.jackson.core.JsonProcessingException {
+        Map<String, String> data = parseNegotiationData(jsonBody);
+        var accept = net.openan.a2at.sdk.negotiation.content.NegotiationConclusion.ACCEPT;
+        if (StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
+            var items = data.entrySet().stream()
+                    .map(entry -> new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
+                            entry.getKey(), entry.getValue()))
+                    .toList();
+            return new net.openan.a2at.sdk.negotiation.content.InformationEndingContent(
+                    accept, items);
+        }
+        if (StandardTemplates.TARGET_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
+            return new net.openan.a2at.sdk.negotiation.content.TargetEndingContent(
+                    accept, requireOnlyField(data, "confirmedIntent"), null);
+        }
+        if (StandardTemplates.FEASIBILITY_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
+            return new net.openan.a2at.sdk.negotiation.content.FeasibilityEndingContent(
+                    accept, requireOnlyField(data, "feasibilitySummary"));
+        }
+        throw new IllegalArgumentException(
+                "Unsupported Negotiation-T ending template: " + endingTemplate.uri());
+    }
+
+    static java.util.List<net.openan.a2at.sdk.negotiation.content.NegotiationItem>
+            parseNegotiationItems(String jsonBody) throws com.fasterxml.jackson.core.JsonProcessingException {
+        return parseNegotiationData(jsonBody).entrySet().stream()
+                .map(entry -> new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
+                        entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private static Map<String, String> parseNegotiationData(String jsonBody)
+            throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (jsonBody == null || jsonBody.isBlank()) {
+            throw new IllegalArgumentException("fromData Accept JSON must not be blank");
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> params =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(jsonBody.strip(), Map.class);
+        if (params.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "fromData Accept must contain at least one filled parameter");
+        }
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        for (var entry : params.entrySet()) {
+            String name = entry.getKey() != null ? entry.getKey().strip() : "";
+            String value = entry.getValue() instanceof String text ? text.strip() : "";
+            if (name.isEmpty() || value.isEmpty() || "null".equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException(
+                        "fromData Accept items require non-blank string names and values");
+            }
+            data.put(name, value);
+        }
+        return java.util.Collections.unmodifiableMap(data);
+    }
+
+    private static String requireOnlyField(Map<String, String> data, String field) {
+        if (data.size() != 1 || !data.containsKey(field)) {
+            throw new IllegalArgumentException(
+                    "fromData Accept requires exactly the field '" + field + "'");
+        }
+        return data.get(field);
     }
 
     /**
