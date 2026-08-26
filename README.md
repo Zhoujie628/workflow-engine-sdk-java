@@ -178,21 +178,22 @@ graph TD
 - [API Reference](docs/en/API_REFERENCE.md) - Public interface and class documentation
 - [Design Document](docs/en/DESIGN.md) - Architecture, module structure, design decisions
 - [Developer Guide](docs/en/DEVELOPER_GUIDE.md) - Internal architecture, contribution, debugging
-- [Notification-T Design Analysis](docs/en/notification-t-design-analysis.md) - Long-lived SSE design
 
 ### 中文
 
-- [集成指南](docs/zh/INTEGRATION_GUIDE.md) - 安装、配置、二次开发
+- [A2A-T SDK 依赖说明](docs/zh/A2AT-SDK-DEPENDENCY.md) - 安装当前未发布的固定版本依赖
+- [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台接入执行引擎的主交付文档
+- [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信 Order 转发配置、实现边界与联调验收
+- [SpringSpnDemo 调用链路](docs/zh/SpringSpnDemo调用链路.md) - 直连与 Order 双模式端到端调用链
+- [业务流](docs/zh/业务流.md) - SPN 跨城诊断和四类 A2A-T 协议边界
+- [集成指南](docs/zh/INTEGRATION_GUIDE.md) - 通用安装、配置和二次开发
 - [API 参考](docs/zh/API_REFERENCE.md) - 公共接口和类文档
 - [架构设计](docs/zh/DESIGN.md) - 架构、模块结构、设计决策
 - [开发者指南](docs/zh/DEVELOPER_GUIDE.md) - 内部架构、贡献、调试
-- [Notification-T 设计分析](docs/zh/notification-t-design-analysis.md) - 长连接 SSE 设计选型
-- [业务流](docs/zh/业务流.md) - SPN 跨城诊断业务流程
-- [调用过程](docs/zh/调用过程.md) - 端到端报文交互示例
-- [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台 Spring Boot 集成完整指南
-- [工作台 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - AgentScope 框架结合方案
-- [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信指令平台网关适配
-- [SpringSpnDemo 调用链路](docs/zh/SpringSpnDemo调用链路.md) - Spring Boot Demo 端到端调用链路分析
+- [工作台 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - 可选的业务推理框架结合方案，不是 SDK 接入前置条件
+
+工作台和东信平台团队按上述前五份中文文档顺序阅读即可完成场景接入。代码检视报告、
+已完成的迁移计划和旧协议抓包已从交付目录移除，避免把历史问题或旧报文当成当前接口。
 
 ## Modules
 
