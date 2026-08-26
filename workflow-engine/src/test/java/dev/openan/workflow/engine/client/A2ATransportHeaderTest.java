@@ -277,6 +277,60 @@ class A2ATransportHeaderTest {
         }
     }
 
+    @Test
+    void structuredTaskRequiresAnExplicitCurrentSdkTemplate() throws Exception {
+        AtomicInteger sendCalls = new AtomicInteger();
+        try (A2ATransport transport =
+                new A2ATransport(
+                        List.of(agentCard()),
+                        new SendCountingRuntime(sendCalls),
+                        WorkflowEngineClientConfig.builder().build())) {
+            NullPointerException error =
+                    assertThrows(
+                            NullPointerException.class,
+                            () ->
+                                    new DefaultWorkflowEngineClient(transport)
+                                            .sendMessageFromData(
+                                                    "Test Agent",
+                                                    "diagnose",
+                                                    Map.of("任务对象", "port-1"),
+                                                    Map.of(
+                                                            "type",
+                                                            "object",
+                                                            "properties",
+                                                            Map.of()),
+                                                    null));
+
+            assertTrue(error.getMessage().contains("template URI"));
+            assertEquals(0, sendCalls.get());
+        }
+    }
+
+    @Test
+    void structuredTaskRejectsTemplateFromAnotherExtensionFamily() throws Exception {
+        AtomicInteger sendCalls = new AtomicInteger();
+        try (A2ATransport transport =
+                new A2ATransport(
+                        List.of(agentCard()),
+                        new SendCountingRuntime(sendCalls),
+                        WorkflowEngineClientConfig.builder().build())) {
+            IllegalArgumentException error =
+                    assertThrows(
+                            IllegalArgumentException.class,
+                            () ->
+                                    new DefaultWorkflowEngineClient(transport)
+                                            .sendMessageFromData(
+                                                    "Test Agent",
+                                                    "diagnose",
+                                                    Map.of("任务对象", "port-1"),
+                                                    Map.of("type", "object"),
+                                                    StandardTemplates.SERVICE_RECOVERY));
+
+            assertTrue(error.getMessage().contains("not Task-T"));
+            assertEquals(0, sendCalls.get());
+        }
+    }
+
     private static AgentCard agentCard() throws Exception {
         String json =
                 """

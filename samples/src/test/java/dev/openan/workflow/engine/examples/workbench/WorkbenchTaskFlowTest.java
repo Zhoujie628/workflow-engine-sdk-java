@@ -85,7 +85,11 @@ class WorkbenchTaskFlowTest {
                         () ->
                                 parser.parse(
                                         "task",
-                                        Map.of(A2ATExtension.TASK_T.uri(), "rendered prompt")));
+                                        Map.of(
+                                                A2ATExtension.TASK_T.uri(),
+                                                "rendered prompt",
+                                                MetadataContent.TEMPLATE_URI_METADATA_KEY,
+                                                StandardTemplates.PRIVATE_LINE_COMPLAINT.uri())));
 
         assertTrue(error.getMessage().contains("任务对象"));
     }
@@ -97,6 +101,25 @@ class WorkbenchTaskFlowTest {
                         (prompt, schema, templateUri) -> new FilledParamData(Map.of()));
 
         assertThrows(IllegalArgumentException.class, () -> parser.parse("plain text", Map.of()));
+    }
+
+    @Test
+    void missingTemplateUriIsRejectedInsteadOfDefaultingTheScenario() {
+        WorkbenchTaskInputParser parser =
+                new WorkbenchTaskInputParser(
+                        (prompt, schema, templateUri) -> new FilledParamData(Map.of()));
+
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                parser.parse(
+                                        "task",
+                                        Map.of(
+                                                A2ATExtension.TASK_T.uri(),
+                                                "rendered prompt")));
+
+        assertTrue(error.getMessage().contains("templateUri"));
     }
 
     @Test

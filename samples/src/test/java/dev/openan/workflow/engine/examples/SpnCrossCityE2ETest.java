@@ -245,6 +245,8 @@ class SpnCrossCityE2ETest {
                             "下发授权放行策略",
                             SpnCasePrompts.addAuthorizationData(),
                             SpnCasePrompts.authorizationSchema(),
+                            net.openan.a2at.sdk.core.model.StandardTemplates
+                                    .AUTHORIZATION_POLICY_MANAGEMENT,
                             dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
                     .join();
         }
@@ -265,6 +267,7 @@ class SpnCrossCityE2ETest {
                                     "订阅业务抢通结果通知",
                                     SpnCasePrompts.subscribeServiceRecoveryData(),
                                     SpnCasePrompts.serviceRecoverySchema(),
+                                    net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
                                     notificationCallback)
                             .join();
             subscription.acknowledgement().join();
