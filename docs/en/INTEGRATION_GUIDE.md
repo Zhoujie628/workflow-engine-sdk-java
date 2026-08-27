@@ -576,57 +576,6 @@ WorkflowEngineClientConfig.builder()
     .build();
 ```
 
-## 14. Troubleshooting: Eastcom Order Mode Concurrent NE Timeout
-
-> **Critical pitfall — read before modifying the Order simulator or gateway adapter.**
-
-### Symptom
-
-In Order mode, when sending Task-T diagnosis tasks to two different NEs concurrently (or while independent Notification-T and Authorization-T channels target different NEs), one NE's request fails with `Timeout on blocking read for 10000000000 NANOSECONDS` in `WrapperHttpClient.loadNeResource`.
-
-### Root Cause 1: SDK Shared RSocket Connection
-
-The Eastcom SDK's `ServiceReference` caches RSocket connections in a `static final Map INVOKERS` keyed by `className + host + port`. All requests to the same platform address share one RSocket connection, regardless of the NE name.
-
-`WrapperHttpClient.loadNeResource()` calls `Mono.block(Duration.ofSeconds(10))` — a hardcoded 10-second timeout that cannot be changed via configuration.
-
-### Root Cause 2: Blocking I/O on RSocket Event Loop
-
-The `EastcomOrderSimulatorServer.execute()` method (handling RSocket `requestChannel`) calls `forwardParsed()` which uses `HttpURLConnection` with blocking `reader.read()`. When City1's Notification-T stream is long-lived (waiting for OMC to push recovery events), `reader.read()` blocks indefinitely. If this runs on the RSocket event loop thread (`reactor-tcp-nio-*`), the thread is occupied and cannot process City2's `loadNeResource` (RSocket `requestResponse`) on the same connection — causing the 10-second timeout.
-
-### Fix 1: Move Forwarding I/O Off the Event Loop Thread
-
-Add `.subscribeOn(Schedulers.boundedElastic())` to the `forwardParsed` call so blocking I/O runs on worker threads, freeing the RSocket event loop:
-
-```java
-forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
-        .subscribeOn(Schedulers.boundedElastic())
-        .subscribe(sink::next, sink::error, () -> sink.complete());
-```
-
-### Fix 2: Use HTTP Host Header Instead of Shared `lastResolvedTarget`
-
-The original simulator used a `volatile String lastResolvedTarget` field set by `loadNeResource` and read by `execute`. When two NEs call `loadNeResource` concurrently, the second overwrites the first's target. The SDK's `configureHeaderHost()` sets the HTTP `Host` header to the full `neUrl` per request, so each request carries its own target:
-
-```java
-String hostHeader = findHeader(parsedHeaders, "Host");
-String targetBase = (hostHeader != null && hostHeader.startsWith("http"))
-        ? withoutTrailingSlash(hostHeader)
-        : (lastResolvedTarget != null ? lastResolvedTarget : defaultUrl);
-```
-
-### Why `readTimeout=65s` Alone Doesn't Help
-
-The simulator's `connection.setReadTimeout(65_000)` only controls `HttpURLConnection`'s read timeout. It does not affect the SDK's internal `Mono.block(10s)` in `loadNeResource`. The root cause is the RSocket event loop being blocked, not HTTP read timeout.
-
-### Diagnostic Checklist
-
-1. Confirm timeout location: `WrapperHttpClient.loadNeResource` in stack trace = RSocket timeout, not HTTP
-2. Confirm thread: `FORWARD_CHUNK`/`FORWARD_DONE` logs should show `boundedElastic-*`, not `reactor-tcp-nio-*`
-3. Confirm target: `FORWARD_START target=` should match `LOAD_NE_ACCEPTED target=` for the same NE
-4. Confirm session reuse: `SESSION_REUSE` in logs, not `SESSION_OPEN` every time
-5. Confirm singleton: `ClientRuntimeFactory.create()` returns singleton in ORDER mode
-
 ## 13. Interface Reference
 
 | Interface/Class                                        | Purpose                                                               |

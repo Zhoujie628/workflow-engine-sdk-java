@@ -47,13 +47,10 @@ mvn -B clean verify
 3. 本文及 README 的安装命令。
 
 禁止只覆盖本地同版本 jar。新版本至少要验证 Task-T 生成/校验、无状态 Negotiation-T
-metadata、Authorization-T、Notification-T 长连接，以及两条现行传输路径：
+metadata、Authorization-T、Notification-T 长连接，以及现行传输路径：
+验证直连 OMC 的 SpringSpnDemo 端到端流程。
 
-1. `main` 验证直连 OMC 的 SpringSpnDemo 端到端流程；
-2. `dev` 同时验证直连 OMC 和东信 Order 指令平台模拟器的 SpringSpnDemo 端到端流程。
-
-“只支持最新 A2A-T SDK”仅表示不兼容旧 SDK 版本和旧协议格式，绝不表示取消直连或
-Order 任一传输能力，也不允许省略双传输链路测试。
+“只支持最新 A2A-T SDK”仅表示不兼容旧 SDK 版本和旧协议格式。
 
 ## 单一资源基线
 
