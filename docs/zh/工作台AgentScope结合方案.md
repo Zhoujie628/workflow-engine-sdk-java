@@ -104,7 +104,7 @@ graph TD
 ### 4.1 onTask —— 任务下发决策
 
 ```java
-CompletableFuture<TaskResponse> onTask(TaskRequest request, WorkflowEngineClient engineClient);
+CompletableFuture<TaskResponse> onTask(TaskRequest request, TaskDispatcher taskDispatcher);
 ```
 
 **demo 现状（打桩）：** `buildTargetedTaskMessage(step)` 根据 step 名硬编码返回城市任务模板字符串，`buildCity1Task()` / `buildCity2Task()` 写死故障参数。
@@ -116,9 +116,9 @@ CompletableFuture<TaskResponse> onTask(TaskRequest request, WorkflowEngineClient
 - 推理：从自然语言中提取目标智能体城市、故障类型、相关参数
 - 调用工具：查工作台业务系统确认端口状态、告警历史
 - 生成只含目标智能体相关参数的自包含任务消息（不混入其他城市信息）
-- 工作台 `onTask` 拿到 AgentScope 生成的消息，调 `engineClient.sendMessage()` 发出
+- 工作台 `onTask` 拿到 AgentScope 生成的 `TaskSubmission`，交给 `TaskDispatcher.dispatch()`
 
-**SDK 仍承担：** Task-T 提示词结构化生成、协商自动循环、认证、扩展头注入。`sendMessage` 之后全部是协议机制。
+**SDK 仍承担：** Task-T 自然语言/fromData 生成、协商自动循环、认证、扩展头注入。
 
 ### 4.2 onSelfTask —— 本地自处理决策
 
@@ -157,7 +157,7 @@ CompletableFuture<RouteDecision> onRoute(String stepName, Map<String,Object> res
 ### 4.4 onNegotiation —— 参数补充协商
 
 ```java
-CompletableFuture<String> onNegotiation(String agentName, String negotiationText, Map<String,Object> receiveResult);
+CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request);
 ```
 
 **demo 现状（打桩）：** `NegotiationStrategy.resolve()` 模板化回复。
@@ -167,14 +167,14 @@ CompletableFuture<String> onNegotiation(String agentName, String negotiationText
 **AgentScope 替换后：**
 - ReActAgent 解析下游智能体缺什么参数
 - 调工具：去工作台业务系统查缺失的参数
-- 生成精准补传内容
+- 返回精准的 `acceptText/acceptData/rejectText/rejectData/abortText/abortData` 决策
 - SDK 自动将补传内容作为 follow-up 重发给下游智能体（工作台不碰重发逻辑）
 
 ### 4.5 汇总
 
 | 回调 | demo 打桩方式 | AgentScope 替换价值 | SDK 仍承担 |
 |------|-------------|-------------------|-----------|
-| onTask | 硬编码城市任务模板 | 动态提取参数 + 工具校验 + 自包含消息生成 | Task-T 协议 + sendMessage |
+| onTask | 硬编码城市任务模板 | 动态提取参数 + 工具校验 + 强类型 TaskSubmission | Task-T 协议 + dispatch |
 | onSelfTask | 关键词匹配 + 单轮 LLM | 多步推理 + 真实工具 + 跨任务记忆 | 不介入（SELF_LOOP 无 A2A-T） |
 | onRoute | 走默认顺序 | 语义理解结果内容 + 智能分支选择 | DAG 遍历 + 状态管理 |
 | onNegotiation | 模板回复 | 解析缺参 + 工具取参 + 精准补传 | follow-up 自动重发 |
@@ -226,7 +226,7 @@ sequenceDiagram
 
     rect rgba(240, 248, 255, 1)
         Note right of WB: 步骤: diagnosis_city1
-        WB->>AS: buildTaskMessage(city1, 上游上下文)
+        WB->>AS: buildTaskSubmission(city1, 上游上下文)
         Note over AS: ReActAgent 推理 + 工具查参数
         AS-->>WB: 自包含城市1任务消息
         WB->>OMC: sendMessage (SDK 承载 Task-T + 认证)
@@ -235,7 +235,7 @@ sequenceDiagram
 
     rect rgba(240, 248, 255, 1)
         Note right of WB: 步骤: diagnosis_city2
-        WB->>AS: buildTaskMessage(city2, 上游上下文)
+        WB->>AS: buildTaskSubmission(city2, 上游上下文)
         AS-->>WB: 自包含城市2任务消息
         WB->>OMC: sendMessage (SDK 承载)
         OMC-->>WB: 诊断结果
@@ -302,14 +302,9 @@ import java.util.concurrent.CompletableFuture;
 public interface ReasoningBridge {
 
     /**
-     * onTask 决策：根据上游上下文，为目标智能体生成自包含任务消息。
-     * 返回值直接传给 engineClient.sendMessage()。
+     * onTask 决策：根据上游上下文，为目标智能体生成自然语言或结构化任务提交。
      */
-    CompletableFuture<String> buildTaskMessage(
-            String stepName,
-            String agentName,
-            String upstreamContext,
-            Map<String, Object> params);
+    CompletableFuture<TaskSubmission> buildTaskSubmission(TaskRequest request);
 
     /**
      * onSelfTask 决策：本地多步推理（汇总/分析/定位）。
@@ -333,10 +328,7 @@ public interface ReasoningBridge {
      * onNegotiation 决策：下游智能体缺参数时，解析缺什么 + 工具取参 + 生成补传内容。
      * SDK 负责将返回值作为 follow-up 自动重发，工作台不碰重发。
      */
-    CompletableFuture<String> negotiate(
-            String agentName,
-            String negotiationText,
-            Map<String, Object> receiveResult);
+    CompletableFuture<NegotiationDecision> negotiate(NegotiationRequest request);
 }
 ```
 
@@ -371,14 +363,10 @@ public class AgentScopeControlPoint extends DefaultControlPoint {
 
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
+            TaskRequest request, TaskDispatcher dispatcher) {
         return bridge
-                .buildTaskMessage(
-                        request.getStepName(),
-                        request.getAgentName(),
-                        request.getMessage(),
-                        request.getParams())
-                .thenCompose(msg -> engineClient.sendMessage(request.getAgentName(), msg))
+                .buildTaskSubmission(request)
+                .thenCompose(dispatcher::dispatch)
                 .thenApply(
                         r -> {
                             String state = r.getTaskState();
@@ -401,7 +389,7 @@ public class AgentScopeControlPoint extends DefaultControlPoint {
     @Override
     public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
         return bridge
-                .selfProcess(request.getStepName(), request.getMessage(), request.getParams())
+                .selfProcess(request.getStepName(), request.getMessage(), Map.of())
                 .thenApply(out -> TaskResponse.builder().success(true).output(out).build());
     }
 
@@ -419,9 +407,8 @@ public class AgentScopeControlPoint extends DefaultControlPoint {
     }
 
     @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
-        return bridge.negotiate(agentName, negotiationText, receiveResult);
+    public CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request) {
+        return bridge.negotiate(request);
     }
 
     private List<Map<String, Object>> conditionsToMaps(List<JumpCondition> conditions) {
@@ -465,15 +452,14 @@ public class HttpReasoningBridge implements ReasoningBridge {
     }
 
     @Override
-    public CompletableFuture<String> buildTaskMessage(
-            String stepName, String agentName, String upstreamContext, Map<String, Object> params) {
+    public CompletableFuture<TaskSubmission> buildTaskSubmission(TaskRequest request) {
         return post(
                 "/reasoning/build-task",
                 Map.of(
-                        "step", stepName,
-                        "agent", agentName,
-                        "context", upstreamContext,
-                        "params", params));
+                        "step", request.getStepName(),
+                        "agent", request.getAgentName(),
+                        "context", request.getMessage()))
+                .thenApply(this::toTaskSubmission);
     }
 
     @Override
@@ -499,14 +485,15 @@ public class HttpReasoningBridge implements ReasoningBridge {
     }
 
     @Override
-    public CompletableFuture<String> negotiate(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
+    public CompletableFuture<NegotiationDecision> negotiate(NegotiationRequest request) {
         return post(
                 "/reasoning/negotiate",
                 Map.of(
-                        "agent", agentName,
-                        "concern", negotiationText,
-                        "receive_result", receiveResult));
+                        "agent", request.agentName(),
+                        "concern", request.concern(),
+                        "kind", request.kind(),
+                        "round", request.round()))
+                .thenApply(this::toNegotiationDecision);
     }
 
     private CompletableFuture<String> post(String path, Map<String, Object> body) {

@@ -135,10 +135,10 @@ decision:
 
 | Method          | Called by        | Decision                                     |
 |-----------------|------------------|----------------------------------------------|
-| `onTask`        | executor         | Send a task to an agent (call `sendMessage`) |
+| `onTask`        | executor         | Submit a natural-language or structured `TaskSubmission` |
 | `onSelfTask`    | executor         | Handle a self-loop task locally (no A2A-T)   |
 | `onRoute`       | executor         | Choose a branch at a conditional step        |
-| `onNegotiation` | client auto-loop | Supply clarification on INPUT_REQUIRED       |
+| `onNegotiation` | client auto-loop | Return a typed decision on INPUT_REQUIRED     |
 
 Authorization-T and Notification-T are independently triggered workbench protocol operations handled via
 `ExtensionSender`; they are not workflow DAG nodes.
@@ -159,8 +159,8 @@ both):
   receive: pass-through.
 - **Negotiation-T** - On receive, when the agent returns `INPUT_REQUIRED`
   and declares the extension, extracts the negotiation context and message. This feeds the auto-loop: the engine calls
-  `ControlPoint.onNegotiation`
-  for a clarification, resends the follow-up, and repeats up to a configured round limit.
+  `ControlPoint.onNegotiation` for a `NegotiationDecision`, selects the matching SDK
+  fromText/fromData API, resends the follow-up, and repeats up to a configured round limit.
 
 ### 5.2 Independent-lifecycle extensions
 
@@ -247,8 +247,8 @@ sequenceDiagram
     C->>A: before_send: Task-T
     A-->>C: INPUT_REQUIRED (Negotiation-T)
     C->>E: negotiation result
-    E->>H: onNegotiation (host supplies clarification)
-    H->>E: clarification
+    E->>H: onNegotiation(NegotiationRequest)
+    H->>E: NegotiationDecision
     E->>C: follow-up send
     C->>A: send follow-up
     A-->>C: final result
@@ -318,7 +318,7 @@ own service clients, to access those centers before passing the discovered input
    Notification-T is a workbench-scoped long-lived subscription. The registry auto-registers only
    the in-workflow pair.
 
-3. **Auto-negotiation loop** - the engine owns the resend loop so hosts only supply clarification text
+3. **Auto-negotiation loop** - the engine owns the resend loop so hosts only supply a typed decision
    (`onNegotiation`), never the protocol mechanics of resending.
 
 4. **Condition routing semantics** - empty conditions mean fan-out (parallel), conditional branches mean N-choose-1 via

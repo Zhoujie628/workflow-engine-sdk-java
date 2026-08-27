@@ -1,8 +1,7 @@
 # A2A-T 工作流执行引擎 - 架构设计
 
 > A2A-T 工作流执行引擎的架构设计与设计原理。
-> 本文档描述 v1.0 发布版本。面向集成或扩展 SDK 的工程师，
-> 不是某个 bug 修复的历史记录。
+> 本文档描述 v1.0 发布版本。面向集成或扩展 SDK 的工程师
 
 ---
 
@@ -119,10 +118,10 @@ SDK 暴露两个用户实现的接口，按职责拆分。
 
 | 方法             | 调用方       | 决策                                       |
 |------------------|-------------|-------------------------------------------|
-| `onTask`         | 执行器       | 向智能体发送任务（调用 `sendMessage`）       |
+| `onTask`         | 执行器       | 提交自然语言或结构化 `TaskSubmission`       |
 | `onSelfTask`     | 执行器       | 本地处理自环任务（不走 A2A-T）              |
 | `onRoute`        | 执行器       | 在条件步骤选择分支                          |
-| `onNegotiation`  | 客户端自动循环 | 在 INPUT_REQUIRED 时提供澄清文本            |
+| `onNegotiation`  | 客户端自动循环 | 在 INPUT_REQUIRED 时返回强类型业务决策       |
 
 Authorization-T 和 Notification-T 是工作台独立触发的协议操作，不是工作流 DAG 节点。
 
@@ -139,8 +138,8 @@ Authorization-T 和 Notification-T 是工作台独立触发的协议操作，不
 - **Task-T** — 发送时，调用 A2A-T SDK 从自然语言消息生成结构化任务提示词，注入消息 metadata。
   协商后续和调用方预设提示词时跳过。接收时：透传。
 - **Negotiation-T** — 接收时，当智能体返回 `INPUT_REQUIRED` 并声明该扩展，
-  提取协商上下文和消息。这驱动自动循环：引擎调用 `ControlPoint.onNegotiation` 获取澄清，
-  重发后续消息，重复直到达到配置的轮次上限。
+  提取协商上下文和消息。这驱动自动循环：引擎调用 `ControlPoint.onNegotiation` 获取
+  `NegotiationDecision`，按 action 与 input 类型选择 SDK fromText/fromData API，重发后续消息。
 
 ### 5.2 独立生命周期扩展
 
@@ -218,8 +217,8 @@ sequenceDiagram
     C->>A: before_send: Task-T
     A-->>C: INPUT_REQUIRED (Negotiation-T)
     C->>E: negotiation result
-    E->>H: onNegotiation (宿主提供澄清)
-    H->>E: clarification
+    E->>H: onNegotiation(NegotiationRequest)
+    H->>E: NegotiationDecision
     E->>C: follow-up send
     C->>A: send follow-up
     A-->>C: final result
@@ -287,7 +286,7 @@ SDK 不要求编排中心或注册中心客户端成为底层协议发送的硬�
    Authorization-T 是工作台独立触发的一次性请求，Notification-T 是工作台级长连接订阅。
    注册表只自动注册工作流内的一对。
 
-3. **自动协商循环** — 引擎拥有重发循环，宿主只提供澄清文本（`onNegotiation`），
+3. **自动协商循环** — 引擎拥有重发循环，宿主只提供强类型决策（`onNegotiation`），
    不需要关心重发的协议机制。
 
 4. **条件路由语义** — 空条件意味着扇出（并行），条件分支意味着通过 `onRoute` 做 N 选 1。

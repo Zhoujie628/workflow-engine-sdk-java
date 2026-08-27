@@ -20,12 +20,15 @@
 package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.examples.util.LlmHelper;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.DefaultControlPoint;
+import dev.openan.workflow.engine.control.TaskDispatcher;
 import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationRequest;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.TaskRequest;
 import dev.openan.workflow.engine.model.TaskResponse;
+import dev.openan.workflow.engine.model.TaskSubmission;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -121,7 +124,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
 
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
+            TaskRequest request, TaskDispatcher taskDispatcher) {
         String step = request.getStepName();
         String agentName = request.getAgentName();
         // Structured-data track: hand over the city-scoped complaint fields + schema; the SDK
@@ -129,7 +132,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
         String partsText = "创建专线业务投诉诊断任务";
         Map<String, Object> taskData = buildTaskData(step);
         return sendTaskWithRenderingRetry(
-                        engineClient, agentName, partsText, taskData, 1)
+                        taskDispatcher, agentName, partsText, taskData, 1)
                 .thenApply(
                         r -> {
                             boolean success =
@@ -160,19 +163,21 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
 
     private CompletableFuture<dev.openan.workflow.engine.model.SendMessageResult>
             sendTaskWithRenderingRetry(
-                    WorkflowEngineClient engineClient,
+                    TaskDispatcher taskDispatcher,
                     String agentName,
                     String message,
                     Map<String, Object> taskData,
                     int attempt) {
-        return engineClient
-                .sendMessageFromData(
+        TaskSubmission submission =
+                TaskSubmission.fromData(
                         agentName,
                         message,
                         taskData,
                         dev.openan.workflow.engine.examples.demo.SpnCasePrompts
                                 .privateLineComplaintSchema(),
-                        net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT)
+                        net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT);
+        return taskDispatcher
+                .dispatch(submission)
                 .exceptionallyCompose(error -> {
                     Throwable cause = unwrap(error);
                     if (attempt < 3
@@ -184,7 +189,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                                 attempt + 1,
                                 cause.getMessage());
                         return sendTaskWithRenderingRetry(
-                                engineClient, agentName, message, taskData, attempt + 1);
+                                taskDispatcher, agentName, message, taskData, attempt + 1);
                     }
                     return CompletableFuture.failedFuture(cause);
                 });
@@ -227,8 +232,7 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
     }
 
     @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
-        return negotiationStrategy.resolve(agentName, negotiationText, receiveResult);
+    public CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request) {
+        return negotiationStrategy.resolve(request);
     }
 }

@@ -41,8 +41,8 @@ Central. Install the pinned SDK revision first (do not use an older locally cach
 ```bash
 git clone https://github.com/project-openan/a2a-t-sdk-java.git
 cd a2a-t-sdk-java
-git checkout 34485504675800a436d68cfaa913f14931086506
-mvn -B -Drevision=1.0.0-3448550 -DskipTests \
+git checkout 841c575054d7aecc532e3fd312e004241727951b
+mvn -B -Drevision=1.0.0-841c575 -DskipTests \
   -pl a2a-t-client,a2a-t-server -am install
 ```
 
@@ -94,13 +94,19 @@ WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
 ControlPoint controlPoint = new DefaultControlPoint() {
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
-        return engineClient
-                .sendMessage(request.getAgentName(), request.getMessage())
-                .thenApply(r -> TaskResponse.builder()
-                        .success(true)
-                        .output(r.getText())
-                        .build());
+            TaskRequest request, TaskDispatcher dispatcher) {
+        return dispatcher
+                .dispatch(TaskSubmission.fromText(
+                        request.getAgentName(), request.getMessage()))
+                .thenApply(r -> {
+                    String state = r.getTaskState();
+                    boolean success = state == null || state.isBlank()
+                            || "TASK_STATE_COMPLETED".equals(state);
+                    return TaskResponse.builder()
+                            .success(success)
+                            .output(r.getText())
+                            .build();
+                });
     }
 };
 
@@ -162,9 +168,9 @@ graph TD
 | Package | Key Classes | Description |
 |---------|-------------|-------------|
 | `client` | `WorkflowEngineClient`, `DefaultWorkflowEngineClient`, `ExtensionSender`, `A2ATransport`, `AuthProvider`, `AgentAuthManager`, `WorkflowEngineClientConfig`, `CredentialCrypto`, `AgentCardJacksonModule` | A2A transport, auth, extensions (package-private internals) |
-| `control` | `ControlPoint`, `DefaultControlPoint`, `EventCallback`, `EventType`, `NegotiationStrategy` | User-facing decision interfaces |
+| `control` | `ControlPoint`, `DefaultControlPoint`, `TaskDispatcher`, `EventCallback`, `EventType`, `NegotiationStrategy` | User-facing decision interfaces |
 | `core` | `WorkflowExecutor`, `ContextBuilder` | DAG traversal, context assembly |
-| `model` | `Workflow`, `WorkflowStep`, `Task`, `TaskRequest`, `TaskResponse`, `StepType`, `JumpCondition`, `RouteDecision`, `ExecutionResult`, `SendMessageResult`, `TaskStatus`, `WorkflowSearchResult` | Data models |
+| `model` | `Workflow`, `WorkflowStep`, `Task`, `TaskRequest`, `TaskSubmission`, `TaskResponse`, `NegotiationRequest`, `NegotiationDecision`, `ExecutionResult` | Data models |
 | `registry` | `LoadPsop`, `RegistryClient` | PSOP loading and AgentCard registry |
 | `runner` | `ExecutePsop` | Entry point for workflow execution |
 

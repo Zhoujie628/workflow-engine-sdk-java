@@ -3,8 +3,8 @@
 执行引擎首发版本只支持下列最新 A2A-T SDK 源码基线，不提供旧 SDK 兼容层：
 
 - 仓库：`project-openan/a2a-t-sdk-java`
-- Git commit：`34485504675800a436d68cfaa913f14931086506`
-- 本地 Maven 版本：`1.0.0-3448550`（精确提交构建的不可变本地版本）
+- Git commit：`841c575054d7aecc532e3fd312e004241727951b`
+- 本地 Maven 版本：`1.0.0-841c575`（精确提交构建的不可变本地版本）
 - 使用组件：`a2a-t-client`、`a2a-t-server` 及其传递依赖
 
 ## 已知上游生命周期缺口
@@ -17,7 +17,7 @@ Task-T、Authorization-T、Notification-T、直连和指令平台业务链路均
 
 上游 SDK 应在新提交中补充幂等 `close()`，由 `A2ATClient/A2ATServer` 级联关闭其拥有的
 LLM provider；执行引擎届时应升级到该新提交对应的新 Maven 版本。禁止在不改变版本号的
-情况下覆盖 `1.0.0-3448550`，否则 IDEA 与 CI 将得到不可复现的同坐标异内容制品。
+情况下覆盖 `1.0.0-841c575`，否则 IDEA 与 CI 将得到不可复现的同坐标异内容制品。
 
 该 SDK 尚未发布到 Maven Central。引擎不探测、不加载也不降级到其他 A2A-T SDK 版本；
 本机与 CI 都必须安装这里锁定的提交派生坐标。
@@ -27,8 +27,8 @@ LLM provider；执行引擎届时应升级到该新提交对应的新 Maven 版�
 ```powershell
 git clone https://github.com/project-openan/a2a-t-sdk-java.git
 Set-Location a2a-t-sdk-java
-git checkout 34485504675800a436d68cfaa913f14931086506
-mvn -B "-Drevision=1.0.0-3448550" -DskipTests `
+git checkout 841c575054d7aecc532e3fd312e004241727951b
+mvn -B "-Drevision=1.0.0-841c575" -DskipTests `
   -pl a2a-t-client,a2a-t-server -am install
 ```
 

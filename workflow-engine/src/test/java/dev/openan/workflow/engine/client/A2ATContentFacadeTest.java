@@ -72,7 +72,11 @@ class A2ATContentFacadeTest {
     }
 
     private static NegotiationContext context() {
-        return new NegotiationContext("3dbc13b5-bd57-4c2b-b503-24e381b6c8d3", 1, 5);
+        return new NegotiationContext(
+                "3dbc13b5-bd57-4c2b-b503-24e381b6c8d3",
+                1,
+                5,
+                net.openan.a2at.sdk.core.model.NegotiationPerformative.PROPOSE);
     }
 
     @Test
@@ -106,6 +110,7 @@ class A2ATContentFacadeTest {
         assertTrue(ctx instanceof Map, "context must travel in metadata");
         assertEquals("3dbc13b5-bd57-4c2b-b503-24e381b6c8d3", ((Map<?, ?>) ctx).get("id"));
         assertEquals(1, ((Map<?, ?>) ctx).get("round"));
+        assertEquals("PROPOSE", ((Map<?, ?>) ctx).get("performative"));
     }
 
     @Test
@@ -123,14 +128,16 @@ class A2ATContentFacadeTest {
         // The round travels in metadata, not in the rendered text.
         assertFalse(mc.promptText().contains("round: 1"));
         Map<String, Object> metadata = A2ATContentFacade.toMetadata(mc);
+        Map<?, ?> endingContext =
+                (Map<?, ?>)
+                        metadata.get(
+                                net.openan.a2at.sdk.core.model.MetadataContent
+                                        .NEGOTIATION_CONTEXT_METADATA_KEY);
         assertEquals(
                 1,
-                ((Map<?, ?>)
-                                metadata.get(
-                                        net.openan.a2at.sdk.core.model.MetadataContent
-                                                .NEGOTIATION_CONTEXT_METADATA_KEY))
-                        .get("round"),
+                endingContext.get("round"),
                 "an ending message must preserve the received propose round");
+        assertEquals("ACCEPT", endingContext.get("performative"));
     }
 
     @Test
@@ -147,6 +154,20 @@ class A2ATContentFacadeTest {
                                 1,
                                 "maxRounds",
                                 (long) Integer.MAX_VALUE + 1)));
+        assertNull(
+                A2ATContentFacade.contextFromMap(
+                        Map.of("id", "context", "round", 1, "maxRounds", 5)));
+        assertNull(
+                A2ATContentFacade.contextFromMap(
+                        Map.of(
+                                "id",
+                                "context",
+                                "round",
+                                1,
+                                "maxRounds",
+                                5,
+                                "performative",
+                                "propose")));
     }
 
     @Test

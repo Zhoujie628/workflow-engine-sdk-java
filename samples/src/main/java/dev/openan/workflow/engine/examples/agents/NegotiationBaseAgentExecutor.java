@@ -387,7 +387,8 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 new net.openan.a2at.sdk.core.model.NegotiationContext(
                         java.util.UUID.randomUUID().toString(),
                         1,
-                        net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS);
+                        net.openan.a2at.sdk.core.model.NegotiationContext.DEFAULT_MAX_ROUNDS,
+                        net.openan.a2at.sdk.core.model.NegotiationPerformative.PROPOSE);
         Map<String, Object> metadata = renderProposeMetadata(negotiationContext, input);
         Message proposeMessage =
                 Message.builder()
@@ -400,7 +401,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                         .build();
         emitter.requiresInput(proposeMessage);
         log.info(
-                "[{}] Requested negotiation via INPUT_REQUIRED status message (context=id/round/maxRounds)",
+                "[{}] Requested negotiation via INPUT_REQUIRED status message (context=id/round/maxRounds/performative)",
                 getClass().getSimpleName());
     }
 

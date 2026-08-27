@@ -56,7 +56,7 @@ import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
  *
  * <ul>
  *   <li>{@link WorkbenchControlPoint} -- workflow decision callbacks (task dispatch, routing)
- *   <li>{@link NegotiationStrategy} -- negotiation clarification (injected into the control point)
+ *   <li>{@link NegotiationStrategy} -- typed negotiation decisions (injected into the control point)
  * </ul>
  *
  * <p>This class does NOT handle agent server I/O (that stays in the Spring-managed

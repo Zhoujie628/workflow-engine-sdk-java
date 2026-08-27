@@ -153,23 +153,23 @@ Notification-T entry points require an explicit SDK template so callers can sele
 
 - **Trigger**: the response metadata carries the Negotiation-T extension key (the agent opened a
   negotiation via `Message(ROLE_AGENT)` + `INPUT_REQUIRED`) together with SDK-generated
-  `templateUri` and `negotiationContext={id,round,maxRounds}`. Missing fields fail closed.
+  `templateUri` and `negotiationContext={id,round,maxRounds,performative}`. Missing fields fail closed.
 - **Each round**: `validateProposePromptAndDataFilling` validates and extracts the Propose →
   `ControlPoint.onNegotiation` decides → the SDK content layer renders Accept / Reject / Abort →
   Accept is checked with `validateAcceptPromptAndDataFilling` before sending → the engine copies
   the ending message preserves the received Propose `NegotiationContext` and round → send → recurse.
-- **Clarification conventions** (the onNegotiation return value):
-  - `data:{...json...}` — deterministic fromData Accept rendering (no LLM call; the JSON body is
-    the filled-parameter map)
-  - `reject:<reason>` / `abort:<reason>` — Reject / Abort terminal templates
-  - any other text — fromText Accept rendering (one LLM extraction step)
+- **Typed decisions** (the `onNegotiation` return value):
+  - `NegotiationDecision.acceptText/acceptData` — Accept through SDK fromText/fromData
+  - `NegotiationDecision.rejectText/rejectData` — Reject through SDK fromText/fromData
+  - `NegotiationDecision.abortText/abortData` — Abort through SDK fromText/fromData
+  - String control prefixes such as `data:`, `reject:`, and `abort:` are not accepted.
 - **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
   via the SDK abort template (best effort — delivery failures are logged only), a
   `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
 - **Negotiation context**: the engine does not support the legacy `startNegotiation`,
   `receiveNegotiation`, or `continueNegotiation` state-machine entry points. It accepts only
   canonical `negotiationContext` with
-  `{id, round, maxRounds}` and does not read legacy `negotiation_context` metadata.
+  `{id, round, maxRounds, performative}` and does not read legacy `negotiation_context` metadata.
 
 #### Template queries
 
@@ -342,7 +342,7 @@ message-generation / validation / template-query surface, one method per `A2ATCl
 |-------|---------|-------|
 | fromData generation | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | deterministic rendering from typed data, no LLM |
 | fromText generation | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | free text + one LLM extraction step |
-| Stateless context | `MetadataContent.buildMetadataContent` / `NegotiationContext` | carry and advance `{id, round, maxRounds}` |
+| Stateless context | `MetadataContent.buildMetadataContent` / `NegotiationContext` | carry `{id, round, maxRounds, performative}`; generation stamps the output performative |
 | Validate and fill | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | rule gate + LLM semantic validation + param merge; requires a `NegotiationContext` (null = not a negotiation message) |
 | Template queries | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | catalog enumeration and lookup |
 | Utility | `toMetadata(MetadataContent)` | generated message → A2A metadata map (with `templateUri`, `negotiationContext` keys) |
@@ -421,15 +421,29 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 
 ## dev.openan.workflow.engine.control
 
+### TaskDispatcher / TaskSubmission
+
+`onTask` receives only the narrow `TaskDispatcher` capability. Business code uses:
+
+```java
+dispatcher.dispatch(TaskSubmission.fromText(agentName, text));
+dispatcher.dispatch(TaskSubmission.fromData(
+        agentName, instruction, data, schema, templateUri));
+```
+
+The first form invokes SDK natural-language scenario recognition; the second invokes schema-aware
+fromData. `TaskSubmission` validates the target, instruction, schema, and Task-T template and
+defensively copies business data before it reaches the protocol layer.
+
 ### ControlPoint
 
 User-facing decision interface. Each method has a single responsibility.
 
 ```java
 public interface ControlPoint {
-    // Send a Task-T message to an agent. Just call sendMessage.
+    // Take over a remote task and submit natural-language or structured Task-T input.
     CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
+            TaskRequest request, TaskDispatcher taskDispatcher);
 
     // Self-loop step: handled locally, no A2A-T message to self.
     default CompletableFuture<TaskResponse> onSelfTask(TaskRequest request);
@@ -439,10 +453,9 @@ public interface ControlPoint {
             String stepName, Map<String, Object> results,
             List<JumpCondition> conditions);
 
-    // Provide clarification for negotiation. Default: generic text.
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult);
+    // Return a typed Accept / Reject / Abort decision.
+    default CompletableFuture<NegotiationDecision> onNegotiation(
+            NegotiationRequest request);
 }
 ```
 
@@ -451,16 +464,23 @@ public interface ControlPoint {
 | `onTask`          | A step dispatches a task to another agent  | `TaskResponse` (success + output) |
 | `onSelfTask`      | A `SELF_LOOP` step runs locally (no A2A-T) | `TaskResponse` (success + output) |
 | `onRoute`         | After step completes, before next step     | `RouteDecision` (nextStep)        |
-| `onNegotiation`   | When agent returns `INPUT_REQUIRED`        | `String` clarification text       |
+| `onNegotiation`   | When agent returns `INPUT_REQUIRED`        | `NegotiationDecision`             |
+
+`NegotiationRequest` exposes `agentName`, `concern`, `sessionId`, `round`, `maxRounds`, the typed
+`NegotiationPerformative`, negotiation `kind`, `templateUri`, and read-only `metadata`. Only a
+`PROPOSE` with a complete context reaches the callback; missing context, invalid rounds, or an
+unsupported template fail closed. Business code only returns `acceptText/acceptData`,
+`rejectText/rejectData`, or `abortText/abortData`; it does not send a message or construct protocol
+metadata.
 
 ### DefaultControlPoint
 
 Default implementation with sensible defaults:
 
-- `onTask`: calls `sendMessage()`, returns success/output
+- `onTask`: dispatches `TaskSubmission.fromText`, returns success/output
 - `onSelfTask`: echoes the task message back (override for local logic)
 - `onRoute`: picks first non-terminal branch
-- `onNegotiation`: returns generic clarification
+- `onNegotiation`: returns a generic `acceptText` decision
 
 Extend this class and override only the methods you need.
 
@@ -708,7 +728,7 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
 
 Canonical negotiation metadata is `templateUri` plus
-`negotiationContext={id,round,maxRounds}`. Legacy state-machine keys are not accepted.
+`negotiationContext={id,round,maxRounds,performative}`. Legacy state-machine keys are not accepted.
 
 ---
 
@@ -724,9 +744,9 @@ Canonical negotiation metadata is `templateUri` plus
 - Negotiation beyond `maxNegotiationRounds` rounds: a `NEGOTIATION_FAILED` event fires, a terminal
   message is sent to the agent via the SDK abort template (best effort), and the last agent reply
   stands as the final response; the loop does not continue.
-- SDK content-generation failures for negotiation follow-ups degrade to the raw clarification text
-  (placed under the Negotiation-T key), logged at `WARN`.
-- Auth failures (401) are logged as `ERROR` and auth headers are not set; the request proceeds without auth.
+- SDK content-generation failures for negotiation follow-ups fail closed; raw business input is never
+  disguised as Negotiation-T metadata.
+- Missing required credentials or authentication failures fail the request; it is never sent unauthenticated.
 - SSE stream errors after terminal events are logged at `DEBUG` level (expected behavior).
 
 ---

@@ -24,7 +24,8 @@ import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.TaskRequest;
 import dev.openan.workflow.engine.model.TaskResponse;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
+import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationRequest;
 
 import java.util.List;
 import java.util.Map;
@@ -41,14 +42,15 @@ import java.util.concurrent.CompletableFuture;
 public interface ControlPoint {
 
     /**
-     * Send a task to an agent. Call {@code engineClient.sendMessage(...)}.
+     * Take over a remote workflow task and dispatch a typed submission.
      *
      * <p>The SDK handles Task-T prompt generation, the Negotiation-T auto-loop (calling {@link
-     * #onNegotiation} on INPUT_REQUIRED), auth, and extension header injection. Just send the
-     * message.
+     * #onNegotiation} on INPUT_REQUIRED), auth, and extension header injection. Submit through the
+     * dispatcher. Business code chooses natural-language or structured input by creating a {@link
+     * dev.openan.workflow.engine.model.TaskSubmission}; it does not manipulate protocol metadata.
      */
     CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
+            TaskRequest request, TaskDispatcher taskDispatcher);
 
     /**
      * Handle a self-loop task locally. Called when a workflow step is marked SELF_LOOP: the agent
@@ -74,13 +76,12 @@ public interface ControlPoint {
             String stepName, Map<String, Object> results, List<JumpCondition> conditions);
 
     /**
-     * Provide supplementary data when an agent returns INPUT_REQUIRED (Negotiation-T). Return the
-     * clarification text - the SDK internally resends the follow-up message. Do NOT send messages
-     * here. Default: returns a generic clarification.
+     * Make a typed business decision when an agent returns INPUT_REQUIRED (Negotiation-T). The SDK
+     * internally renders and sends the follow-up message. Do not send messages here.
      */
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
+    default CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request) {
         return CompletableFuture.completedFuture(
-                "Please proceed with the original task using available information.");
+                NegotiationDecision.acceptText(
+                        "Please proceed with the original task using available information."));
     }
 }

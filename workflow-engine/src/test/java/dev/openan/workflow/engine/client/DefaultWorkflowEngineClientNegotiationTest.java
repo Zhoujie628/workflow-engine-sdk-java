@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import net.openan.a2at.sdk.core.model.MetadataContent;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.negotiation.content.FeasibilityEndingContent;
+import net.openan.a2at.sdk.negotiation.content.InformationEndingContent;
+import net.openan.a2at.sdk.negotiation.content.NegotiationConclusion;
 import net.openan.a2at.sdk.negotiation.content.TargetEndingContent;
 
 import org.junit.jupiter.api.Test;
@@ -20,24 +22,19 @@ import java.util.Map;
 class DefaultWorkflowEngineClientNegotiationTest {
 
     @Test
-    void currentFromDataAcceptRequiresAtLeastOneConcreteStringItem() throws Exception {
-        var items = DefaultWorkflowEngineClient.parseNegotiationItems(
-                "{\"任务对象\":\"P781-17\"}");
+    void currentFromDataEndingUsesConcreteTypedItems() {
+        InformationEndingContent content =
+                assertInstanceOf(
+                        InformationEndingContent.class,
+                        DefaultWorkflowEngineClient.buildEndingContent(
+                                StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT,
+                                Map.of("任务对象", "P781-17"),
+                                NegotiationConclusion.ACCEPT));
 
-        assertEquals(1, items.size());
-        assertEquals("任务对象", items.get(0).name());
-        assertEquals("P781-17", items.get(0).value());
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> DefaultWorkflowEngineClient.parseNegotiationItems("{}"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> DefaultWorkflowEngineClient.parseNegotiationItems(
-                        "{\"任务对象\":null}"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> DefaultWorkflowEngineClient.parseNegotiationItems(
-                        "{\"任务对象\":\"null\"}"));
+        assertEquals(NegotiationConclusion.ACCEPT, content.conclusion());
+        assertEquals(1, content.items().size());
+        assertEquals("任务对象", content.items().get(0).name());
+        assertEquals("P781-17", content.items().get(0).value());
     }
 
     @Test
@@ -63,26 +60,30 @@ class DefaultWorkflowEngineClientNegotiationTest {
     }
 
     @Test
-    void targetAndFeasibilityFromDataAcceptUseTheirTypedContent() throws Exception {
+    void targetAndFeasibilityFromDataUseTheirTypedContent() {
         TargetEndingContent target =
                 assertInstanceOf(
                         TargetEndingContent.class,
-                        DefaultWorkflowEngineClient.buildAcceptEndingContent(
+                        DefaultWorkflowEngineClient.buildEndingContent(
                                 StandardTemplates.TARGET_NEGOTIATION_ACCEPT_REJECT,
-                                "{\"confirmedIntent\":\"诊断指定专线\"}"));
+                                Map.of("confirmedIntent", "诊断指定专线"),
+                                NegotiationConclusion.REJECT));
         FeasibilityEndingContent feasibility =
                 assertInstanceOf(
                         FeasibilityEndingContent.class,
-                        DefaultWorkflowEngineClient.buildAcceptEndingContent(
+                        DefaultWorkflowEngineClient.buildEndingContent(
                                 StandardTemplates.FEASIBILITY_NEGOTIATION_ACCEPT_REJECT,
-                                "{\"feasibilitySummary\":\"资源与权限满足\"}"));
+                                Map.of("feasibilitySummary", "资源与权限满足"),
+                                NegotiationConclusion.ACCEPT));
 
+        assertEquals(NegotiationConclusion.REJECT, target.conclusion());
         assertEquals("诊断指定专线", target.confirmedIntent());
         assertEquals("资源与权限满足", feasibility.feasibilitySummary());
         assertThrows(
                 IllegalArgumentException.class,
-                () -> DefaultWorkflowEngineClient.buildAcceptEndingContent(
+                () -> DefaultWorkflowEngineClient.buildEndingContent(
                         StandardTemplates.TARGET_NEGOTIATION_ACCEPT_REJECT,
-                        "{\"任务对象\":\"P781\"}"));
+                        Map.of("任务对象", "P781"),
+                        NegotiationConclusion.ACCEPT));
     }
 }

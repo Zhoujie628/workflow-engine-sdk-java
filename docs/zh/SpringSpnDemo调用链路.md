@@ -1,7 +1,7 @@
 # SpringSpnDemo 当前调用链路
 
-> 校准日期：2026-08-26。以 `dev` 当前源码和锁定的 A2A-T SDK
-> `1.0.0-3448550`（commit `34485504675800a436d68cfaa913f14931086506`）为准。
+> 校准日期：2026-08-27。以 `dev` 当前源码和锁定的 A2A-T SDK
+> `1.0.0-841c575`（commit `841c575054d7aecc532e3fd312e004241727951b`）为准。
 > 直连与东信 Order 是当前必须同时支持的两条南向线路，不是新旧版本兼容模式。
 
 ## 1. 业务结果
@@ -95,7 +95,7 @@ Negotiation-T 轮次或业务回调契约。Order 模式的每个 agent/context 
 
 OMC 仅在 Task-T 缺少必填参数或存在业务语义错误时发起协商。LLM/配置/网络故障会
 直接失败，不伪装成参数协商。OMC 用 typed propose 渲染 SDK prompt，工作台校验
-`templateUri` 和 `negotiationContext={id,round,maxRounds}`，再用 typed accept/reject/abort 回复。
+`templateUri` 和 `negotiationContext={id,round,maxRounds,performative}`，再用 typed accept/reject/abort 回复。
 引擎不使用已从 SDK 删除的旧状态机接口，不存在原始文本 fallback。
 
 主投诉工作流给两个地市都下发完整诊断输入，因此正常主链路不会人为制造缺参来触发

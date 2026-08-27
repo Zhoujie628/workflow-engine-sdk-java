@@ -150,20 +150,21 @@ SDK 配置的 LLM）；持有自然语言
 
 - **触发条件**：响应 metadata 携带 Negotiation-T 扩展 key（agent 通过 `Message(ROLE_AGENT)` +
   `INPUT_REQUIRED` 发起协商），并同时携带 SDK 生成的 `templateUri` 与
-  `negotiationContext={id,round,maxRounds}`。缺少任一字段均按非法协商报文失败关闭。
+  `negotiationContext={id,round,maxRounds,performative}`。缺少任一字段均按非法协商报文失败关闭。
 - **每轮**：`NegotiationTHandler` 用 `validateProposePromptAndDataFilling` 按 `templateUri`
   校验 Propose 并抽取参数 → `ControlPoint.onNegotiation` 生成决策 → SDK 内容层渲染
   Accept / Reject / Abort → Accept 在发出前再用 `validateAcceptPromptAndDataFilling` 校验 →
   结束报文保留收到的 Propose `NegotiationContext` 及轮次 → 发送给 agent → 递归检查下一轮。
-- **澄清文本约定**（onNegotiation 返回值）：
-  - `data:{...json...}` — 确定性 fromData 渲染 Accept（无 LLM 调用，JSON 为补充参数 map）
-  - `reject:原因` / `abort:原因` — 渲染 Reject / Abort 终态模板
-  - 其他文本 — fromText 渲染 Accept（一次 LLM 抽取）
+- **强类型决策**（`onNegotiation` 返回值）：
+  - `NegotiationDecision.acceptText/acceptData` — 接受；分别走 SDK fromText/fromData
+  - `NegotiationDecision.rejectText/rejectData` — 拒绝；分别走 SDK fromText/fromData
+  - `NegotiationDecision.abortText/abortData` — 终止；分别走 SDK fromText/fromData
+  - 不接受 `data:`、`reject:`、`abort:` 等字符串控制前缀。
 - **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
   （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
 - **协商上下文**：执行引擎不支持 `startNegotiation` / `receiveNegotiation` /
   `continueNegotiation` 旧状态机入口。引擎只接受规范键 `negotiationContext`，结构固定为
-  `{id, round, maxRounds}`；不再读取 `negotiation_context` 等旧键。
+  `{id, round, maxRounds, performative}`；不再读取 `negotiation_context` 等旧键。
 
 #### 模板查询
 
@@ -331,7 +332,7 @@ SDK 消息生成/校验/模板查询的完整能力面，方法与 SDK `A2ATClie
 |------|------|------|
 | fromData 生成 | `generateProposeFromData` / `generateAcceptFromData` / `generateRejectFromData` / `generateAbortFromData` | 类型化数据确定性渲染，无 LLM |
 | fromText 生成 | `generateProposeFromText` / `generateAcceptFromText` / `generateRejectFromText` / `generateAbortFromText` | 自由文本 + 一步 LLM 抽取 |
-| 无状态上下文 | `MetadataContent.buildMetadataContent` / `NegotiationContext` | 生成并传递 `{id, round, maxRounds}`；引擎负责复制和递增轮次 |
+| 无状态上下文 | `MetadataContent.buildMetadataContent` / `NegotiationContext` | 生成并传递 `{id, round, maxRounds, performative}`；SDK 为输出消息标记 performative |
 | 校验提取 | `validatePropose` / `validateAccept` / `validateReject` / `validateAbort` | 规则门 + LLM 语义校验 + 参数合并；需传 `NegotiationContext`（null = 非协商消息） |
 | 模板查询 | `getPrompts` / `getNegotiationPrompts` / `getPrompt` / `getNegotiationPrompt` | 模板目录枚举与查询 |
 | 工具 | `toMetadata(MetadataContent)` | 生成消息转 A2A metadata map（含 `templateUri`、`negotiationContext` key） |
@@ -410,15 +411,28 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 
 ## dev.openan.workflow.engine.control
 
+### TaskDispatcher / TaskSubmission
+
+`onTask` 只获得窄化的 `TaskDispatcher` 能力。业务使用：
+
+```java
+dispatcher.dispatch(TaskSubmission.fromText(agentName, text));
+dispatcher.dispatch(TaskSubmission.fromData(
+        agentName, instruction, data, schema, templateUri));
+```
+
+第一种调用 SDK 自然语言场景识别；第二种调用 schema-aware fromData。`TaskSubmission` 在进入
+协议层前校验 agent、instruction、schema 和模板扩展类型，并防御性复制业务数据。
+
 ### ControlPoint
 
 用户决策接口。每个方法单一职责。
 
 ```java
 public interface ControlPoint {
-    // 向智能体发送 Task-T 消息。直接调用 sendMessage。
+    // 接管远程任务，提交自然语言或结构化 Task-T 输入。
     CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
+            TaskRequest request, TaskDispatcher taskDispatcher);
 
     // 自环节点：本地处理，不发 A2A-T 消息给自己。
     default CompletableFuture<TaskResponse> onSelfTask(TaskRequest request);
@@ -428,10 +442,9 @@ public interface ControlPoint {
             String stepName, Map<String, Object> results,
             List<JumpCondition> conditions);
 
-    // 提供协商补充信息。默认：返回通用文本。
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult);
+    // 返回强类型 Accept / Reject / Abort 决策。
+    default CompletableFuture<NegotiationDecision> onNegotiation(
+            NegotiationRequest request);
 }
 ```
 
@@ -440,16 +453,22 @@ public interface ControlPoint {
 | `onTask`          | 步骤向其他智能体分派任务时             | `TaskResponse`（成功 + 输出） |
 | `onSelfTask`      | `SELF_LOOP` 步骤本地执行（不走 A2A-T） | `TaskResponse`（成功 + 输出） |
 | `onRoute`         | 步骤完成后、下一步前                   | `RouteDecision`（nextStep）   |
-| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时         | `String` 补充信息文本         |
+| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时         | `NegotiationDecision`         |
+
+`NegotiationRequest` 向业务方提供 `agentName`、`concern`、`sessionId`、`round`、
+`maxRounds`、强类型 `NegotiationPerformative`、协商 `kind`、`templateUri` 和只读 `metadata`。
+只有带完整上下文的 `PROPOSE` 才会进入回调；上下文缺失、轮次非法或模板不受支持时均失败关闭。
+业务方只需根据这些字段返回 `acceptText/acceptData`、`rejectText/rejectData` 或
+`abortText/abortData`，无需发送消息或构造协议 metadata。
 
 ### DefaultControlPoint
 
 默认实现，提供合理默认值：
 
-- `onTask`：调用 `sendMessage()`，返回 success/output
+- `onTask`：用 `TaskSubmission.fromText` 交给 `TaskDispatcher`，返回 success/output
 - `onSelfTask`：原样回传任务消息（本地逻辑请覆盖实现）
 - `onRoute`：选第一个非终止分支
-- `onNegotiation`：返回通用补充信息
+- `onNegotiation`：返回通用的 `acceptText` 决策
 
 继承此类，只需覆盖需要自定义的方法。
 
@@ -698,7 +717,7 @@ ExecutionResult result = executor.run().join();
 
 > **协商相关 metadata key 约定：**
 >
-> - `negotiationContext`（SDK 契约）：SDK 生成协商消息时写入，携带 `{id, round, maxRounds}`。
+> - `negotiationContext`（SDK 契约）：SDK 生成协商消息时写入，携带 `{id, round, maxRounds, performative}`。
 >   validate API 依赖它区分协商消息与普通消息。
 > - `templateUri`（SDK 契约）：SDK 生成消息时写入，标识渲染所用模板。
 > - `negotiation_message` / `negotiation_params`（引擎内部）：接收校验后供自动循环和
@@ -717,8 +736,8 @@ ExecutionResult result = executor.run().join();
 - 智能体调用失败抛出 `RuntimeException`（包装原始异常）。
 - 协商超过 `maxNegotiationRounds` 轮后：发出 `NEGOTIATION_FAILED` 事件，通过 SDK abort
   模板向 agent 发送终止消息（尽力而为），agent 最后一次回复作为最终响应；循环不再继续。
-- 协商 follow-up 的 SDK 内容生成失败时降级为裸澄清文本（原文放入 Negotiation-T key），记 `WARN`。
-- 认证失败（401）记为 `ERROR` 日志，认证头不设置，请求继续发出。
+- 协商 follow-up 的 SDK 内容生成失败时直接失败；不会把裸业务输入伪装成 Negotiation-T metadata。
+- 必需认证信息缺失或获取失败时请求失败关闭，不会无认证继续发送。
 - SSE 流在终态事件后的连接关闭日志为 `DEBUG` 级别（预期行为）。
 
 ---

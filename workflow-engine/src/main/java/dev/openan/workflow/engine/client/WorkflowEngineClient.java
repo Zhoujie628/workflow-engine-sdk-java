@@ -21,7 +21,9 @@ package dev.openan.workflow.engine.client;
 
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
+import dev.openan.workflow.engine.control.TaskDispatcher;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import dev.openan.workflow.engine.model.TaskSubmission;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -47,7 +49,35 @@ import java.util.concurrent.CompletableFuture;
  *       and the global {@link EventCallback}.
  * </ul>
  */
-public interface WorkflowEngineClient {
+public interface WorkflowEngineClient extends TaskDispatcher {
+
+    /**
+     * Dispatches the strongly typed submission through the matching Task-T generation path.
+     * Business callbacks should depend on this narrow operation rather than selecting raw client
+     * overloads themselves.
+     */
+    @Override
+    default CompletableFuture<SendMessageResult> dispatch(TaskSubmission submission) {
+        java.util.Objects.requireNonNull(submission, "Task submission is required");
+        if (submission.input() instanceof TaskSubmission.NaturalLanguage) {
+            return sendMessage(
+                    submission.agentName(),
+                    submission.instruction(),
+                    submission.contextId(),
+                    submission.metadata());
+        }
+        TaskSubmission.StructuredData structured =
+                (TaskSubmission.StructuredData) submission.input();
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(submission.metadata());
+        metadata.put(A2ATExtension.TASK_DATA_META_KEY, structured.data());
+        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, structured.schema());
+        metadata.put(A2ATExtension.TASK_TEMPLATE_META_KEY, structured.templateUri().uri());
+        return sendMessage(
+                submission.agentName(),
+                submission.instruction(),
+                submission.contextId(),
+                metadata);
+    }
 
     /**
      * Send a message to an agent via SSE streaming. Used during workflow execution. The engine
