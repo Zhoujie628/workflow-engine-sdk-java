@@ -58,7 +58,7 @@ public final class NegotiationUtils {
 
     /**
      * Metadata key carrying the negotiation session context map ({@code id} / {@code round} /
-     * {@code maxRounds}).
+     * {@code maxRounds} / {@code performative}).
      *
      * <p>Propose replies must carry this key so the client-side engine can parse the session
      * context and advance rounds itself — the content layer is stateless and the caller owns

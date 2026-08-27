@@ -51,7 +51,7 @@ public enum A2ATExtension {
     /** Result notification subscription. Pre-positioned before workflow starts. */
     NOTIFICATION_T(ExtensionUriConstants.NOTIFICATION_T_EXTENSION_URI);
 
-    /** Canonical SDK metadata key carrying {@code id}/{@code round}/{@code maxRounds}. */
+    /** Canonical SDK metadata key carrying id/round/maxRounds/performative. */
     public static final String NEGOTIATION_CONTEXT_META_KEY =
             net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
 

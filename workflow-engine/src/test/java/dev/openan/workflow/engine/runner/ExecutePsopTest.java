@@ -22,8 +22,8 @@ package dev.openan.workflow.engine.runner;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
+import dev.openan.workflow.engine.control.TaskDispatcher;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 
@@ -51,9 +51,10 @@ class ExecutePsopTest {
         return new ControlPoint() {
             @Override
             public CompletableFuture<TaskResponse> onTask(
-                    TaskRequest request, WorkflowEngineClient engineClient) {
-                return engineClient
-                        .sendMessage(request.getAgentName(), request.getMessage())
+                    TaskRequest request, TaskDispatcher taskDispatcher) {
+                return taskDispatcher
+                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                request.getAgentName(), request.getMessage()))
                         .thenApply(
                                 r ->
                                         TaskResponse.builder()
@@ -337,13 +338,14 @@ class ExecutePsopTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
                         if (request.getAgentName().equals("A")) {
                             return CompletableFuture.completedFuture(
                                     TaskResponse.builder().success(false).error("A broke").build());
                         }
-                        return engineClient
-                                .sendMessage(request.getAgentName(), request.getMessage())
+                        return taskDispatcher
+                                .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        request.getAgentName(), request.getMessage()))
                                 .thenApply(
                                         r ->
                                                 TaskResponse.builder()

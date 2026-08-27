@@ -22,6 +22,8 @@ package dev.openan.workflow.engine.client;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
+import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationRequest;
 import dev.openan.workflow.engine.model.SendMessageResult;
 
 import net.openan.a2at.sdk.client.A2ATClient;
@@ -289,15 +291,17 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         emit(
                 EventType.NEGOTIATION_REQUEST,
                 Map.of("agent", agentName, "round", round, "concern", negText));
-        CompletableFuture<String> clarFuture =
+        NegotiationRequest request = toNegotiationRequest(agentName, negText, negMeta);
+        CompletableFuture<NegotiationDecision> decisionFuture =
                 controlPoint != null
-                        ? controlPoint.onNegotiation(agentName, negText, negMeta)
+                        ? controlPoint.onNegotiation(request)
                         : CompletableFuture.completedFuture(
-                                "Please proceed with the original task using available information.");
-        return clarFuture.thenCompose(
-                clarification ->
-                        clarification == null || clarification.isEmpty()
-                                ? failWithoutClarification(agentName, result, round)
+                                NegotiationDecision.acceptText(
+                                        "Please proceed with the original task using available information."));
+        return decisionFuture.thenCompose(
+                decision ->
+                        decision == null
+                                ? failWithoutDecision(agentName, result, round)
                                 : continueNegotiationRound(
                                         agentCard,
                                         agentName,
@@ -305,7 +309,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                                         contextId,
                                         result,
                                         negMeta,
-                                        clarification,
+                                        decision,
                                         round));
     }
 
@@ -319,14 +323,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     /**
-     * Terminal path when the control point produces no clarification: negotiation failed, the
+     * Terminal path when the control point produces no decision: negotiation failed, the
      * agent's reply stands as the final response.
      */
-    private CompletableFuture<SendMessageResult> failWithoutClarification(
+    private CompletableFuture<SendMessageResult> failWithoutDecision(
             String agentName, SendMessageResult result, int round) {
         emit(
                 EventType.NEGOTIATION_FAILED,
-                Map.of("agent", agentName, "round", round, "reason", "no clarification"));
+                Map.of("agent", agentName, "round", round, "reason", "no decision"));
         emitAgentResponse(agentName, result);
         return CompletableFuture.completedFuture(result);
     }
@@ -353,7 +357,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         return buildNegotiationFollowUpMeta(
                         agentName,
                         result.getMetadata() != null ? result.getMetadata() : new HashMap<>(),
-                        "abort: negotiation round budget exhausted (" + maxNegotiationRounds + ")")
+                        NegotiationDecision.abortData(
+                                "negotiation round budget exhausted ("
+                                        + maxNegotiationRounds
+                                        + ")"))
                 .thenCompose(
                         abortMeta -> {
                             Object rendered = abortMeta.get(A2ATExtension.NEGOTIATION_T.uri());
@@ -388,7 +395,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     /**
-     * One negotiation round with a clarification: renders the follow-up metadata via the SDK
+     * One negotiation round with a typed decision: renders the follow-up metadata via the SDK
      * content layer, sends it, and recurses into the next round.
      */
     private CompletableFuture<SendMessageResult> continueNegotiationRound(
@@ -398,18 +405,19 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             String contextId,
             SendMessageResult result,
             Map<String, Object> negMeta,
-            String clarification,
+            NegotiationDecision decision,
             int round) {
         log.info(
-                "[Negotiation] Clarification for '{}' round {}: {}",
+                "[Negotiation] Decision for '{}' round {}: {} via {}",
                 agentName,
                 round,
-                clarification);
+                decision.action(),
+                decision.input().getClass().getSimpleName());
         emit(
                 EventType.NEGOTIATION_RESOLVED,
-                Map.of("agent", agentName, "round", round, "clarification", clarification));
+                Map.of("agent", agentName, "round", round, "decision", decision.action().name()));
         String taskId = result.getTask() != null ? result.getTask().id() : null;
-        return buildNegotiationFollowUpMeta(agentName, negMeta, clarification)
+        return buildNegotiationFollowUpMeta(agentName, negMeta, decision)
                 .thenCompose(
                         followUpMeta -> {
                             // The message body is the rendered negotiation text itself: the SDK
@@ -420,7 +428,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                             String followUp =
                                     rendered instanceof String s && !s.isEmpty()
                                             ? s
-                                            : clarification;
+                                            : throwMissingNegotiationContent(agentName);
                             return runBeforeSendHandlers(agentCard, followUp, followUpMeta)
                                     .thenCompose(
                                             meta -> {
@@ -459,15 +467,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     /**
      * Builds the follow-up metadata for one negotiation round using the SDK content layer.
      *
-     * <p>The clarification text is classified: {@code reject:...} / {@code abort:...} prefixes
-     * select the Reject or Abort terminal templates, anything else renders an Accept message via
-     * {@code generateNegotiationAcceptPromptFromText} (one LLM extraction step). When the
-     * negotiation context is available, the engine advances the stateless context so the
-     * typed ending message preserves the received session/round context. Rendering failures are
-     * fatal: raw clarifications are never disguised as protocol messages.
+     * <p>The decision's action and input type select the exact current SDK method. The typed ending
+     * message preserves the received stateless session/round context. Rendering failures are fatal:
+     * raw business input is never disguised as protocol metadata.
      */
     private CompletableFuture<Map<String, Object>> buildNegotiationFollowUpMeta(
-            String agentName, Map<String, Object> negMeta, String clarification) {
+            String agentName,
+            Map<String, Object> negMeta,
+            NegotiationDecision decision) {
         A2ATContentFacade content = transport.getContentFacade();
         if (content == null) {
             return CompletableFuture.failedFuture(
@@ -479,7 +486,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
-                        MetadataContent mc = renderFollowUpMessage(content, agentName, negMeta, clarification);
+                        MetadataContent mc =
+                                renderFollowUpMessage(content, agentName, negMeta, decision);
                         if (mc.promptText() != null && !mc.promptText().isEmpty()) {
                             return A2ATContentFacade.toMetadata(mc);
                         }
@@ -493,85 +501,69 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     /**
-     * Renders the follow-up message matching the clarification's decision prefix:
-     *
-     * <ul>
-     *   <li>{@code reject:...} / {@code abort:...} — Reject / Abort terminal templates
-     *   <li>{@code data:{...}} — deterministic fromData Accept rendering (JSON body carries the
-     *       filled parameter map; no LLM call)
-     *   <li>anything else — Accept via fromText (one LLM extraction step)
-     * </ul>
+     * Renders the follow-up through the SDK method selected by the typed business decision.
      */
     private MetadataContent renderFollowUpMessage(
             A2ATContentFacade content,
             String agentName,
             Map<String, Object> negMeta,
-            String clarification) {
+            NegotiationDecision decision) {
         net.openan.a2at.sdk.core.model.NegotiationContext contentCtx =
                 extractContentContext(negMeta);
         net.openan.a2at.sdk.core.model.TemplateUri endingTemplate =
                 endingTemplateFor(negMeta);
-        String decision = clarification.strip().toLowerCase(java.util.Locale.ROOT);
-        if (decision.startsWith("data:")) {
-            // Deterministic fromData Accept: the JSON body carries the filled parameter map.
-            return renderAcceptFromData(
-                    content,
-                    agentName,
-                    contentCtx,
-                    endingTemplate,
-                    clarification.substring("data:".length()));
+        var context = requireContext(contentCtx, agentName);
+        if (decision.input() instanceof NegotiationDecision.NaturalLanguage natural) {
+            return renderFromText(content, decision.action(), natural.text(), context, endingTemplate);
         }
-        if (decision.startsWith("reject:")) {
-            log.info("[Negotiation] SDK generateNegotiationRejectPrompt for '{}'", agentName);
-            return content.generateRejectFromText(
-                    clarification.substring("reject:".length()).strip(),
-                    requireContext(contentCtx, agentName),
-                    endingTemplate);
-        }
-        if (decision.startsWith("abort:")) {
-            log.info("[Negotiation] SDK generateNegotiationAbortPrompt for '{}'", agentName);
-            return content.generateAbortFromText(
-                    clarification.substring("abort:".length()).strip(),
-                    requireContext(contentCtx, agentName));
-        }
-        MetadataContent mc =
-                content.generateAcceptFromText(
-                        clarification,
-                        requireContext(contentCtx, agentName),
-                        endingTemplate);
-        log.info(
-                "[Negotiation] SDK generateNegotiationAcceptPrompt: templateUri={}",
-                mc.templateUri());
-        return mc;
+        NegotiationDecision.StructuredData structured =
+                (NegotiationDecision.StructuredData) decision.input();
+        return renderFromData(
+                content, decision.action(), structured.values(), context, endingTemplate);
     }
 
     /**
-     * Deterministic fromData Accept rendering: parses the JSON payload into {@code NegotiationItem}
-     * name/value pairs and renders through the SDK's fromData pipeline (no LLM call).
+     * Renders one natural-language decision through the corresponding SDK fromText method.
      */
-    private MetadataContent renderAcceptFromData(
+    private MetadataContent renderFromText(
             A2ATContentFacade content,
-            String agentName,
+            NegotiationDecision.Action action,
+            String text,
             net.openan.a2at.sdk.core.model.NegotiationContext contentCtx,
-            net.openan.a2at.sdk.core.model.TemplateUri endingTemplate,
-            String jsonBody) {
-        requireContext(contentCtx, agentName);
-        try {
-            net.openan.a2at.sdk.negotiation.content.NegotiationEndingContent endingContent =
-                    buildAcceptEndingContent(endingTemplate, jsonBody);
-            MetadataContent mc =
-                    content.generateAcceptFromData(
-                            new net.openan.a2at.sdk.negotiation.content.NegotiationEndingData(
-                                    contentCtx, endingContent),
-                            endingTemplate);
-            log.info(
-                    "[Negotiation] SDK generateNegotiationAcceptPromptFromData: templateUri={}, contentType={}",
-                    mc.templateUri(),
-                    endingContent.getClass().getSimpleName());
-            return mc;
-        } catch (Exception e) {
-            throw new IllegalStateException("fromData Accept rendering failed: " + e.getMessage(), e);
+            net.openan.a2at.sdk.core.model.TemplateUri endingTemplate) {
+        return switch (action) {
+            case ACCEPT -> content.generateAcceptFromText(text, contentCtx, endingTemplate);
+            case REJECT -> content.generateRejectFromText(text, contentCtx, endingTemplate);
+            case ABORT -> content.generateAbortFromText(text, contentCtx);
+        };
+    }
+
+    /** Renders one deterministic typed decision through the corresponding SDK fromData method. */
+    private MetadataContent renderFromData(
+            A2ATContentFacade content,
+            NegotiationDecision.Action action,
+            Map<String, String> values,
+            net.openan.a2at.sdk.core.model.NegotiationContext contentCtx,
+            net.openan.a2at.sdk.core.model.TemplateUri endingTemplate) {
+        if (action == NegotiationDecision.Action.ABORT) {
+            String reason = requireOnlyField(values, "terminationReason", "Abort");
+            return content.generateAbortFromData(
+                    new net.openan.a2at.sdk.negotiation.content.NegotiationAbortData(
+                            contentCtx,
+                            new net.openan.a2at.sdk.negotiation.content.NegotiationAbortContent(
+                                    reason)));
         }
+        var conclusion =
+                action == NegotiationDecision.Action.ACCEPT
+                        ? net.openan.a2at.sdk.negotiation.content.NegotiationConclusion.ACCEPT
+                        : net.openan.a2at.sdk.negotiation.content.NegotiationConclusion.REJECT;
+        var endingContent = buildEndingContent(endingTemplate, values, conclusion);
+        var data =
+                new net.openan.a2at.sdk.negotiation.content.NegotiationEndingData(
+                        contentCtx, endingContent);
+        return action == NegotiationDecision.Action.ACCEPT
+                ? content.generateAcceptFromData(data, endingTemplate)
+                : content.generateRejectFromData(data, endingTemplate);
     }
 
     static net.openan.a2at.sdk.core.model.TemplateUri endingTemplateFor(
@@ -596,77 +588,92 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     static net.openan.a2at.sdk.negotiation.content.NegotiationEndingContent
-            buildAcceptEndingContent(
+            buildEndingContent(
                     net.openan.a2at.sdk.core.model.TemplateUri endingTemplate,
-                    String jsonBody)
-                    throws com.fasterxml.jackson.core.JsonProcessingException {
-        Map<String, String> data = parseNegotiationData(jsonBody);
-        var accept = net.openan.a2at.sdk.negotiation.content.NegotiationConclusion.ACCEPT;
+                    Map<String, String> data,
+                    net.openan.a2at.sdk.negotiation.content.NegotiationConclusion conclusion) {
         if (StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
             var items = data.entrySet().stream()
                     .map(entry -> new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
                             entry.getKey(), entry.getValue()))
                     .toList();
             return new net.openan.a2at.sdk.negotiation.content.InformationEndingContent(
-                    accept, items);
+                    conclusion, items);
         }
         if (StandardTemplates.TARGET_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
             return new net.openan.a2at.sdk.negotiation.content.TargetEndingContent(
-                    accept, requireOnlyField(data, "confirmedIntent"), null);
+                    conclusion,
+                    requireOnlyField(data, "confirmedIntent", actionName(conclusion)),
+                    null);
         }
         if (StandardTemplates.FEASIBILITY_NEGOTIATION_ACCEPT_REJECT.equals(endingTemplate)) {
             return new net.openan.a2at.sdk.negotiation.content.FeasibilityEndingContent(
-                    accept, requireOnlyField(data, "feasibilitySummary"));
+                    conclusion,
+                    requireOnlyField(data, "feasibilitySummary", actionName(conclusion)));
         }
         throw new IllegalArgumentException(
                 "Unsupported Negotiation-T ending template: " + endingTemplate.uri());
     }
 
-    static java.util.List<net.openan.a2at.sdk.negotiation.content.NegotiationItem>
-            parseNegotiationItems(String jsonBody) throws com.fasterxml.jackson.core.JsonProcessingException {
-        return parseNegotiationData(jsonBody).entrySet().stream()
-                .map(entry -> new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
-                        entry.getKey(), entry.getValue()))
-                .toList();
+    private static String actionName(
+            net.openan.a2at.sdk.negotiation.content.NegotiationConclusion conclusion) {
+        return conclusion == net.openan.a2at.sdk.negotiation.content.NegotiationConclusion.ACCEPT
+                ? "Accept"
+                : "Reject";
     }
 
-    private static Map<String, String> parseNegotiationData(String jsonBody)
-            throws com.fasterxml.jackson.core.JsonProcessingException {
-        if (jsonBody == null || jsonBody.isBlank()) {
-            throw new IllegalArgumentException("fromData Accept JSON must not be blank");
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> params =
-                new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readValue(jsonBody.strip(), Map.class);
-        if (params.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "fromData Accept must contain at least one filled parameter");
-        }
-        Map<String, String> data = new java.util.LinkedHashMap<>();
-        for (var entry : params.entrySet()) {
-            String name = entry.getKey() != null ? entry.getKey().strip() : "";
-            String value = entry.getValue() instanceof String text ? text.strip() : "";
-            if (name.isEmpty() || value.isEmpty() || "null".equalsIgnoreCase(value)) {
-                throw new IllegalArgumentException(
-                        "fromData Accept items require non-blank string names and values");
-            }
-            data.put(name, value);
-        }
-        return java.util.Collections.unmodifiableMap(data);
+    private static String throwMissingNegotiationContent(String agentName) {
+        throw new IllegalStateException(
+                "A2A-T SDK returned no rendered negotiation content for '" + agentName + "'");
     }
 
-    private static String requireOnlyField(Map<String, String> data, String field) {
+    private static String requireOnlyField(
+            Map<String, String> data, String field, String action) {
         if (data.size() != 1 || !data.containsKey(field)) {
             throw new IllegalArgumentException(
-                    "fromData Accept requires exactly the field '" + field + "'");
+                    "fromData " + action + " requires exactly the field '" + field + "'");
         }
         return data.get(field);
     }
 
+    private static NegotiationRequest toNegotiationRequest(
+            String agentName, String concern, Map<String, Object> metadata) {
+        var context =
+                requireContext(
+                        extractContentContext(metadata), agentName);
+        Object rawTemplate =
+                metadata.get(
+                        net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY);
+        return new NegotiationRequest(
+                agentName,
+                concern,
+                context.id(),
+                context.round(),
+                context.maxRounds(),
+                context.performative(),
+                negotiationKind(rawTemplate),
+                rawTemplate instanceof String text ? text : "",
+                metadata);
+    }
+
+    private static NegotiationRequest.Kind negotiationKind(Object rawTemplate) {
+        String uri = rawTemplate instanceof String text ? text : "";
+        if (StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE.uri().equals(uri)) {
+            return NegotiationRequest.Kind.INFORMATION;
+        }
+        if (StandardTemplates.TARGET_NEGOTIATION_PROPOSE.uri().equals(uri)) {
+            return NegotiationRequest.Kind.TARGET;
+        }
+        if (StandardTemplates.FEASIBILITY_NEGOTIATION_PROPOSE.uri().equals(uri)) {
+            return NegotiationRequest.Kind.FEASIBILITY;
+        }
+        throw new IllegalArgumentException(
+                "Missing or unsupported Negotiation-T propose templateUri: " + rawTemplate);
+    }
+
     /**
-     * Extracts the negotiation session context (id/round/maxRounds) from the received
-     * metadata. The latest SDK's canonical {@code negotiationContext} entry carries all three
+     * Extracts the negotiation session context (id/round/maxRounds/performative) from the received
+     * metadata. The latest SDK's canonical {@code negotiationContext} entry carries all four
      * values; no stateful negotiation API or legacy metadata shape is involved.
      */
     private static net.openan.a2at.sdk.core.model.NegotiationContext extractContentContext(

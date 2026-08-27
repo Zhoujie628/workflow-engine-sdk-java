@@ -48,7 +48,7 @@ class NegotiationTHandler implements ExtensionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(NegotiationTHandler.class);
 
-    /** Empty object schema: context params (id/round/maxRounds) only. */
+    /** Empty object schema: negotiation context fields are handled by the SDK. */
     private static final Map<String, Object> DEFAULT_SCHEMA = Map.of("type", "object");
 
     private final Map<String, Object> paramSchema;

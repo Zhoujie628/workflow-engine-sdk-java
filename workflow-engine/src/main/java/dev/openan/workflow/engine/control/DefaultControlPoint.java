@@ -19,12 +19,13 @@
 
 package dev.openan.workflow.engine.control;
 
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
-
 import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationRequest;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.TaskRequest;
 import dev.openan.workflow.engine.model.TaskResponse;
+import dev.openan.workflow.engine.model.TaskSubmission;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +37,7 @@ import java.util.concurrent.CompletableFuture;
  * Default ControlPoint with single-responsibility methods.
  *
  * <p>Negotiation-T auto-loop delegates to an injected {@link NegotiationStrategy} (or returns a
- * generic clarification if none is provided). Override onNegotiation directly when a full strategy
+ * generic Accept decision if none is provided). Override onNegotiation directly when a full strategy
  * object is unnecessary.
  */
 public class DefaultControlPoint implements ControlPoint {
@@ -54,13 +55,13 @@ public class DefaultControlPoint implements ControlPoint {
 
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
+            TaskRequest request, TaskDispatcher taskDispatcher) {
         log.info(
                 "[DefaultCP] onTask: agent={}, step={}",
                 request.getAgentName(),
                 request.getStepName());
-        return engineClient
-                .sendMessage(request.getAgentName(), request.getMessage())
+        return taskDispatcher
+                .dispatch(TaskSubmission.fromText(request.getAgentName(), request.getMessage()))
                 .thenApply(
                         r -> {
                             boolean success = isSuccessful(r);
@@ -127,13 +128,16 @@ public class DefaultControlPoint implements ControlPoint {
     }
 
     @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
+    public CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request) {
         if (negotiationStrategy != null) {
-            return negotiationStrategy.resolve(agentName, negotiationText, receiveResult);
+            return negotiationStrategy.resolve(request);
         }
-        log.info("[DefaultCP] onNegotiation: agent={}, concern={}", agentName, negotiationText);
+        log.info(
+                "[DefaultCP] onNegotiation: agent={}, concern={}",
+                request.agentName(),
+                request.concern());
         return CompletableFuture.completedFuture(
-                "Please proceed with the original task using available information.");
+                NegotiationDecision.acceptText(
+                        "Please proceed with the original task using available information."));
     }
 }

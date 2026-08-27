@@ -22,8 +22,8 @@ package dev.openan.workflow.engine.core;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
+import dev.openan.workflow.engine.control.TaskDispatcher;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 
@@ -69,9 +69,10 @@ class WorkflowExecutorTest {
         return new ControlPoint() {
             @Override
             public CompletableFuture<TaskResponse> onTask(
-                    TaskRequest request, WorkflowEngineClient engineClient) {
-                return engineClient
-                        .sendMessage(request.getAgentName(), request.getMessage())
+                    TaskRequest request, TaskDispatcher taskDispatcher) {
+                return taskDispatcher
+                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                request.getAgentName(), request.getMessage()))
                         .thenApply(
                                 r ->
                                         TaskResponse.builder()
@@ -197,7 +198,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
                         return CompletableFuture.supplyAsync(
                                 () -> {
                                     awaitBarrier(diagnosisBarrier);
@@ -299,8 +300,10 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
-                        return ec.sendMessage(req.getAgentName(), req.getMessage())
+                            TaskRequest req, TaskDispatcher dispatcher) {
+                        return dispatcher.dispatch(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                                req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
                                                 TaskResponse.builder()
@@ -348,8 +351,10 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
-                        return ec.sendMessage(req.getAgentName(), req.getMessage())
+                            TaskRequest req, TaskDispatcher dispatcher) {
+                        return dispatcher.dispatch(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                                req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
                                                 TaskResponse.builder()
@@ -400,7 +405,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
+                            TaskRequest req, TaskDispatcher dispatcher) {
                         if (req.getAgentName().equals("A")) {
                             return CompletableFuture.completedFuture(
                                     TaskResponse.builder()
@@ -408,7 +413,9 @@ class WorkflowExecutorTest {
                                             .error("A failed")
                                             .build());
                         }
-                        return ec.sendMessage(req.getAgentName(), req.getMessage())
+                        return dispatcher.dispatch(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                                req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
                                                 TaskResponse.builder()
@@ -481,7 +488,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
+                            TaskRequest req, TaskDispatcher dispatcher) {
                         return CompletableFuture.completedFuture(
                                 TaskResponse.builder().success(false).error("failed").build());
                     }
@@ -551,7 +558,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
+                            TaskRequest req, TaskDispatcher dispatcher) {
                         messages.add(req.getMessage());
                         return CompletableFuture.completedFuture(
                                 TaskResponse.builder().success(true).output("ok").build());
@@ -684,8 +691,10 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
-                        return engineClient.sendMessage(request.getAgentName(), request.getMessage())
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
+                        return taskDispatcher.dispatch(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                                request.getAgentName(), request.getMessage()))
                                 .thenApply(
                                         response ->
                                                 TaskResponse.builder()
@@ -750,8 +759,10 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, WorkflowEngineClient ec) {
-                        return ec.sendMessage(req.getAgentName(), req.getMessage())
+                            TaskRequest req, TaskDispatcher dispatcher) {
+                        return dispatcher.dispatch(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                                req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
                                                 TaskResponse.builder()
@@ -804,7 +815,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
                         return CompletableFuture.completedFuture(
                                 TaskResponse.builder()
                                         .success(true)
@@ -858,7 +869,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
                         return CompletableFuture.completedFuture(
                                 TaskResponse.builder().success(true).output(null).build());
                     }
@@ -889,7 +900,7 @@ class WorkflowExecutorTest {
                 new ControlPoint() {
                     @Override
                     public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                            TaskRequest request, TaskDispatcher taskDispatcher) {
                         return CompletableFuture.failedFuture(new RuntimeException((String) null));
                     }
 

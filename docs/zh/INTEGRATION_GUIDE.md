@@ -92,9 +92,9 @@ List<Map<String, Object>> cards = registry.fetchAgentCards();
 public class MyControlPoint extends DefaultControlPoint {
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
-        return engineClient.sendMessage(
-                        request.getAgentName(), request.getMessage())
+            TaskRequest request, TaskDispatcher dispatcher) {
+        return dispatcher.dispatch(TaskSubmission.fromText(
+                        request.getAgentName(), request.getMessage()))
                 .thenApply(r -> {
                     String state = r.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -127,22 +127,23 @@ public class MyControlPoint extends DefaultControlPoint {
     }
 
     @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult) {
-        return CompletableFuture.completedFuture("请使用现有信息继续执行。");
+    public CompletableFuture<NegotiationDecision> onNegotiation(
+            NegotiationRequest request) {
+        return CompletableFuture.completedFuture(
+                NegotiationDecision.acceptText("请使用现有信息继续执行。"));
     }
 }
 ```
 
 | 方法              | 何时调用                       | 你需要做什么                                             |
 |-------------------|--------------------------------|----------------------------------------------------------|
-| `onTask`          | 步骤向其他智能体分派任务时     | 调用 `engineClient.sendMessage()` 发送消息，返回执行结果 |
+| `onTask`          | 步骤向其他智能体分派任务时     | 向 `TaskDispatcher` 提交强类型 `TaskSubmission`         |
 | `onSelfTask`      | `SELF_LOOP` 步骤本地执行时     | 本地处理并返回结果（不发 A2A-T 消息）                    |
 | `onRoute`         | 步骤完成后、决定下一步前       | 从候选分支中选择下一步                                   |
-| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时 | 返回补充说明文本                                         |
+| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时 | 返回强类型 `NegotiationDecision`                         |
 
-`onNegotiation` 默认返回通用文本。只需覆盖你关心的方法。
+`onNegotiation` 默认返回通用的 `acceptText` 决策。结构化业务数据应使用
+`acceptData/rejectData/abortData`，不要拼接字符串控制前缀。
 
 **流程外操作（Authorization-T / Notification-T）**：两者都由宿主在各自业务时机通过
 `ExtensionSender` 独立触发，与工作流没有固定先后关系。Authorization-T 是响应完成即结束的一次性请求；
@@ -402,12 +403,13 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 ### Task-T（自动）
 
-给智能体发消息时，引擎自动调用 A2A-T SDK 生成结构化任务提示词，放入消息 metadata。你在 `onTask` 里只需调用 `sendMessage()`
-，提示词生成是透明的。
+`onTask` 通过 `TaskSubmission.fromText(...)` 或 `TaskSubmission.fromData(...)` 明确选择输入轨道，
+再交给 `TaskDispatcher.dispatch(...)`。引擎自动调用匹配的 A2A-T SDK 方法并注入 metadata。
 
 ### Negotiation-T（自动）
 
-智能体返回 `INPUT_REQUIRED` 时，引擎自动提取协商文本，调用你的 `onNegotiation()` 获取补充信息，然后发回后续消息。自动循环最多
+智能体返回 `INPUT_REQUIRED` 时，引擎构造 `NegotiationRequest`，调用你的 `onNegotiation()` 获取
+Accept/Reject/Abort 强类型决策，然后调用对应 SDK fromText/fromData 方法并发回后续消息。自动循环最多
 `maxNegotiationRounds` 次（默认 3）。
 
 ### Authorization-T（前置下发）

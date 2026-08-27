@@ -94,9 +94,9 @@ Extend `DefaultControlPoint` and override the methods you need:
 public class MyControlPoint extends DefaultControlPoint {
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
-        return engineClient.sendMessage(
-                        request.getAgentName(), request.getMessage())
+            TaskRequest request, TaskDispatcher dispatcher) {
+        return dispatcher.dispatch(TaskSubmission.fromText(
+                        request.getAgentName(), request.getMessage()))
                 .thenApply(r -> {
                     String state = r.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -129,23 +129,24 @@ public class MyControlPoint extends DefaultControlPoint {
     }
 
     @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult) {
+    public CompletableFuture<NegotiationDecision> onNegotiation(
+            NegotiationRequest request) {
         return CompletableFuture.completedFuture(
-                "Please proceed with available information.");
+                NegotiationDecision.acceptText(
+                        "Please proceed with available information."));
     }
 }
 ```
 
 | Method            | When Called                               | What You Do                                      |
 |-------------------|-------------------------------------------|--------------------------------------------------|
-| `onTask`          | A step dispatches a task to another agent | Call `engineClient.sendMessage()`, return result |
+| `onTask`          | A step dispatches a task to another agent | Submit a typed `TaskSubmission` to `TaskDispatcher` |
 | `onSelfTask`      | A `SELF_LOOP` step runs locally           | Handle locally, return result (no A2A-T message) |
 | `onRoute`         | After step completes, before next step    | Pick the next step from candidates               |
-| `onNegotiation`   | Agent returns `INPUT_REQUIRED`            | Return clarification text                        |
+| `onNegotiation`   | Agent returns `INPUT_REQUIRED`            | Return a typed `NegotiationDecision`              |
 
-`onNegotiation` defaults to a generic clarification. Override only what you need.
+`onNegotiation` defaults to a generic `acceptText` decision. For structured business data use
+`acceptData/rejectData/abortData`; never encode a decision in a string prefix.
 
 **Pre-positioning (Authorization-T / Notification-T)**: Both are established through `ExtensionSender` before a workflow starts, but they have different lifecycles. Authorization-T is a one-shot request that ends after its response. Notification-T is a long-lived subscription on a transport independent of any single workflow; its first event or acknowledgement is returned as `SendMessageResult`, and later events are delivered to the callback until that subscription transport is explicitly closed.
 
@@ -402,14 +403,14 @@ The engine handles four A2A-T extensions automatically. You do not need to deal 
 
 ### Task-T (automatic)
 
-When sending a message to an agent, the engine generates a structured task prompt and places it in the message metadata.
-In `onTask`, you just call
-`sendMessage()` -- prompt generation is transparent.
+In `onTask`, select `TaskSubmission.fromText(...)` or `TaskSubmission.fromData(...)` and pass it to
+`TaskDispatcher.dispatch(...)`. The engine calls the matching A2A-T SDK API and injects the generated metadata.
 
 ### Negotiation-T (automatic)
 
-When an agent returns `INPUT_REQUIRED`, the engine extracts the negotiation text, calls your `onNegotiation()` for a
-clarification, and sends it back. Auto-loops up to `maxNegotiationRounds` (default 3).
+When an agent returns `INPUT_REQUIRED`, the engine creates a `NegotiationRequest`, calls your
+`onNegotiation()` for a typed Accept/Reject/Abort decision, invokes the matching SDK fromText/fromData API,
+and sends the rendered follow-up. Auto-loops up to `maxNegotiationRounds` (default 3).
 
 ### Authorization-T (pre-positioning)
 

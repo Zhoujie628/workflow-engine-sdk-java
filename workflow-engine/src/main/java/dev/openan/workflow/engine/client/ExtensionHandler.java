@@ -86,7 +86,7 @@ public interface ExtensionHandler {
      * messages: the business parameters this handler wants extracted. Declares the shape in
      * terms of the caller's domain, so the engine core never hardcodes business fields.
      *
-     * <p>Default: an empty object schema (context params id/round/maxRounds only).
+     * <p>Default: an empty object schema (context fields are handled by the SDK).
      *
      * @return parameter JSON schema map, never null
      */

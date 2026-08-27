@@ -35,12 +35,18 @@ Only two methods are required:
 public class MyControlPoint implements ControlPoint {
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient client) {
-        return client.sendMessage(request.getAgentName(), request.getMessage())
-                .thenApply(result -> TaskResponse.builder()
-                        .success(true)
-                        .output(result.getText())
-                        .build());
+            TaskRequest request, TaskDispatcher dispatcher) {
+        return dispatcher.dispatch(TaskSubmission.fromText(
+                        request.getAgentName(), request.getMessage()))
+                .thenApply(result -> {
+                    String state = result.getTaskState();
+                    boolean success = state == null || state.isBlank()
+                            || "TASK_STATE_COMPLETED".equals(state);
+                    return TaskResponse.builder()
+                            .success(success)
+                            .output(result.getText())
+                            .build();
+                });
     }
 
     @Override
@@ -56,7 +62,7 @@ public class MyControlPoint implements ControlPoint {
 }
 ```
 
-`onNegotiation` has a default that returns a generic clarification. Authorization and notification are independent protocol operations sent via dedicated `ExtensionSender`/transport instances at a workbench-selected business time, not `ControlPoint` callbacks or workflow DAG nodes.
+`onNegotiation` has a default that returns a generic `acceptText` decision. Authorization and notification are independent protocol operations sent via dedicated `ExtensionSender`/transport instances at a workbench-selected business time, not `ControlPoint` callbacks or workflow DAG nodes.
 
 ## 4. Execute via Builder (recommended)
 
@@ -132,10 +138,10 @@ ExecutionResult result = executor.run().join();
 
 ### 6.1 Negotiation Auto-Loop
 
-The engine client's `sendMessage()` automatically handles negotiation:
+After dispatch, the engine client automatically handles negotiation:
 when the agent returns `INPUT_REQUIRED`, the engine extracts the negotiation text from response metadata, calls
 `ControlPoint.onNegotiation()`
-for a clarification, and sends it back as a follow-up message. The loop repeats up to `maxNegotiationRounds` (default
+for a typed decision, and sends it back as a follow-up message. The loop repeats up to `maxNegotiationRounds` (default
 3).
 
 Override `onNegotiation()` in your `ControlPoint` to provide business-specific clarifications:
@@ -143,15 +149,17 @@ Override `onNegotiation()` in your `ControlPoint` to provide business-specific c
 ```java
 
 @Override
-public CompletableFuture<String> onNegotiation(
-        String agentName, String negotiationText,
-        Map<String, Object> receiveResult) {
-    return myLlm.generate("Agent " + agentName + " needs: " + negotiationText)
-            .thenApply(Response::text);
+public CompletableFuture<NegotiationDecision> onNegotiation(
+        NegotiationRequest request) {
+    return myLlm.generate(
+                    "Agent " + request.agentName() + " needs: " + request.concern())
+            .thenApply(Response::text)
+            .thenApply(NegotiationDecision::acceptText);
 }
 ```
 
-Return an empty/null string to fail the round (a `negotiation_failed` event is emitted and the loop retries).
+Returning `null` fails the round. Use `acceptData/rejectData/abortData` for structured business values; invalid
+names, blank values, and the literal string `"null"` fail before SDK invocation.
 
 ### 6.2 Workflow Model Fields
 

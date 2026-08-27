@@ -22,16 +22,20 @@ package dev.openan.workflow.engine.examples.negotiation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationRequest;
+
 /**
- * Negotiation clarification strategy for the SPN cross-city workbench.
+ * Negotiation decision strategy for the SPN cross-city workbench.
  *
  * <p>Single responsibility: when a downstream agent returns INPUT_REQUIRED (Negotiation-T),
- * generate typed clarification data that supplements the missing parameters. The returned
- * {@code data:{...}} value selects the latest SDK's deterministic typed Accept renderer; it is
- * never treated as a hand-written protocol prompt.
+ * generate typed decision data that supplements the missing parameters. The returned
+ * structured Accept decision selects the latest SDK's deterministic typed renderer; it is never
+ * treated as a hand-written protocol prompt.
  *
  * <p>The Accept payload follows the SDK scenario data for the private-line complaint case:
  * the two parameters the agent negotiated for (接入端口名称, 投诉分类), filled with the values
@@ -52,26 +56,22 @@ public class NegotiationStrategy implements dev.openan.workflow.engine.control.N
     }
 
     /**
-     * Generate a clarification for the given negotiation request.
+     * Make an Accept decision for the given negotiation request.
      *
-     * @param agentName the agent requesting negotiation
-     * @param negotiationText the concern/question raised by the agent
-     * @param receiveResult the response metadata, carrying the SDK negotiation context under the
-     *     {@code negotiationContext} key (id/round/maxRounds) when present
-     * @return clarification text to send back to the agent
+     * @param request typed negotiation request, including concern and session information
+     * @return typed business decision to send back to the agent
      */
-    public CompletableFuture<String> resolve(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
-        log.info("[NegotiationStrategy] agent={}: {}", agentName, negotiationText);
-        // The data: contract is consumed by DefaultWorkflowEngineClient and rendered with
-        // generateNegotiationAcceptPromptFromData. The negotiationContext remains metadata.
-        String accept =
-                "data:{\"接入端口名称\":\""
-                        + FILLED_PORT_NAME
-                        + "\",\"投诉分类\":\""
-                        + FILLED_COMPLAINT_CATEGORY
-                        + "\"}";
-        log.info("[NegotiationStrategy] Accept generated for agent={}", agentName);
+    public CompletableFuture<NegotiationDecision> resolve(NegotiationRequest request) {
+        log.info(
+                "[NegotiationStrategy] agent={}, round={}: {}",
+                request.agentName(),
+                request.round(),
+                request.concern());
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("接入端口名称", FILLED_PORT_NAME);
+        values.put("投诉分类", FILLED_COMPLAINT_CATEGORY);
+        NegotiationDecision accept = NegotiationDecision.acceptData(values);
+        log.info("[NegotiationStrategy] Accept generated for agent={}", request.agentName());
         return CompletableFuture.completedFuture(accept);
     }
 }

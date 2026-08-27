@@ -27,6 +27,7 @@ import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.core.model.TemplateUri;
 import net.openan.a2at.sdk.negotiation.content.NegotiationAbortData;
 import net.openan.a2at.sdk.core.model.NegotiationContext;
+import net.openan.a2at.sdk.core.model.NegotiationPerformative;
 import net.openan.a2at.sdk.negotiation.content.NegotiationEndingData;
 import net.openan.a2at.sdk.negotiation.content.NegotiationProposeData;
 
@@ -167,7 +168,7 @@ public final class A2ATContentFacade {
      * step constrained by the template URI, then renders deterministically.
      *
      * @param text free-text description of the message content
-     * @param context negotiation session context (id/round/maxRounds)
+     * @param context negotiation session context (id/round/maxRounds/performative)
      * @param templateUri propose template
      * @return rendered message with template URI and negotiation extension URI
      */
@@ -245,12 +246,13 @@ public final class A2ATContentFacade {
         payload.put("id", context.id());
         payload.put("round", context.round());
         payload.put("maxRounds", context.maxRounds());
+        payload.put("performative", context.performative().name());
         return payload;
     }
 
     /**
      * Parses a negotiation session context from its canonical {@code negotiationContext} wire
-     * serialization ({@code id}/{@code round}/{@code maxRounds}).
+     * serialization ({@code id}/{@code round}/{@code maxRounds}/{@code performative}).
      *
      * @param map the metadata value under the {@code negotiationContext} key
      * @return the session context, or null when malformed
@@ -263,12 +265,20 @@ public final class A2ATContentFacade {
         Object round = map.get("round");
         if (id instanceof String s && isPositiveInteger(round)) {
             Object maxRounds = map.get("maxRounds");
-            if (!isPositiveInteger(maxRounds)) {
+            Object performative = map.get("performative");
+            if (!isPositiveInteger(maxRounds) || !(performative instanceof String value)) {
+                return null;
+            }
+            var parsedPerformative = NegotiationPerformative.tryParse(value);
+            if (parsedPerformative.isEmpty()) {
                 return null;
             }
             try {
                 return new NegotiationContext(
-                        s, ((Number) round).intValue(), ((Number) maxRounds).intValue());
+                        s,
+                        ((Number) round).intValue(),
+                        ((Number) maxRounds).intValue(),
+                        parsedPerformative.get());
             } catch (IllegalArgumentException ignored) {
                 // fall through
             }

@@ -33,12 +33,18 @@
 public class MyControlPoint implements ControlPoint {
     @Override
     public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient client) {
-        return client.sendMessage(request.getAgentName(), request.getMessage())
-                .thenApply(result -> TaskResponse.builder()
-                        .success(true)
-                        .output(result.getText())
-                        .build());
+            TaskRequest request, TaskDispatcher dispatcher) {
+        return dispatcher.dispatch(TaskSubmission.fromText(
+                        request.getAgentName(), request.getMessage()))
+                .thenApply(result -> {
+                    String state = result.getTaskState();
+                    boolean success = state == null || state.isBlank()
+                            || "TASK_STATE_COMPLETED".equals(state);
+                    return TaskResponse.builder()
+                            .success(success)
+                            .output(result.getText())
+                            .build();
+                });
     }
 
     @Override
@@ -54,7 +60,7 @@ public class MyControlPoint implements ControlPoint {
 }
 ```
 
-`onNegotiation` 有默认实现，返回通用澄清文本。授权和通知是独立协议操作，由工作台在业务时机通过各自专用的 `ExtensionSender`/transport 发起；它们不在 `ControlPoint` 上，也不是工作流 DAG 节点。
+`onNegotiation` 有默认实现，返回通用的 `acceptText` 决策。授权和通知是独立协议操作，由工作台在业务时机通过各自专用的 `ExtensionSender`/transport 发起；它们不在 `ControlPoint` 上，也不是工作流 DAG 节点。
 
 ## 4. 通过 Builder 执行（推荐）
 
@@ -129,23 +135,25 @@ try (var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
 
 ### 6.1 协商自动循环
 
-引擎客户端的 `sendMessage()` 自动处理协商：当智能体返回 `INPUT_REQUIRED` 时，
-引擎从响应 metadata 中提取协商文本，调用 `ControlPoint.onNegotiation()` 获取澄清，
+任务分派后的引擎客户端自动处理协商：当智能体返回 `INPUT_REQUIRED` 时，
+引擎从响应 metadata 中构造 `NegotiationRequest`，调用 `ControlPoint.onNegotiation()` 获取强类型决策，
 然后作为后续消息发回。循环重复直到 `maxNegotiationRounds`（默认 3）。
 
 覆盖 `onNegotiation()` 提供业务特定的澄清：
 
 ```java
 @Override
-public CompletableFuture<String> onNegotiation(
-        String agentName, String negotiationText,
-        Map<String, Object> receiveResult) {
-    return myLlm.generate("Agent " + agentName + " needs: " + negotiationText)
-            .thenApply(Response::text);
+public CompletableFuture<NegotiationDecision> onNegotiation(
+        NegotiationRequest request) {
+    return myLlm.generate(
+                    "Agent " + request.agentName() + " needs: " + request.concern())
+            .thenApply(Response::text)
+            .thenApply(NegotiationDecision::acceptText);
 }
 ```
 
-返回空/null 字符串会失败该轮（发射 `negotiation_failed` 事件，循环重试）。
+返回 `null` 会失败该轮。结构化业务参数使用 `acceptData/rejectData/abortData`；输入对象会在调用 SDK
+之前拒绝空键、空值和字符串 `"null"`。
 
 ### 6.2 工作流模型字段
 
