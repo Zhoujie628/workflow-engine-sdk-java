@@ -144,7 +144,11 @@ public class MyControlPoint extends DefaultControlPoint {
 
 `onNegotiation` 默认返回通用文本。只需覆盖你关心的方法。
 
-**前置操作（Authorization-T / Notification-T）**：两者都在工作流开始前通过 `ExtensionSender` 建立，但生命周期不同。Authorization-T 是响应完成即结束的一次性请求；Notification-T 是独立于单次工作流 transport 的长连接订阅，首个事件或 ACK 通过返回的 `SendMessageResult` 获取，后续事件通过回调持续接收，直到显式关闭订阅 transport。
+**流程外操作（Authorization-T / Notification-T）**：两者都由宿主在各自业务时机通过
+`ExtensionSender` 独立触发，与工作流没有固定先后关系。Authorization-T 是响应完成即结束的一次性请求；
+Notification-T 是独立于单次工作流 transport 的长连接订阅，ACK 通过
+`NotificationSubscription.acknowledgement()` 获取，后续事件通过回调持续接收，直到收到目标结果、
+显式取消或宿主关闭订阅。
 
 **自环节点（SelfLoop）**：当一个步骤是工作流执行智能体自身的任务（例如汇总多个智能体的诊断结果），把 `stepType` 设为
 `SELF_LOOP`。引擎会调用 `onSelfTask` 本地处理，而不是通过 A2A-T 协议给智能体自己发消息。`onSelfTask` 不接收 `engineClient`

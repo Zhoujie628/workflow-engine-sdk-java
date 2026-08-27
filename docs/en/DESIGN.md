@@ -27,7 +27,35 @@ The guiding principle is a clean separation between **mechanics the SDK owns** a
 
 ---
 
-## 2. Layered Architecture
+## 2. Host Integration and Surrounding Systems
+
+![Workflow engine and surrounding-system dependencies](../images/workflow-engine-surrounding-systems.png)
+
+The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed
+orchestration service. In `SpringSpnDemo`, the transport workbench is the host agent:
+
+1. WAIMO invokes the workbench's A2A server endpoint with a Task-T diagnosis request.
+2. The workbench prepares execution inputs. In production it obtains downstream AgentCards from the
+   registry center and searches/loads a PSOP from the orchestration center. The SDK offers optional
+   `RegistryClient` and `LoadPsop` helpers, while discovery timing, caching, and failure policy remain
+   host responsibilities.
+3. The workbench passes the `Workflow`, AgentCards, runtime intent, and business callbacks to
+   `ExecutePsop`. The engine walks the DAG, dispatches both city tasks in parallel, and handles
+   Negotiation-T when needed. `ControlPoint` returns control to the workbench for local aggregation,
+   routing, and clarification decisions.
+4. The workbench returns the aggregate as a Task-T artifact and terminal status to WAIMO.
+5. Authorization-T and Notification-T are invoked by the workbench at independent business times
+   through `ExtensionSender`. They are outside the PSOP DAG and do not share a transport, runtime, or
+   context with workflow tasks.
+
+For offline execution, the demo loads AgentCards from the classpath through `WorkbenchAgentCatalog`
+and uses a local PSOP fallback only if orchestration-center search or load fails. These are sample
+substitutes, not production discovery or disaster-recovery rules. The editable diagram source is
+[`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd).
+
+---
+
+## 3. Layered Architecture
 
 The SDK is structured in four layers. Each layer builds on the one below; each has a single responsibility and a clear
 entry point.
@@ -43,7 +71,7 @@ graph TD
     L0 -.-> F
 ```
 
-### 2.1 Layer 0 - Communication
+### 3.1 Layer 0 - Communication
 
 This layer is the heart of the transport-facade split.
 
@@ -74,7 +102,7 @@ orchestration concern isolated. The implementation is reusable, but instances ar
 Authorization-T, and Notification-T each require an independent transport/runtime/context. Authorization
 uses a one-shot lifetime; Notification uses a workbench-scoped long-lived lifetime.
 
-### 2.2 Layer 1 - Traversal
+### 3.2 Layer 1 - Traversal
 
 **`WorkflowExecutor`** walks the DAG. At each step it assembles upstream context (`ContextBuilder`), dispatches subtasks
 concurrently, applies the step's success policy, and determines the next step (s). It delegates every *decision* to
@@ -88,7 +116,7 @@ Step dispatch rules:
 - `ANY_SUCCESS` - the first successful subtask wins; the rest are cancelled.
 - `SELF_LOOP` - the task is handled locally via `onSelfTask`, with no A2A-T message sent to the agent.
 
-### 2.3 Layer 2 - Orchestration
+### 3.3 Layer 2 - Orchestration
 
 **`ExecutePsop`** is the high-level runner. It wraps the executor with a lifecycle
 (start / complete / error / close), event serialization, client-disconnect cancellation, and an
@@ -96,11 +124,11 @@ Step dispatch rules:
 
 ---
 
-## 3. Decision Interfaces
+## 4. Decision Interfaces
 
 The SDK exposes two user-implemented interfaces, split by responsibility.
 
-### 3.1 ControlPoint - flow decisions
+### 4.1 ControlPoint - flow decisions
 
 Drives the workflow forward. Each method is called by the executor or the auto-negotiate loop and makes exactly one
 decision:
@@ -117,11 +145,11 @@ Authorization-T and Notification-T are independently triggered workbench protoco
 
 ---
 
-## 4. A2A-T Extension Model
+## 5. A2A-T Extension Model
 
 Four A2A-T extensions are supported. They divide into two groups by lifecycle.
 
-### 4.1 In-workflow extensions
+### 5.1 In-workflow extensions
 
 Participate in every `sendMessage` lifecycle through the extension handler chain (`ExtensionRegistry` pre-registers
 both):
@@ -134,7 +162,7 @@ both):
   `ControlPoint.onNegotiation`
   for a clarification, resends the follow-up, and repeats up to a configured round limit.
 
-### 4.2 Independent-lifecycle extensions
+### 5.2 Independent-lifecycle extensions
 
 Triggered through `ExtensionSender` at a workbench-selected business time and decoupled from any single workflow transport:
 
@@ -148,7 +176,7 @@ The subscription ACK is exposed by `NotificationSubscription.acknowledgement()` 
 events flow through the subscription callback. They do not enter workflow `ControlPoint` callbacks or the
 global task-event stream.
 
-### 4.3 Extension handler chain
+### 5.3 Extension handler chain
 
 ```mermaid
 graph TD
@@ -168,7 +196,7 @@ independent-lifecycle concern.
 
 ---
 
-## 5. Condition Routing
+## 6. Condition Routing
 
 A step's `next` list holds `JumpCondition(step, condition)` entries. The routing rule is:
 
@@ -182,7 +210,7 @@ This makes conditional branches an N-choose-1 selection and keeps unconditional 
 
 ---
 
-## 6. Event Model
+## 7. Event Model
 
 Events are emitted to an optional `EventCallback` as stable string types (`EventType`). They are grouped by origin:
 
@@ -192,16 +220,20 @@ Events are emitted to an optional `EventCallback` as stable string types (`Event
   `workflow_complete`
 - **Agent traffic** - `agent_request`, `agent_response`,
   `agent_status_update`, `agent_artifact_update`, `agent_message_event`
-- **A2A-T extensions** - `negotiation_request`, `negotiation_resolved`,
-  `negotiation_failed`, `authorization_request`, `authorization_resolved`,
-  `notification`
+- **In-workflow A2A-T extensions** - `negotiation_request`, `negotiation_resolved`,
+  `negotiation_failed`
 - **Failure** - `error`, emitted on step failure by the executor and on final failure by the runner
+
+`authorization_request`, `authorization_resolved`, and `notification` currently remain reserved
+`EventType` constants; the workflow event stream does not emit them. Independent authorization
+results are handled through the `ExtensionSender` result, and subscription events through the
+`NotificationSubscription` callback.
 
 ---
 
-## 7. Interaction Sequences
+## 8. Interaction Sequences
 
-### 7.1 Workflow execution with negotiation
+### 8.1 Workflow execution with negotiation
 
 ```mermaid
 sequenceDiagram
@@ -224,7 +256,7 @@ sequenceDiagram
     E->>H: ExecutionResult
 ```
 
-### 7.2 Pre-positioning authorization
+### 8.2 Independent authorization
 
 ```mermaid
 sequenceDiagram
@@ -242,7 +274,7 @@ sequenceDiagram
     ES-->>H: result
 ```
 
-### 7.3 Notification subscription
+### 8.3 Notification subscription
 
 ```mermaid
 sequenceDiagram
@@ -251,28 +283,31 @@ sequenceDiagram
     participant T as Transport
     participant A as Agent
 
-    H->>ES: sendNotification
-    ES->>T: sendNotificationStream
+    H->>ES: openNotificationFromData
+    ES->>T: openNotificationStream
     T->>A: open long-lived SSE
     A-->>T: ack (working)
-    T-->>ES: first event -> future
-    ES-->>H: result
+    T-->>ES: ACK
+    ES-->>H: NotificationSubscription
     Note over T,A: later results stream back over the same connection
 ```
 
 ---
 
-## 8. Dependencies
+## 9. Dependencies
 
 
 **Java SDK:** `org.a2aproject.sdk:a2a-java-sdk-client` (A2A protocol),
 `net.openan.a2at.sdk:a2a-t-client` (A2A-T extensions), Jackson, SLF4J, Lombok.
 
-The SDK is standalone: it does not depend on the orchestration center.
+The protocol send path has no hard dependency on an orchestration-center or registry-center client;
+the host may pass locally constructed `Workflow` and AgentCard objects. In a standard production
+integration, however, the host normally uses the SDK's `LoadPsop` and `RegistryClient` helpers, or its
+own service clients, to access those centers before passing the discovered inputs to the engine.
 
 ---
 
-## 9. Design Decisions Summary
+## 10. Design Decisions Summary
 
 1. **Reusable transport, two facades** - wire machinery written once on
    `A2ATransport`; `WorkflowEngineClient` and `ExtensionSender` each own one orchestration concern and delegate wire
