@@ -10,6 +10,8 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpResponse;
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.ByteString;
 
+import dev.openan.workflow.engine.examples.config.OrderGatewayProperties;
+
 import org.junit.jupiter.api.Test;
 
 import java.net.ServerSocket;
@@ -83,6 +85,57 @@ class EastcomOrderSimulatorServerTest {
 
         try (EastcomOrderSimulatorServer restarted = simulator(port)) {
             restarted.start();
+        }
+    }
+
+    @Test
+    void tokenServiceObtainsBearerHeaderThroughTheVendorHttpClient() throws Exception {
+        int platformPort = availablePort();
+        int omcPort = availablePort();
+        com.sun.net.httpserver.HttpServer omc =
+                com.sun.net.httpserver.HttpServer.create(
+                        new java.net.InetSocketAddress("127.0.0.1", omcPort), 0);
+        omc.createContext(
+                "/rest/plat/smapp/v1/oauth/token",
+                exchange -> {
+                    String body =
+                            new String(
+                                    exchange.getRequestBody().readAllBytes(),
+                                    StandardCharsets.UTF_8);
+                    assertTrue(body.contains("admin"));
+                    assertTrue(body.contains("Admin@123"));
+                    exchange.getResponseHeaders().set("bearToken", "omc-token-through-eastcom");
+                    byte[] response = "{}".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, response.length);
+                    exchange.getResponseBody().write(response);
+                    exchange.close();
+                });
+        omc.start();
+        try (EastcomOrderSimulatorServer server =
+                new EastcomOrderSimulatorServer(
+                        "127.0.0.1",
+                        platformPort,
+                        "sim-user",
+                        "sim-password",
+                        "sim-client",
+                        "sim-secret",
+                        Map.of("sim-city1", "http://127.0.0.1:" + omcPort))) {
+            server.start();
+            OrderGatewayProperties properties = new OrderGatewayProperties();
+            properties.setHost("127.0.0.1");
+            properties.setPort(platformPort);
+            properties.setUsername("sim-user");
+            properties.setPassword("sim-password");
+            properties.setClientId("sim-client");
+            properties.setClientSecret("sim-secret");
+            properties.setCity1Ne("sim-city1");
+
+            assertEquals(
+                    "omc-token-through-eastcom",
+                    new EastcomTokenService(properties)
+                            .getOrRefresh("SPN Domain Agent City1"));
+        } finally {
+            omc.stop(0);
         }
     }
 

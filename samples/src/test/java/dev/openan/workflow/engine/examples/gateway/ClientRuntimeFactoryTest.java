@@ -5,6 +5,7 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -26,6 +27,7 @@ class ClientRuntimeFactoryTest {
                 new ClientRuntimeFactory(workbench, new OrderGatewayProperties());
 
         assertNull(factory.create());
+        assertNull(factory.authProvider());
     }
 
     @Test
@@ -37,6 +39,7 @@ class ClientRuntimeFactoryTest {
         order.setPort(18080);
         order.setUsername("workbench");
         order.setPassword("secret");
+        order.setClientId("workbench-app");
 
         ClientRuntimeFactory factory = new ClientRuntimeFactory(workbench, order);
         A2AJavaClientRuntime first = factory.create();
@@ -45,10 +48,24 @@ class ClientRuntimeFactoryTest {
             assertInstanceOf(OrderGatewayClientRuntime.class, first);
             assertInstanceOf(OrderGatewayClientRuntime.class, second);
             assertNotSame(first, second);
+            assertNotNull(factory.authProvider());
         } finally {
             first.close();
             second.close();
         }
+    }
+
+    @Test
+    void orderModeRequiresClientIdUsedByTheVendorLoadNeResourceApi() {
+        WorkbenchClientProperties workbench = new WorkbenchClientProperties();
+        workbench.setTransportMode("order");
+        OrderGatewayProperties order = new OrderGatewayProperties();
+        order.setHost("instruction-platform.example");
+        order.setPort(18080);
+        order.setUsername("workbench");
+        order.setPassword("secret");
+
+        assertThrows(IllegalArgumentException.class, () -> new ClientRuntimeFactory(workbench, order));
     }
 
     @Test
