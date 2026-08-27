@@ -23,6 +23,15 @@ public class OrderGatewayProperties {
     private String city2Ne = "sim-city2";
     private int loginTimeoutSeconds = 15;
     private int timeoutSeconds = 600;
+    private boolean omcAuthEnabled = true;
+    private String omcLoginPath = "/rest/plat/smapp/v1/oauth/token";
+    private String omcLoginMethod = "PUT";
+    private String omcTokenResponseHeader = "bearToken";
+    private String omcRequestAuthHeader = "Authorization";
+    private String omcRequestAuthScheme = "Bearer";
+    private int omcTokenTtlSeconds = 3600;
+    private String omcUsernameField = "userName";
+    private String omcPasswordField = "value";
 
     public boolean isSimulatorEnabled() { return simulatorEnabled; }
     public void setSimulatorEnabled(boolean value) { simulatorEnabled = value; }
@@ -48,4 +57,22 @@ public class OrderGatewayProperties {
     public void setLoginTimeoutSeconds(int value) { loginTimeoutSeconds = value; }
     public int getTimeoutSeconds() { return timeoutSeconds; }
     public void setTimeoutSeconds(int value) { timeoutSeconds = value; }
+    public boolean isOmcAuthEnabled() { return omcAuthEnabled; }
+    public void setOmcAuthEnabled(boolean value) { omcAuthEnabled = value; }
+    public String getOmcLoginPath() { return omcLoginPath; }
+    public void setOmcLoginPath(String value) { omcLoginPath = value; }
+    public String getOmcLoginMethod() { return omcLoginMethod; }
+    public void setOmcLoginMethod(String value) { omcLoginMethod = value; }
+    public String getOmcTokenResponseHeader() { return omcTokenResponseHeader; }
+    public void setOmcTokenResponseHeader(String value) { omcTokenResponseHeader = value; }
+    public String getOmcRequestAuthHeader() { return omcRequestAuthHeader; }
+    public void setOmcRequestAuthHeader(String value) { omcRequestAuthHeader = value; }
+    public String getOmcRequestAuthScheme() { return omcRequestAuthScheme; }
+    public void setOmcRequestAuthScheme(String value) { omcRequestAuthScheme = value; }
+    public int getOmcTokenTtlSeconds() { return omcTokenTtlSeconds; }
+    public void setOmcTokenTtlSeconds(int value) { omcTokenTtlSeconds = value; }
+    public String getOmcUsernameField() { return omcUsernameField; }
+    public void setOmcUsernameField(String value) { omcUsernameField = value; }
+    public String getOmcPasswordField() { return omcPasswordField; }
+    public void setOmcPasswordField(String value) { omcPasswordField = value; }
 }

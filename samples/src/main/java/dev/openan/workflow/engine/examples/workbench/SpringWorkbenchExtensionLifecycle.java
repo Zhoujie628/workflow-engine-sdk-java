@@ -66,11 +66,14 @@ public final class SpringWorkbenchExtensionLifecycle {
         }
         WorkbenchExtensionLifecycle candidate =
                 new WorkbenchExtensionLifecycle(
-                        resolveCredentialsPath(),
+                        runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
+                                ? null
+                                : resolveCredentialsPath(),
                         properties.isSslVerify(),
                         resolveEnvPath(),
                         runtimeFactory::create,
-                        this::onNotification);
+                        this::onNotification,
+                        runtimeFactory.authProvider());
         candidate.start();
         lifecycle = candidate;
     }

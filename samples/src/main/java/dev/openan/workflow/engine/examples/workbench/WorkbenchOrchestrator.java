@@ -21,6 +21,7 @@ package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
+import dev.openan.workflow.engine.client.AuthProvider;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
@@ -71,10 +72,11 @@ public class WorkbenchOrchestrator {
     private final boolean sslVerify;
     private final String a2atEnvPath;
     private final A2AJavaClientRuntime clientRuntime;
+    private final AuthProvider authProvider;
 
     public WorkbenchOrchestrator(
             String orchUrl, String credentialsPath, boolean sslVerify, String a2atEnvPath) {
-        this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, null);
+        this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, null, null);
     }
 
     public WorkbenchOrchestrator(
@@ -83,11 +85,22 @@ public class WorkbenchOrchestrator {
             boolean sslVerify,
             String a2atEnvPath,
             A2AJavaClientRuntime clientRuntime) {
+        this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, clientRuntime, null);
+    }
+
+    public WorkbenchOrchestrator(
+            String orchUrl,
+            String credentialsPath,
+            boolean sslVerify,
+            String a2atEnvPath,
+            A2AJavaClientRuntime clientRuntime,
+            AuthProvider authProvider) {
         this.orchUrl = orchUrl;
         this.credentialsPath = credentialsPath;
         this.sslVerify = sslVerify;
         this.a2atEnvPath = a2atEnvPath;
         this.clientRuntime = clientRuntime;
+        this.authProvider = authProvider;
     }
 
     static String buildResultText(ExecutionResult result) {
@@ -185,6 +198,7 @@ public class WorkbenchOrchestrator {
                                 .sslVerify(sslVerify)
                                 .a2atEnvPath(a2atEnvPath)
                                 .credentialsConfigPath(credentialsPath)
+                                .authProvider(authProvider)
                                 .build());
         log.info(
                 "[Orchestrator] STAGE_DONE stage=create-engine-client, contextId={}, elapsedMs={}",

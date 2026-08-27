@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
+
 /**
  * Spring-managed Workbench AgentExecutor.
  *
@@ -121,10 +122,13 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
             String result =
                     new WorkbenchOrchestrator(
                             properties.getOrchUrl(),
-                            resolveCredentialsPath(),
+                            runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
+                                    ? null
+                                    : resolveCredentialsPath(),
                             properties.isSslVerify(),
                             resolveEnvPath(),
-                            createClientRuntime())
+                            createClientRuntime(),
+                            runtimeFactory.authProvider())
                             .run(input);
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put(A2ATExtension.TASK_T.uri(), result);

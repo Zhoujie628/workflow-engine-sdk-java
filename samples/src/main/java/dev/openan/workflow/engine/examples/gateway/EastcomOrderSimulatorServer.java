@@ -387,6 +387,9 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             return Mono.just(
                     OrderResourceResponse.newBuilder()
                             .setNeUrl(targetUrl)
+                            .putNeParams("grantType", "password")
+                            .putNeParams("username", "admin")
+                            .putNeParams("password", "Admin@123")
                             .build());
         }
 
@@ -471,7 +474,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             forwarded.set(true);
                             String httpMethod = parsedMethod[0];
                             String httpPath = parsedPath[0];
-                            String body = bodyBuf.toString();
+                            String body = substituteManagedNeCredentials(
+                                    httpPath, bodyBuf.toString());
                             // The SDK's configureHeaderHost sets the HTTP Host header to the
                             // full neUrl (e.g. "https://127.0.0.1:26335") returned by
                             // loadNeResource.  Using this per-request header avoids the race
@@ -605,7 +609,13 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                     String chunk = new String(buffer, 0, length);
                                     log.debug("[EastcomSimulator] FORWARD_CHUNK index={}, chars={}, elapsedMs={}",
                                             chunks, chunk.length(), elapsedMillis(started));
-                                    sink.next(chunks == 1 ? responseWithHeader(chunk) : responseChunk(chunk));
+                                    sink.next(
+                                            chunks == 1
+                                                    ? responseWithHeader(
+                                                            status,
+                                                            connection.getHeaderFields(),
+                                                            chunk)
+                                                    : responseChunk(chunk));
                                     terminalScan.append(chunk);
                                     if (containsForwardingCompletionEvent(terminalScan)) {
                                         terminal = true;
@@ -646,8 +656,13 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                         status, chunks, elapsedMillis(started));
                             } else {
                                 try (input) {
-                                    sink.next(responseWithHeader(
-                                            new String(input.readAllBytes(), StandardCharsets.UTF_8)));
+                                    sink.next(
+                                            responseWithHeader(
+                                                    status,
+                                                    connection.getHeaderFields(),
+                                                    new String(
+                                                            input.readAllBytes(),
+                                                            StandardCharsets.UTF_8)));
                                 }
                                 sink.next(responseEnd());
                                 sink.complete();
@@ -740,19 +755,56 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         }
 
         private static OrderHttpResponse responseWithHeader(String body) {
+            return responseWithHeader(200, Map.of(), body);
+        }
+
+        private static OrderHttpResponse responseWithHeader(
+                int status, Map<String, List<String>> headers, String body) {
             // The SDK feeds OrderHttpResponse.data through Netty's HttpResponseDecoder.
             // The first chunk must include HTTP status line + headers.
             // Use UTF-8 byte length for chunk size, not String char length.
             byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
-            String withHeader = "HTTP/1.1 200 OK\r\n"
-                    + "Content-Type: text/event-stream\r\n"
-                    + "Transfer-Encoding: chunked\r\n"
-                    + "\r\n"
-                    + Integer.toHexString(bodyBytes.length) + "\r\n"
-                    + body + "\r\n";
+            StringBuilder withHeader =
+                    new StringBuilder("HTTP/1.1 ")
+                            .append(status)
+                            .append(status == 200 ? " OK\r\n" : " Response\r\n");
+            boolean hasContentType = false;
+            for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+                String name = entry.getKey();
+                if (name == null) {
+                    continue;
+                }
+                String lower = name.toLowerCase(Locale.ROOT);
+                if (List.of("content-length", "transfer-encoding", "connection")
+                        .contains(lower)) {
+                    continue;
+                }
+                hasContentType |= "content-type".equals(lower);
+                for (String value : entry.getValue()) {
+                    withHeader.append(name).append(": ").append(value).append("\r\n");
+                }
+            }
+            if (!hasContentType) {
+                withHeader.append("Content-Type: application/json\r\n");
+            }
+            withHeader.append("Transfer-Encoding: chunked\r\n")
+                    .append("\r\n")
+                    .append(Integer.toHexString(bodyBytes.length))
+                    .append("\r\n")
+                    .append(body)
+                    .append("\r\n");
             return OrderHttpResponse.newBuilder()
-                    .setData(ByteString.copyFromUtf8(withHeader))
+                    .setData(ByteString.copyFromUtf8(withHeader.toString()))
                     .build();
+        }
+
+        private static String substituteManagedNeCredentials(String path, String body) {
+            if (path == null || !path.contains("/oauth/token")) {
+                return body;
+            }
+            return body.replace("${ne:grantType}", "password")
+                    .replace("${ne:username}", "admin")
+                    .replace("${ne:password}", "Admin@123");
         }
 
         private static OrderHttpResponse responseChunk(String body) {

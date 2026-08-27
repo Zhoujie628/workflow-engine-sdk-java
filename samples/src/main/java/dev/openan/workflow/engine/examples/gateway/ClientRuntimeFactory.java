@@ -20,6 +20,7 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
+import dev.openan.workflow.engine.client.AuthProvider;
 import dev.openan.workflow.engine.examples.config.OrderGatewayProperties;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 
@@ -50,6 +51,7 @@ public final class ClientRuntimeFactory {
     private final Mode mode;
     private final String mockGatewayUrl;
     private final OrderGatewayClientRuntime.OrderConfig orderConfig;
+    private final AuthProvider authProvider;
 
     public ClientRuntimeFactory(
             WorkbenchClientProperties workbench,
@@ -80,6 +82,13 @@ public final class ClientRuntimeFactory {
                                 order.getLoginTimeoutSeconds(),
                                 order.getTimeoutSeconds())
                         : null;
+        this.authProvider =
+                parsedMode == Mode.ORDER && order.isOmcAuthEnabled()
+                        ? new EastcomAuthProvider(
+                                new EastcomTokenService(order),
+                                order.getOmcRequestAuthHeader(),
+                                order.getOmcRequestAuthScheme())
+                        : null;
     }
 
     public Mode mode() {
@@ -92,6 +101,11 @@ public final class ClientRuntimeFactory {
             case MOCK -> new MockGatewayClientRuntime(mockGatewayUrl);
             case ORDER -> new OrderGatewayClientRuntime(orderConfig);
         };
+    }
+
+    /** Shared, thread-safe authentication provider for all independently scoped transports. */
+    public AuthProvider authProvider() {
+        return authProvider;
     }
 
     private static OrderGatewayClientRuntime.OrderConfig buildOrderConfig(
@@ -114,7 +128,7 @@ public final class ClientRuntimeFactory {
                 .port(port)
                 .username(required(username, "a2a.order.username"))
                 .password(required(password, "a2a.order.password"))
-                .clientId(blankToNull(clientId))
+                .clientId(required(clientId, "a2a.order.client-id"))
                 .clientSecret(blankToNull(clientSecret))
                 .defaultNe(blankToNull(defaultNe))
                 .agentNeRoutes(routes)

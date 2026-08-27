@@ -479,8 +479,10 @@ public class JdkHttpA2AServer implements AutoCloseable {
             return;
         }
         if ("admin".equals(userName) && "Admin@123".equals(password)) {
+            String token = UUID.randomUUID().toString();
+            exchange.getResponseHeaders().set("bearToken", token);
             log.info("[{}] Login succeeded, token issued", agentName);
-            sendJson(exchange, 200, Map.of("accessSession", UUID.randomUUID().toString()));
+            sendJson(exchange, 200, Map.of("accessSession", token));
         } else {
             log.warn("[{}] Login failed: bad credentials", agentName);
             sendJson(exchange, 401, Map.of("error", "Invalid credentials"));

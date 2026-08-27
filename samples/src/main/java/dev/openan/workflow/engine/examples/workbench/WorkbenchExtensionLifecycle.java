@@ -6,6 +6,7 @@ package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.A2ATransport;
+import dev.openan.workflow.engine.client.AuthProvider;
 import dev.openan.workflow.engine.client.DefaultExtensionSender;
 import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
@@ -36,6 +37,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     private final String a2atEnvPath;
     private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
     private final Consumer<Map<String, Object>> notificationCallback;
+    private final AuthProvider authProvider;
 
     private final Map<String, NotificationSubscription> subscriptions =
             new ConcurrentHashMap<>();
@@ -46,12 +48,14 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
             boolean sslVerify,
             String a2atEnvPath,
             Supplier<A2AJavaClientRuntime> runtimeSupplier,
-            Consumer<Map<String, Object>> notificationCallback) {
+            Consumer<Map<String, Object>> notificationCallback,
+            AuthProvider authProvider) {
         this.credentialsPath = credentialsPath;
         this.sslVerify = sslVerify;
         this.a2atEnvPath = a2atEnvPath;
         this.runtimeSupplier = runtimeSupplier;
         this.notificationCallback = notificationCallback;
+        this.authProvider = authProvider;
     }
 
     public synchronized void start() {
@@ -76,6 +80,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
                         .sslVerify(sslVerify)
                         .a2atEnvPath(a2atEnvPath)
                         .credentialsConfigPath(credentialsPath)
+                        .authProvider(authProvider)
                         .build();
         A2ATransport authorizationTransport =
                 new A2ATransport(

@@ -38,3 +38,14 @@ a2a:
     city2-ne: ${EASTCOM_ORDER_CITY2_NE:}
     login-timeout-seconds: ${EASTCOM_ORDER_LOGIN_TIMEOUT_SECONDS:15}
     timeout-seconds: ${EASTCOM_ORDER_TIMEOUT_SECONDS:600}
+    # OMC bearer token is obtained through the Eastcom HttpClient path. The platform
+    # substitutes ${ne:username}/${ne:password} from its managed NE credentials.
+    omc-auth-enabled: ${EASTCOM_ORDER_OMC_AUTH_ENABLED:true}
+    omc-login-path: ${EASTCOM_ORDER_OMC_LOGIN_PATH:/rest/plat/smapp/v1/oauth/token}
+    omc-login-method: ${EASTCOM_ORDER_OMC_LOGIN_METHOD:PUT}
+    omc-token-response-header: ${EASTCOM_ORDER_OMC_TOKEN_RESPONSE_HEADER:bearToken}
+    omc-request-auth-header: ${EASTCOM_ORDER_OMC_REQUEST_AUTH_HEADER:Authorization}
+    omc-request-auth-scheme: ${EASTCOM_ORDER_OMC_REQUEST_AUTH_SCHEME:Bearer}
+    omc-token-ttl-seconds: ${EASTCOM_ORDER_OMC_TOKEN_TTL_SECONDS:3600}
+    omc-username-field: ${EASTCOM_ORDER_OMC_USERNAME_FIELD:userName}
+    omc-password-field: ${EASTCOM_ORDER_OMC_PASSWORD_FIELD:value}
