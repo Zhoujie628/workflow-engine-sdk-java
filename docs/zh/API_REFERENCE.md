@@ -90,7 +90,7 @@ public interface WorkflowEngineClient {
 }
 ```
 
-> 前置操作位于 `ExtensionSender`，不在本接口：Authorization-T 是一次性请求，Notification-T 是长连接订阅。见下方 `ExtensionSender` 章节。
+> 流程外操作位于 `ExtensionSender`，不在本接口：Authorization-T 是一次性请求，Notification-T 是长连接订阅。见下方 `ExtensionSender` 章节。
 
 #### sendMessage
 
