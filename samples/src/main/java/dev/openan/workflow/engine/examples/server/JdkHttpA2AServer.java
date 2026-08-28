@@ -357,14 +357,15 @@ public class JdkHttpA2AServer implements AutoCloseable {
                 new MainEventBusProcessor(mainEventBus, taskStore, pushSender, queueManager);
         startEventBus(eventBusProc);
         RequestHandler requestHandler =
-                DefaultRequestHandler.create(
-                        agentExecutor,
-                        taskStore,
-                        queueManager,
-                        pushStore,
-                        eventBusProc,
-                        agentExecutorService,
-                        agentExecutorService);
+                DefaultRequestHandler.builder()
+                        .agentExecutor(agentExecutor)
+                        .taskStore(taskStore)
+                        .queueManager(queueManager)
+                        .pushConfigStore(pushStore)
+                        .mainEventBusProcessor(eventBusProc)
+                        .executor(agentExecutorService)
+                        .eventConsumerExecutor(agentExecutorService)
+                        .build();
         return new RestHandler(
                 typedCard,
                 new AgentCardCacheMetadata(typedCard, null),
@@ -533,7 +534,6 @@ public class JdkHttpA2AServer implements AutoCloseable {
             SendMessageRequest.Builder builder = SendMessageRequest.newBuilder();
             JsonFormat.parser().merge(requestBody, builder);
             var request = ProtoUtils.FromProto.messageSendParams(builder.build());
-            inner.validateRequestedTask(request.message().taskId());
             Flow.Publisher<StreamingEventKind> publisher =
                     inner.onMessageSendStream(request, buildCallContext(exchange));
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");

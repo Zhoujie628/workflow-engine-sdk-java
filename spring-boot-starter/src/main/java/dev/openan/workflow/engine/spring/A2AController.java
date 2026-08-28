@@ -41,6 +41,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -99,14 +100,13 @@ public class A2AController {
     @PostMapping(
             value = "${a2at.server.path-prefix}/message:stream",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseBodyEmitter streamMessage(HttpServletRequest req, @RequestBody String body) {
-        ResponseBodyEmitter emitter = track(new ResponseBodyEmitter(0L));
+    public SseEmitter streamMessage(HttpServletRequest req, @RequestBody String body) {
+        SseEmitter emitter = track(new SseEmitter(0L));
         try {
             SendMessageRequest.Builder builder = SendMessageRequest.newBuilder();
             JsonFormat.parser().merge(body, builder);
             MessageSendParams params = ProtoUtils.FromProto.messageSendParams(builder.build());
 
-            requestHandler.validateRequestedTask(params.message().taskId());
             var ctx = buildContext(req);
             Flow.Publisher<StreamingEventKind> publisher =
                     requestHandler.onMessageSendStream(params, ctx);
@@ -130,12 +130,10 @@ public class A2AController {
                                         JsonFormat.printer()
                                                 .omittingInsignificantWhitespace()
                                                 .print(sr);
-                                String sse =
-                                        String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
-                                                + "data:"
-                                                + compact
-                                                + "\n\n";
-                                emitter.send(sse);
+                                emitter.send(
+                                        SseEmitter.event()
+                                                .id(Long.toString(seq.incrementAndGet()))
+                                                .data(compact, MediaType.APPLICATION_JSON));
                             } catch (Exception e) {
                                 log.error("[SSE] Write failed: {}", e.getMessage());
                                 sub.cancel();
@@ -197,10 +195,10 @@ public class A2AController {
     @PostMapping(
             value = "${a2at.server.path-prefix}/tasks/{id}:subscribe",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseBodyEmitter subscribeToTask(
+    public SseEmitter subscribeToTask(
             HttpServletRequest req,
             @PathVariable("id") String taskId) {
-        ResponseBodyEmitter emitter = track(new ResponseBodyEmitter(0L));
+        SseEmitter emitter = track(new SseEmitter(0L));
         try {
             var ctx = buildContext(req);
             var resp = restHandler.subscribeToTask(ctx, "", taskId);
@@ -217,10 +215,10 @@ public class A2AController {
                             @Override
                             public void onNext(String item) {
                                 try {
-                                    String sse =
-                                            String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
-                                                    + "data:" + item + "\n\n";
-                                    emitter.send(sse);
+                                    emitter.send(
+                                            SseEmitter.event()
+                                                    .id(Long.toString(seq.incrementAndGet()))
+                                                    .data(item, MediaType.APPLICATION_JSON));
                                 } catch (Exception e) {
                                     log.error("[SSE] Subscribe write failed: {}", e.getMessage());
                                     sub.cancel();
@@ -240,7 +238,10 @@ public class A2AController {
                             }
                         });
             } else {
-                emitter.send(resp.getBody());
+                emitter.send(
+                        SseEmitter.event()
+                                .id("1")
+                                .data(resp.getBody(), MediaType.APPLICATION_JSON));
                 emitter.complete();
             }
         } catch (Exception e) {
@@ -283,7 +284,7 @@ public class A2AController {
         return activeStreams.get();
     }
 
-    private ResponseBodyEmitter track(ResponseBodyEmitter emitter) {
+    private <T extends ResponseBodyEmitter> T track(T emitter) {
         activeStreams.incrementAndGet();
         AtomicBoolean completed = new AtomicBoolean();
         Runnable finish =
