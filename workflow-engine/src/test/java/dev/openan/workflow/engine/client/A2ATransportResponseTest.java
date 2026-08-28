@@ -83,7 +83,7 @@ class A2ATransportResponseTest {
                         .metadata(Map.of())
                         .build();
         TaskStatusUpdateEvent update =
-                new TaskStatusUpdateEvent("task-1", status, "context-1", false, Map.of());
+                new TaskStatusUpdateEvent("task-1", status, "context-1", Map.of());
 
         assertEquals(
                 "need parameter",

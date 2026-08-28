@@ -191,7 +191,17 @@ public class A2AAutoConfiguration {
             PushNotificationConfigStore pushStore,
             MainEventBusProcessor proc,
             ExecutorService pool) {
-        return DefaultRequestHandler.create(executor, store, qm, pushStore, proc, pool, pool);
+        RequestHandler delegate =
+                DefaultRequestHandler.builder()
+                        .agentExecutor(executor)
+                        .taskStore(store)
+                        .queueManager(qm)
+                        .pushConfigStore(pushStore)
+                        .mainEventBusProcessor(proc)
+                        .executor(pool)
+                        .eventConsumerExecutor(pool)
+                        .build();
+        return new SpringCompatibleRequestHandler(delegate);
     }
 
     @Bean

@@ -2,8 +2,8 @@ name: CI
 
 env:
   A2AT_SDK_REPOSITORY: project-openan/a2a-t-sdk-java
-  A2AT_SDK_REF: 34485504675800a436d68cfaa913f14931086506
-  A2AT_SDK_VERSION: 1.0.0-3448550
+  A2AT_SDK_REF: 0de5a2751781419820436e5eb17cffc39b9db47d
+  A2AT_SDK_VERSION: 1.0.0-0de5a27
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     name: Build and Test (workflow-engine, spring-boot-starter)
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Samples Compilation Check (optional)
     continue-on-error: true
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

@@ -157,9 +157,7 @@ public final class AgentCardJacksonModule extends SimpleModule {
             JsonNode node = p.getCodec().readTree(p);
             var schemes = new java.util.LinkedHashMap<String, java.util.List<String>>();
             if (node.has("schemes") && node.get("schemes").isObject()) {
-                var fields = node.get("schemes").fields();
-                while (fields.hasNext()) {
-                    var entry = fields.next();
+                for (var entry : node.get("schemes").properties()) {
                     schemes.put(entry.getKey(), java.util.List.of());
                 }
             }
