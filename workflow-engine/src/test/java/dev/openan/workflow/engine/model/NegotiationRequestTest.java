@@ -32,9 +32,11 @@ import java.util.Map;
 class NegotiationRequestTest {
 
     @Test
-    void retainsTypedPerformativeAndDefensivelyCopiesMetadata() {
+    void retainsTypedPerformativeAndDefensivelyCopiesBusinessData() {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("trace", "one");
+        Map<String, Object> parameters = new LinkedHashMap<>();
+        parameters.put("接入端口名称", "举例：P533");
         var request =
                 new NegotiationRequest(
                         "SPN",
@@ -45,10 +47,16 @@ class NegotiationRequestTest {
                         NegotiationPerformative.PROPOSE,
                         NegotiationRequest.Kind.INFORMATION,
                         "urn:template",
+                        parameters,
                         metadata);
 
         metadata.put("trace", "two");
+        parameters.put("接入端口名称", "changed");
         assertEquals(NegotiationPerformative.PROPOSE, request.performative());
+        assertEquals("举例：P533", request.parameters().get("接入端口名称"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> request.parameters().put("x", "y"));
         assertEquals("one", request.metadata().get("trace"));
         assertThrows(UnsupportedOperationException.class, () -> request.metadata().put("x", "y"));
     }
@@ -76,6 +84,7 @@ class NegotiationRequestTest {
                                 NegotiationPerformative.ACCEPT,
                                 NegotiationRequest.Kind.INFORMATION,
                                 "urn:template",
+                                Map.of(),
                                 Map.of()));
     }
 
@@ -89,6 +98,7 @@ class NegotiationRequestTest {
                 NegotiationPerformative.PROPOSE,
                 NegotiationRequest.Kind.INFORMATION,
                 "urn:template",
+                Map.of(),
                 Map.of());
     }
 }

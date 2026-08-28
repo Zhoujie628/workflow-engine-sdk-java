@@ -144,6 +144,17 @@ class TaskTHandler implements ExtensionHandler {
                                     taskTemplate instanceof String s ? s : null,
                                     result));
         }
+        if (taskTemplate instanceof String templateUriStr && !templateUriStr.isBlank()) {
+            return CompletableFuture.supplyAsync(
+                    () ->
+                            renderFromText(
+                                    a2atClient,
+                                    agentCard,
+                                    taskTUri,
+                                    messageText,
+                                    templateUriStr,
+                                    result));
+        }
         // Free-text track: scenario recognition on the message text.
         return CompletableFuture.supplyAsync(
                 () -> {
@@ -184,6 +195,49 @@ class TaskTHandler implements ExtensionHandler {
                                         e);
                     }
                 });
+    }
+
+    /** SDK explicit fromText rendering for a caller-selected Task-T template. */
+    private Map<String, Object> renderFromText(
+            A2ATClient a2atClient,
+            AgentCard agentCard,
+            String taskTUri,
+            String text,
+            String templateUriStr,
+            Map<String, Object> result) {
+        try {
+            net.openan.a2at.sdk.core.model.TemplateUri templateUri =
+                    net.openan.a2at.sdk.core.model.TemplateUri.parse(templateUriStr)
+                            .orElseThrow(
+                                    () ->
+                                            new IllegalArgumentException(
+                                                    "Invalid Task-T template URI: "
+                                                            + templateUriStr));
+            if (!net.openan.a2at.sdk.core.model.StandardTemplates.TASK_EXTENSION_NAME.equals(
+                    templateUri.extensionName())) {
+                throw new IllegalArgumentException(
+                        "Natural-language task template is not Task-T: " + templateUri.uri());
+            }
+            net.openan.a2at.sdk.core.model.MetadataContent content =
+                    a2atClient.generateTaskPromptFromText(text, templateUri);
+            if (content == null || content.promptText() == null || content.promptText().isEmpty()) {
+                throw new IllegalStateException("A2A-T SDK returned empty Task-T content");
+            }
+            result.putAll(content.buildMetadataContent());
+            log.info(
+                    "[Task-T] Rendered prompt from natural language for '{}': {} chars (template={})",
+                    getAgentName(agentCard),
+                    content.promptText().length(),
+                    content.templateUri());
+            return result;
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Task-T fromText rendering failed for '"
+                            + getAgentName(agentCard)
+                            + "': "
+                            + e.getMessage(),
+                    e);
+        }
     }
 
     /** SDK schema-aware fromData rendering. Failure is fatal; never send an unrendered task. */

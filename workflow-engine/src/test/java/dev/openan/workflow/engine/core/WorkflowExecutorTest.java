@@ -71,7 +71,7 @@ class WorkflowExecutorTest {
             public CompletableFuture<TaskResponse> onTask(
                     TaskRequest request, TaskDispatcher taskDispatcher) {
                 return taskDispatcher
-                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                 request.getAgentName(), request.getMessage()))
                         .thenApply(
                                 r ->
@@ -302,7 +302,7 @@ class WorkflowExecutorTest {
                     public CompletableFuture<TaskResponse> onTask(
                             TaskRequest req, TaskDispatcher dispatcher) {
                         return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                                 req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
@@ -353,7 +353,7 @@ class WorkflowExecutorTest {
                     public CompletableFuture<TaskResponse> onTask(
                             TaskRequest req, TaskDispatcher dispatcher) {
                         return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                                 req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
@@ -414,7 +414,7 @@ class WorkflowExecutorTest {
                                             .build());
                         }
                         return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                                 req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->
@@ -693,7 +693,7 @@ class WorkflowExecutorTest {
                     public CompletableFuture<TaskResponse> onTask(
                             TaskRequest request, TaskDispatcher taskDispatcher) {
                         return taskDispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                                 request.getAgentName(), request.getMessage()))
                                 .thenApply(
                                         response ->
@@ -761,7 +761,7 @@ class WorkflowExecutorTest {
                     public CompletableFuture<TaskResponse> onTask(
                             TaskRequest req, TaskDispatcher dispatcher) {
                         return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                                 req.getAgentName(), req.getMessage()))
                                 .thenApply(
                                         r ->

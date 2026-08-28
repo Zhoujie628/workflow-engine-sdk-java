@@ -36,7 +36,8 @@ import java.util.Objects;
  * @param maxRounds negotiated round limit
  * @param performative communicative intent carried by the received context
  * @param kind semantic negotiation kind inferred from the current SDK template
- * @param templateUri received propose template URI, or empty when absent
+ * @param templateUri received propose template URI
+ * @param parameters immutable business parameters extracted by the SDK validate-and-fill pipeline
  * @param metadata immutable received metadata for application-specific inspection
  */
 public record NegotiationRequest(
@@ -48,6 +49,7 @@ public record NegotiationRequest(
         NegotiationPerformative performative,
         Kind kind,
         String templateUri,
+        Map<String, Object> parameters,
         Map<String, Object> metadata) {
 
     /** Negotiation domains supported by the current A2A-T SDK. */
@@ -78,10 +80,16 @@ public record NegotiationRequest(
         if (kind == null) {
             throw new IllegalArgumentException("Negotiation kind is required");
         }
-        templateUri = templateUri == null ? "" : templateUri;
-        metadata =
-                metadata == null
-                        ? Map.of()
-                        : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
+        if (templateUri == null || templateUri.isBlank()) {
+            throw new IllegalArgumentException("Negotiation templateUri must not be blank");
+        }
+        parameters = immutableCopy(parameters);
+        metadata = immutableCopy(metadata);
+    }
+
+    private static Map<String, Object> immutableCopy(Map<String, Object> values) {
+        return values == null
+                ? Map.of()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(values));
     }
 }

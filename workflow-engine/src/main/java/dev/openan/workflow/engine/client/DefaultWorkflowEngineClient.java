@@ -653,7 +653,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 context.performative(),
                 negotiationKind(rawTemplate),
                 rawTemplate instanceof String text ? text : "",
+                negotiationParameters(metadata),
                 metadata);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> negotiationParameters(Map<String, Object> metadata) {
+        Object raw = metadata.get(A2ATExtension.NEGOTIATION_PARAMS_META_KEY);
+        return raw instanceof Map<?, ?> values ? (Map<String, Object>) values : Map.of();
     }
 
     private static NegotiationRequest.Kind negotiationKind(Object rawTemplate) {

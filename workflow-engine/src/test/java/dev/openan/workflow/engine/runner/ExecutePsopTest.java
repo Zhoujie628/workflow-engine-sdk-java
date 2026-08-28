@@ -53,7 +53,7 @@ class ExecutePsopTest {
             public CompletableFuture<TaskResponse> onTask(
                     TaskRequest request, TaskDispatcher taskDispatcher) {
                 return taskDispatcher
-                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                 request.getAgentName(), request.getMessage()))
                         .thenApply(
                                 r ->
@@ -344,7 +344,7 @@ class ExecutePsopTest {
                                     TaskResponse.builder().success(false).error("A broke").build());
                         }
                         return taskDispatcher
-                                .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromText(
+                                .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
                                         request.getAgentName(), request.getMessage()))
                                 .thenApply(
                                         r ->

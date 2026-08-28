@@ -61,7 +61,9 @@ public class DefaultControlPoint implements ControlPoint {
                 request.getAgentName(),
                 request.getStepName());
         return taskDispatcher
-                .dispatch(TaskSubmission.fromText(request.getAgentName(), request.getMessage()))
+                .dispatch(
+                        TaskSubmission.fromUnclassifiedText(
+                                request.getAgentName(), request.getMessage()))
                 .thenApply(
                         r -> {
                             boolean success = isSuccessful(r);
