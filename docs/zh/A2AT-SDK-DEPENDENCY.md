@@ -3,8 +3,8 @@
 执行引擎首发版本只支持下列最新 A2A-T SDK 源码基线，不提供旧 SDK 兼容层：
 
 - 仓库：`project-openan/a2a-t-sdk-java`
-- Git commit：`841c575054d7aecc532e3fd312e004241727951b`
-- 本地 Maven 版本：`1.0.0-841c575`（精确提交构建的不可变本地版本）
+- Git commit：`0de5a2751781419820436e5eb17cffc39b9db47d`
+- 本地 Maven 版本：`1.0.0-0de5a27`（精确提交构建的不可变本地版本）
 - 使用组件：`a2a-t-client`、`a2a-t-server` 及其传递依赖
 
 ## 已知上游生命周期缺口
@@ -17,7 +17,7 @@ Task-T、Authorization-T、Notification-T 和直连业务链路均可正常完�
 
 上游 SDK 应在新提交中补充幂等 `close()`，由 `A2ATClient/A2ATServer` 级联关闭其拥有的
 LLM provider；执行引擎届时应升级到该新提交对应的新 Maven 版本。禁止在不改变版本号的
-情况下覆盖 `1.0.0-841c575`，否则 IDEA 与 CI 将得到不可复现的同坐标异内容制品。
+情况下覆盖 `1.0.0-0de5a27`，否则 IDEA 与 CI 将得到不可复现的同坐标异内容制品。
 
 该 SDK 尚未发布到 Maven Central。引擎不探测、不加载也不降级到其他 A2A-T SDK 版本；
 本机与 CI 都必须安装这里锁定的提交派生坐标。
@@ -27,8 +27,8 @@ LLM provider；执行引擎届时应升级到该新提交对应的新 Maven 版�
 ```powershell
 git clone https://github.com/project-openan/a2a-t-sdk-java.git
 Set-Location a2a-t-sdk-java
-git checkout 841c575054d7aecc532e3fd312e004241727951b
-mvn -B "-Drevision=1.0.0-841c575" -DskipTests `
+git checkout 0de5a2751781419820436e5eb17cffc39b9db47d
+mvn -B "-Drevision=1.0.0-0de5a27" -DskipTests `
   -pl a2a-t-client,a2a-t-server -am install
 ```
 
@@ -51,6 +51,17 @@ metadata、Authorization-T、Notification-T 长连接，以及现行传输路径
 验证直连 OMC 的 SpringSpnDemo 端到端流程。
 
 “只支持最新 A2A-T SDK”仅表示不兼容旧 SDK 版本和旧协议格式。
+
+## A2A Java SDK 基线
+
+执行引擎使用 Maven Central 已正式发布的 `org.a2aproject.sdk` `1.2.0.Final`，不采用尚未
+发布制品的源码标签或 SNAPSHOT。该版本将 `DefaultRequestHandler` 构造迁移到 Builder、
+将任务校验收进请求处理器，并把 `Utils` 移到 `org.a2aproject.sdk.spec.util`。同时必须让
+`protobuf-java-util` 与其传递引入的 `protobuf-java:4.35.0` 对齐，避免 REST JSON 转换时
+出现 `NoSuchMethodError`。Spring starter 通过仅暴露 `RequestHandler` 接口的委托隔离
+`DefaultRequestHandler` 中 CDI 专用注入点；SSE 端点使用 `SseEmitter` 输出规范事件，不能把
+手工拼接的 `id:/data:` 文本再次作为普通响应体发送。升级 A2A Java SDK 后同样要跑直连和
+Order 两条 E2E。
 
 ## 单一资源基线
 

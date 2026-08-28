@@ -35,7 +35,8 @@ public class MyControlPoint implements ControlPoint {
     public CompletableFuture<TaskResponse> onTask(
             TaskRequest request, TaskDispatcher dispatcher) {
         return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage()))
+                        request.getAgentName(), request.getMessage(),
+                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
                 .thenApply(result -> {
                     String state = result.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -106,7 +107,7 @@ ExecutionResult result = ExecutePsop.builder()
 | `agent_status_update`   | 引擎客户端    | 智能体 SSE 状态更新                               | `agent`、`state`、`is_final`                         |
 | `agent_artifact_update` | 引擎客户端    | 智能体 SSE 产物更新                               | `agent`、`artifact_name`、`text`                     |
 | `negotiation_request`   | 引擎客户端    | 智能体需要澄清                                    | `agent`、`round`、`concern`                           |
-| `negotiation_resolved`  | 引擎客户端    | 澄清已提供                                       | `agent`、`round`、`clarification`                    |
+| `negotiation_resolved`  | 引擎客户端    | 协商决策已生成                                   | `agent`、`round`、`decision`                         |
 | `negotiation_failed`    | 引擎客户端    | 协商失败                                         | `agent`、`round`、`reason`                            |
 | `complete`              | 运行器        | 工作流成功                                       | `history`、`step_outputs`                            |
 | `error`                 | 运行器或执行器 | 工作流失败                                       | 运行器：`error`、`history`；执行器：`step`、`results` |
