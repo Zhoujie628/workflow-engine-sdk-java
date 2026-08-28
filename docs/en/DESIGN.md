@@ -154,9 +154,11 @@ Four A2A-T extensions are supported. They divide into two groups by lifecycle.
 Participate in every `sendMessage` lifecycle through the extension handler chain (`ExtensionRegistry` pre-registers
 both):
 
-- **Task-T** - On send, calls the A2A-T SDK to generate a structured task prompt from the natural-language message and
-  injects it into the message metadata. Skipped for negotiation follow-ups and when the caller pre-sets the prompt. On
-  receive: pass-through.
+- **Task-T** - On send, calls the A2A-T SDK to generate a canonical prompt from structured data,
+  natural language with a caller-known template, or unclassified natural language that needs scenario
+  recognition. It injects the prompt into message metadata. Negotiation follow-ups and caller-supplied
+  prompts skip generation; the receiver validates and extracts business fields through the matching SDK
+  validate-and-fill pipeline.
 - **Negotiation-T** - On receive, when the agent returns `INPUT_REQUIRED`
   and declares the extension, extracts the negotiation context and message. This feeds the auto-loop: the engine calls
   `ControlPoint.onNegotiation` for a `NegotiationDecision`, selects the matching SDK

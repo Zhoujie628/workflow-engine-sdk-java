@@ -41,8 +41,8 @@ Central. Install the pinned SDK revision first (do not use an older locally cach
 ```bash
 git clone https://github.com/project-openan/a2a-t-sdk-java.git
 cd a2a-t-sdk-java
-git checkout 841c575054d7aecc532e3fd312e004241727951b
-mvn -B -Drevision=1.0.0-841c575 -DskipTests \
+git checkout 0de5a2751781419820436e5eb17cffc39b9db47d
+mvn -B -Drevision=1.0.0-0de5a27 -DskipTests \
   -pl a2a-t-client,a2a-t-server -am install
 ```
 
@@ -97,7 +97,8 @@ ControlPoint controlPoint = new DefaultControlPoint() {
             TaskRequest request, TaskDispatcher dispatcher) {
         return dispatcher
                 .dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage()))
+                        request.getAgentName(), request.getMessage(),
+                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
                 .thenApply(r -> {
                     String state = r.getTaskState();
                     boolean success = state == null || state.isBlank()

@@ -96,7 +96,8 @@ public class MyControlPoint extends DefaultControlPoint {
     public CompletableFuture<TaskResponse> onTask(
             TaskRequest request, TaskDispatcher dispatcher) {
         return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage()))
+                        request.getAgentName(), request.getMessage(),
+                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
                 .thenApply(r -> {
                     String state = r.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -146,7 +147,9 @@ public class MyControlPoint extends DefaultControlPoint {
 | `onNegotiation`   | Agent returns `INPUT_REQUIRED`            | Return a typed `NegotiationDecision`              |
 
 `onNegotiation` defaults to a generic `acceptText` decision. For structured business data use
-`acceptData/rejectData/abortData`; never encode a decision in a string prefix.
+`acceptData/rejectData/abortData`; never encode a decision in a string prefix. For an information-negotiation
+`rejectData`, provide one map entry per unavailable requested item, using the item name as the key and its concrete
+non-provision reason as the value. Do not collapse multiple unavailable items into one aggregate rejection reason.
 
 **Independent operations (Authorization-T / Notification-T)**: Both use `ExtensionSender` at a workbench-selected business time and have no ordering dependency on workflow execution. Authorization-T is a one-shot request whose transport closes after a successful acknowledgement. Notification-T is a long-lived subscription on a transport independent of any single workflow; `openNotificationFromData` returns a `NotificationSubscription`, and later events are delivered to its callback until the expected result arrives, it is canceled, or it is explicitly closed.
 
@@ -403,8 +406,11 @@ The engine handles four A2A-T extensions automatically. You do not need to deal 
 
 ### Task-T (automatic)
 
-In `onTask`, select `TaskSubmission.fromText(...)` or `TaskSubmission.fromData(...)` and pass it to
-`TaskDispatcher.dispatch(...)`. The engine calls the matching A2A-T SDK API and injects the generated metadata.
+In `onTask`, select `TaskSubmission.fromText(..., templateUri)`,
+`TaskSubmission.fromUnclassifiedText(...)`, or `TaskSubmission.fromData(...)` and pass it to
+`TaskDispatcher.dispatch(...)`. Pass the known complaint template when the workflow has already
+classified the task; use `fromUnclassifiedText` only when the host genuinely needs SDK scenario
+recognition. The engine calls the matching A2A-T SDK API and injects the generated metadata.
 
 ### Negotiation-T (automatic)
 
@@ -662,7 +668,7 @@ The simulator's `connection.setReadTimeout(65_000)` only controls `HttpURLConnec
 | `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.) |
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                         |
 | `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
-| `A2ATransport`                                         | Shared wire layer (httpx runtime, auth, SSE consumer)                 |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)       |
 | `WorkflowEngineClientConfig`                           | Configuration (SSL, auth, A2A-T, negotiation rounds, custom handlers) |
 | `AuthProvider`                                         | Custom authentication                                                 |
 | `ExtensionHandler`                                     | Custom extension handler                                              |

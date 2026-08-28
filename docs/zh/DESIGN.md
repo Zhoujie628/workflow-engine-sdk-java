@@ -135,8 +135,9 @@ Authorization-T 和 Notification-T 是工作台独立触发的协议操作，不
 
 参与每次 `sendMessage` 生命周期，通过扩展处理器链（`ExtensionRegistry` 自动注册）：
 
-- **Task-T** — 发送时，调用 A2A-T SDK 从自然语言消息生成结构化任务提示词，注入消息 metadata。
-  协商后续和调用方预设提示词时跳过。接收时：透传。
+- **Task-T** — 发送时，调用 A2A-T SDK 从结构化数据、已知模板的自然语言或待识别场景的
+  自然语言生成规范任务提示词并注入消息 metadata。协商后续和调用方预设提示词时跳过。
+  接收方再用同一模板的 SDK validate-and-fill 校验和提取业务字段。
 - **Negotiation-T** — 接收时，当智能体返回 `INPUT_REQUIRED` 并声明该扩展，
   提取协商上下文和消息。这驱动自动循环：引擎调用 `ControlPoint.onNegotiation` 获取
   `NegotiationDecision`，按 action 与 input 类型选择 SDK fromText/fromData API，重发后续消息。

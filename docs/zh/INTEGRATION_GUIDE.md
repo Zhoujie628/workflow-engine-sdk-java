@@ -94,7 +94,8 @@ public class MyControlPoint extends DefaultControlPoint {
     public CompletableFuture<TaskResponse> onTask(
             TaskRequest request, TaskDispatcher dispatcher) {
         return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage()))
+                        request.getAgentName(), request.getMessage(),
+                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
                 .thenApply(r -> {
                     String state = r.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -143,7 +144,9 @@ public class MyControlPoint extends DefaultControlPoint {
 | `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时 | 返回强类型 `NegotiationDecision`                         |
 
 `onNegotiation` 默认返回通用的 `acceptText` 决策。结构化业务数据应使用
-`acceptData/rejectData/abortData`，不要拼接字符串控制前缀。
+`acceptData/rejectData/abortData`，不要拼接字符串控制前缀。信息协商使用 `rejectData`
+时，Map 必须以每个无法提供的信息项名称为 key、具体原因为 value 逐项填写；不能只传一个汇总的
+“拒绝原因”。例如同时无法提供端口和投诉分类时，应分别传入 `接入端口名称` 与 `投诉分类` 两项。
 
 **流程外操作（Authorization-T / Notification-T）**：两者都由宿主在各自业务时机通过
 `ExtensionSender` 独立触发，与工作流没有固定先后关系。Authorization-T 是响应完成即结束的一次性请求；
@@ -403,8 +406,10 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 ### Task-T（自动）
 
-`onTask` 通过 `TaskSubmission.fromText(...)` 或 `TaskSubmission.fromData(...)` 明确选择输入轨道，
-再交给 `TaskDispatcher.dispatch(...)`。引擎自动调用匹配的 A2A-T SDK 方法并注入 metadata。
+`onTask` 通过 `TaskSubmission.fromText(..., templateUri)`、
+`TaskSubmission.fromUnclassifiedText(...)` 或 `TaskSubmission.fromData(...)` 明确选择输入轨道，
+再交给 `TaskDispatcher.dispatch(...)`。工作流已经知道投诉模板时必须传入模板；只有宿主尚未完成
+场景分类时才使用 `fromUnclassifiedText` 让 SDK 识别场景。引擎自动调用匹配的 A2A-T SDK 方法并注入 metadata。
 
 ### Negotiation-T（自动）
 
@@ -579,7 +584,7 @@ WorkflowEngineClientConfig.builder()
 | `ControlPoint` / `DefaultControlPoint`                 | 业务决策实现（onTask、onSelfTask、onRoute、onNegotiation 等） |
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流发送（sendMessage、认证、扩展）                         |
 | `ExtensionSender` / `DefaultExtensionSender`           | 前置授权请求与长连接通知订阅                                  |
-| `A2ATransport`                                         | 共享通信层（httpx runtime、认证、SSE 消费）                   |
+| `A2ATransport`                                         | 共享通信层（A2A Java 客户端 runtime、认证、SSE 消费）         |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |
 | `AuthProvider`                                         | 自定义认证                                                    |
 | `ExtensionHandler`                                     | 自定义扩展                                                    |

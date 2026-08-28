@@ -163,6 +163,9 @@ Notification-T entry points require an explicit SDK template so callers can sele
   - `NegotiationDecision.rejectText/rejectData` — Reject through SDK fromText/fromData
   - `NegotiationDecision.abortText/abortData` — Abort through SDK fromText/fromData
   - String control prefixes such as `data:`, `reject:`, and `abort:` are not accepted.
+  - Information Reject is itemized: every `rejectData` key names an unavailable requested item and
+    its value gives that item's concrete non-provision reason. Do not merge several requested items
+    into one aggregate rejection reason.
 - **Round exhaustion**: beyond `maxNegotiationRounds` the loop stops, a terminal message is sent
   via the SDK abort template (best effort — delivery failures are logged only), a
   `NEGOTIATION_FAILED` event fires, and the last agent reply stands as the final response.
@@ -426,13 +429,15 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 `onTask` receives only the narrow `TaskDispatcher` capability. Business code uses:
 
 ```java
-dispatcher.dispatch(TaskSubmission.fromText(agentName, text));
+dispatcher.dispatch(TaskSubmission.fromText(agentName, text, templateUri));
+dispatcher.dispatch(TaskSubmission.fromUnclassifiedText(agentName, text));
 dispatcher.dispatch(TaskSubmission.fromData(
         agentName, instruction, data, schema, templateUri));
 ```
 
-The first form invokes SDK natural-language scenario recognition; the second invokes schema-aware
-fromData. `TaskSubmission` validates the target, instruction, schema, and Task-T template and
+The first form invokes the SDK's explicit natural-language API for a known Task-T template without
+reclassifying the scenario; the second invokes SDK scenario recognition only when the template is
+genuinely unknown; the third invokes schema-aware fromData. `TaskSubmission` validates the target, instruction, schema, and Task-T template and
 defensively copies business data before it reaches the protocol layer.
 
 ### ControlPoint
@@ -467,17 +472,27 @@ public interface ControlPoint {
 | `onNegotiation`   | When agent returns `INPUT_REQUIRED`        | `NegotiationDecision`             |
 
 `NegotiationRequest` exposes `agentName`, `concern`, `sessionId`, `round`, `maxRounds`, the typed
-`NegotiationPerformative`, negotiation `kind`, `templateUri`, and read-only `metadata`. Only a
+`NegotiationPerformative`, negotiation `kind`, `templateUri`, read-only SDK-extracted business
+`parameters`, and read-only `metadata`. Business decisions should prefer `parameters`; `metadata`
+is retained for advanced diagnostics. Only a
 `PROPOSE` with a complete context reaches the callback; missing context, invalid rounds, or an
 unsupported template fail closed. Business code only returns `acceptText/acceptData`,
 `rejectText/rejectData`, or `abortText/abortData`; it does not send a message or construct protocol
 metadata.
+For an Information Reject, provide a separate reason for every unavailable requested item, for example:
+
+```java
+NegotiationDecision.rejectData(Map.of(
+        "access-port name", "The current account cannot query the resource system",
+        "complaint category", "The current account cannot query the resource system"));
+```
 
 ### DefaultControlPoint
 
 Default implementation with sensible defaults:
 
-- `onTask`: dispatches `TaskSubmission.fromText`, returns success/output
+- `onTask`: dispatches `TaskSubmission.fromUnclassifiedText` by default and returns success/output;
+  hosts with a known template should override it and use `fromText(..., templateUri)` or `fromData(...)`
 - `onSelfTask`: echoes the task message back (override for local logic)
 - `onRoute`: picks first non-terminal branch
 - `onNegotiation`: returns a generic `acceptText` decision

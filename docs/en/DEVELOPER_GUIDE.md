@@ -37,7 +37,8 @@ public class MyControlPoint implements ControlPoint {
     public CompletableFuture<TaskResponse> onTask(
             TaskRequest request, TaskDispatcher dispatcher) {
         return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage()))
+                        request.getAgentName(), request.getMessage(),
+                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
                 .thenApply(result -> {
                     String state = result.getTaskState();
                     boolean success = state == null || state.isBlank()
@@ -109,7 +110,7 @@ Events come from three layers: the runner (lifecycle bracket), the executor (ste
 | `agent_status_update`   | engine client      | Agent SSE status update                          | `agent`, `state`, `is_final`                            |
 | `agent_artifact_update` | engine client      | Agent SSE artifact update                        | `agent`, `artifact_name`, `text`                        |
 | `negotiation_request`   | engine client      | Agent needs clarification                        | `agent`, `round`, `concern`                             |
-| `negotiation_resolved`  | engine client      | Clarification provided                           | `agent`, `round`, `clarification`                       |
+| `negotiation_resolved`  | engine client      | Negotiation decision generated                   | `agent`, `round`, `decision`                            |
 | `negotiation_failed`    | engine client      | Negotiation failed                               | `agent`, `round`, `reason`                              |
 | `complete`              | runner             | Workflow succeeded                               | `history`, `step_outputs`                               |
 | `error`                 | runner or executor | Workflow failed                                  | runner: `error`, `history`; executor: `step`, `results` |

@@ -160,6 +160,8 @@ SDK 配置的 LLM）；持有自然语言
   - `NegotiationDecision.rejectText/rejectData` — 拒绝；分别走 SDK fromText/fromData
   - `NegotiationDecision.abortText/abortData` — 终止；分别走 SDK fromText/fromData
   - 不接受 `data:`、`reject:`、`abort:` 等字符串控制前缀。
+  - Information Reject 必须逐项表达：`rejectData` 的每个 key 是一个无法提供的信息项名称，
+    value 是该项无法提供的具体原因；多个请求项不可合并成单一“拒绝原因”。
 - **轮次耗尽**：超过 `maxNegotiationRounds` 后不再继续循环，通过 SDK abort 模板发送终止消息
   （尽力而为，发送失败仅记日志），发出 `NEGOTIATION_FAILED` 事件，agent 最后一次回复作为最终响应。
 - **协商上下文**：执行引擎不支持 `startNegotiation` / `receiveNegotiation` /
@@ -416,12 +418,14 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 `onTask` 只获得窄化的 `TaskDispatcher` 能力。业务使用：
 
 ```java
-dispatcher.dispatch(TaskSubmission.fromText(agentName, text));
+dispatcher.dispatch(TaskSubmission.fromText(agentName, text, templateUri));
+dispatcher.dispatch(TaskSubmission.fromUnclassifiedText(agentName, text));
 dispatcher.dispatch(TaskSubmission.fromData(
         agentName, instruction, data, schema, templateUri));
 ```
 
-第一种调用 SDK 自然语言场景识别；第二种调用 schema-aware fromData。`TaskSubmission` 在进入
+第一种对已知 Task-T 模板调用 SDK 显式自然语言接口且不重复识别场景；第二种仅在模板未知时
+调用 SDK 自然语言场景识别；第三种调用 schema-aware fromData。`TaskSubmission` 在进入
 协议层前校验 agent、instruction、schema 和模板扩展类型，并防御性复制业务数据。
 
 ### ControlPoint
@@ -456,16 +460,25 @@ public interface ControlPoint {
 | `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时         | `NegotiationDecision`         |
 
 `NegotiationRequest` 向业务方提供 `agentName`、`concern`、`sessionId`、`round`、
-`maxRounds`、强类型 `NegotiationPerformative`、协商 `kind`、`templateUri` 和只读 `metadata`。
+`maxRounds`、强类型 `NegotiationPerformative`、协商 `kind`、`templateUri`、SDK 校验抽取后的只读
+`parameters` 和只读 `metadata`。业务判断优先使用 `parameters`；`metadata` 只用于高级诊断。
 只有带完整上下文的 `PROPOSE` 才会进入回调；上下文缺失、轮次非法或模板不受支持时均失败关闭。
 业务方只需根据这些字段返回 `acceptText/acceptData`、`rejectText/rejectData` 或
 `abortText/abortData`，无需发送消息或构造协议 metadata。
+对于 Information Reject，业务方必须对 Propose 中每个无法提供的请求项分别给出原因，例如：
+
+```java
+NegotiationDecision.rejectData(Map.of(
+        "接入端口名称", "当前账号没有资源系统查询权限",
+        "投诉分类", "当前账号没有资源系统查询权限"));
+```
 
 ### DefaultControlPoint
 
 默认实现，提供合理默认值：
 
-- `onTask`：用 `TaskSubmission.fromText` 交给 `TaskDispatcher`，返回 success/output
+- `onTask`：默认用 `TaskSubmission.fromUnclassifiedText` 交给 `TaskDispatcher`，返回 success/output；
+  已知业务模板的宿主应覆盖此方法并使用 `fromText(..., templateUri)` 或 `fromData(...)`
 - `onSelfTask`：原样回传任务消息（本地逻辑请覆盖实现）
 - `onRoute`：选第一个非终止分支
 - `onNegotiation`：返回通用的 `acceptText` 决策
