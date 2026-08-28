@@ -31,7 +31,7 @@ import java.util.function.Predicate;
  * installs the isolated {@link EastcomOrder118ByteBufWorkaround} required by the pinned vendor
  * version:
  * <ul>
- *   <li>{@code HttpClient.create(serverInfo, config)} - no explicit login/init/logout
+ *   <li>{@code HttpClient.create(serverInfo, config)} - the HTTP flow documented by v1.8
  *   <li>{@code .post().uri(path).header(name, value).body(obj).send()} - synchronous HTTP
  *   <li>{@code .sendSse(listener)} - SSE streaming with onHeader/onBodyString
  *   <li>{@code .secure(spec -> ...)} - HTTPS with InsecureTrustManagerFactory
@@ -39,7 +39,9 @@ import java.util.function.Predicate;
  *
  * <p>The platform connection and NE binding are handled internally by the SDK via
  * {@code ServerInfo} (platform credentials) and {@code HttpRequestConfig.deviceName} (target NE).
- * There is no persistent session lifecycle to manage - each request is self-contained.
+ * The adapter does not call the JAR's undocumented static {@code HttpClient.login} helper. Its
+ * conversation lifecycle is local resource management, not an {@code OrdersClientImpl}
+ * login/logout session.
  */
 final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSession {
     private static final Logger log = LoggerFactory.getLogger(OrderHttpClientAdapter.class);

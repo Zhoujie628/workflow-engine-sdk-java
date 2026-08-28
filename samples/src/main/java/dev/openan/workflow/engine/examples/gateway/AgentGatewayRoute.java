@@ -5,7 +5,7 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import org.a2aproject.sdk.spec.AgentInterface;
-import org.a2aproject.sdk.util.Utils;
+import org.a2aproject.sdk.spec.util.Utils;
 
 import java.net.URI;
 import java.net.URLEncoder;

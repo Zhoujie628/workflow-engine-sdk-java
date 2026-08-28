@@ -64,8 +64,9 @@ import java.util.function.Predicate;
  * <p>The adapter is deliberately split into routing, conversation-scoped client management and
  * response parsing. A logical Order client is reused for A2A requests in the same {@code contextId
  * + NE + channel} conversation and access to that client is serialized. The public vendor {@code
- * HttpClient} API does not expose login/init/logout semantics, so this logical lifecycle must not
- * be interpreted as a physical platform session. Agent-to-NE routing is supplied by {@link
+ * HttpClient} flow used here is created from {@code ServerInfo} and NE configuration and does not
+ * use the JAR's undocumented static login helper, so this logical lifecycle must not be
+ * interpreted as an {@code OrdersClientImpl} login/logout session. Agent-to-NE routing is supplied by {@link
  * AgentGatewayRouteResolver}. The selected endpoint and response consumption mode follow the
  * streaming capability declared by the AgentCard.
  */
