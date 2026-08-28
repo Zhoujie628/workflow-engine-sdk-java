@@ -76,7 +76,7 @@ final class ProtocolLogger {
             new ObjectMapper()
                     .enable(SerializationFeature.INDENT_OUTPUT)
                     .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
-                    .setSerializationInclusion(JsonInclude.Include.NON_NULL)
+                    .setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL)
                     .registerModule(
                             new SimpleModule()
                                     .addSerializer(

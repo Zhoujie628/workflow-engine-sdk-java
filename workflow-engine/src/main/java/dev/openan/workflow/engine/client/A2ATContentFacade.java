@@ -84,6 +84,11 @@ public final class A2ATContentFacade {
         return client.generateTaskPromptFromDataWithSchema(data, schema, templateUri);
     }
 
+    /** Renders a Task-T prompt from natural language for a caller-selected template. */
+    public MetadataContent generateTaskFromText(String text, TemplateUri templateUri) {
+        return client.generateTaskPromptFromText(text, templateUri);
+    }
+
     /**
      * Renders an Authorization-T prompt from structured data and a schema. The SDK's schema-aware
      * slot extractor may invoke the configured LLM.

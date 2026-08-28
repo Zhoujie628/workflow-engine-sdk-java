@@ -59,12 +59,19 @@ public interface WorkflowEngineClient extends TaskDispatcher {
     @Override
     default CompletableFuture<SendMessageResult> dispatch(TaskSubmission submission) {
         java.util.Objects.requireNonNull(submission, "Task submission is required");
-        if (submission.input() instanceof TaskSubmission.NaturalLanguage) {
+        if (submission.input() instanceof TaskSubmission.NaturalLanguage naturalLanguage) {
+            Map<String, Object> metadata =
+                    new java.util.LinkedHashMap<>(submission.metadata());
+            if (naturalLanguage.templateUri() != null) {
+                metadata.put(
+                        A2ATExtension.TASK_TEMPLATE_META_KEY,
+                        naturalLanguage.templateUri().uri());
+            }
             return sendMessage(
                     submission.agentName(),
                     submission.instruction(),
                     submission.contextId(),
-                    submission.metadata());
+                    metadata);
         }
         TaskSubmission.StructuredData structured =
                 (TaskSubmission.StructuredData) submission.input();

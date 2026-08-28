@@ -20,14 +20,31 @@ import java.util.Map;
 class TaskSubmissionTest {
 
     @Test
-    void naturalLanguageSubmissionUsesPlainSendPath() {
+    void unclassifiedNaturalLanguageSubmissionUsesScenarioRecognitionPath() {
         StubWorkflowEngineClient client = new StubWorkflowEngineClient("agent");
 
-        client.dispatch(TaskSubmission.fromText("agent", "diagnose link")).join();
+        client.dispatch(TaskSubmission.fromUnclassifiedText("agent", "diagnose link")).join();
 
         var sent = client.getSentMessages().get(0);
         assertEquals("diagnose link", sent.message);
         assertEquals(Map.of(), sent.metadata);
+    }
+
+    @Test
+    void templatedNaturalLanguageSubmissionSelectsExplicitFromTextPath() {
+        StubWorkflowEngineClient client = new StubWorkflowEngineClient("agent");
+
+        client.dispatch(
+                        TaskSubmission.fromText(
+                                "agent",
+                                "diagnose link",
+                                StandardTemplates.PRIVATE_LINE_COMPLAINT))
+                .join();
+
+        var sent = client.getSentMessages().get(0);
+        assertEquals(
+                StandardTemplates.PRIVATE_LINE_COMPLAINT.uri(),
+                sent.metadata.get(A2ATExtension.TASK_TEMPLATE_META_KEY));
     }
 
     @Test
@@ -53,7 +70,11 @@ class TaskSubmissionTest {
 
     @Test
     void invalidSubmissionFailsAtBusinessBoundary() {
-        assertThrows(IllegalArgumentException.class, () -> TaskSubmission.fromText("", "task"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        TaskSubmission.fromText(
+                                "", "task", StandardTemplates.PRIVATE_LINE_COMPLAINT));
         assertThrows(
                 IllegalArgumentException.class,
                 () ->

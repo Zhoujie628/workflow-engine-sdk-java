@@ -47,9 +47,23 @@ public record TaskSubmission(
         String contextId,
         Map<String, Object> metadata) {
 
-    /** Creates a natural-language Task-T submission. */
-    public static TaskSubmission fromText(String agentName, String text) {
-        return new TaskSubmission(agentName, text, new NaturalLanguage(), null, Map.of());
+    /**
+     * Creates a natural-language Task-T submission for a known template. This uses the SDK's
+     * explicit fromText API and bypasses scenario recognition.
+     */
+    public static TaskSubmission fromText(
+            String agentName, String text, TemplateUri templateUri) {
+        return new TaskSubmission(
+                agentName, text, new NaturalLanguage(templateUri), null, Map.of());
+    }
+
+    /**
+     * Creates a natural-language submission whose Task-T template is genuinely unknown. The SDK
+     * performs scenario recognition before prompt generation, so callers should prefer {@link
+     * #fromText(String, String, TemplateUri)} whenever the workflow already selected a template.
+     */
+    public static TaskSubmission fromUnclassifiedText(String agentName, String text) {
+        return new TaskSubmission(agentName, text, new NaturalLanguage(null), null, Map.of());
     }
 
     /** Creates a structured Task-T submission rendered with a caller-selected Task-T template. */
@@ -85,8 +99,20 @@ public record TaskSubmission(
     /** Supported business input forms for Task-T generation. */
     public sealed interface Input permits NaturalLanguage, StructuredData {}
 
-    /** Natural-language input: the instruction itself is passed to SDK scenario recognition. */
-    public record NaturalLanguage() implements Input {}
+    /**
+     * Natural-language input. A non-null template selects the explicit SDK fromText pipeline;
+     * null deliberately selects scenario recognition.
+     */
+    public record NaturalLanguage(TemplateUri templateUri) implements Input {
+        /** Validates that an explicitly selected template belongs to Task-T. */
+        public NaturalLanguage {
+            if (templateUri != null
+                    && !StandardTemplates.TASK_EXTENSION_NAME.equals(templateUri.extensionName())) {
+                throw new IllegalArgumentException(
+                        "Natural-language task template is not Task-T: " + templateUri.uri());
+            }
+        }
+    }
 
     /** Structured input: data and schema are rendered by the SDK's schema-aware fromData API. */
     public record StructuredData(
