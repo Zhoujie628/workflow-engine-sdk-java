@@ -1,7 +1,8 @@
 # SpringSpnDemo 当前调用链路
 
-> 校准日期：2026-08-27。以 `dev` 当前源码和锁定的 A2A-T SDK
-> `1.0.0-841c575`（commit `841c575054d7aecc532e3fd312e004241727951b`）为准。
+> 校准日期：2026-08-28。以 `dev` 当前源码、锁定的 A2A-T SDK
+> `1.0.0-0de5a27`（commit `0de5a2751781419820436e5eb17cffc39b9db47d`）和
+> A2A Java SDK `1.2.0.Final` 为准。
 > 直连与东信 Order 是当前必须同时支持的两条南向线路，不是新旧版本兼容模式。
 
 ## 1. 业务结果
@@ -44,7 +45,8 @@ ACK 成功后关闭；Notification transport 保留到订阅完成、取消或 S
 
 1. SDK schema-aware 管线将原始投诉数据渲染为 Task-T prompt。
 2. A2A Java SDK 通过 `https://127.0.0.1:26337/a2a/json/message:stream` 发送。
-3. Spring starter 的 `A2AController` 交给 `SpringWorkbenchExecutor`。
+3. Spring starter 的 `A2AController` 用规范 SSE event 返回每个 `StreamResponse`，并交给
+   `SpringWorkbenchExecutor`；不要对 `id:/data:` 帧做二次文本封装。
 4. `WorkbenchTaskInputParser` 根据 metadata 中的规范 Task-T URI 和 `templateUri` 调用
    A2A-T server validate-and-fill；缺少 SDK 配置或校验失败时显式失败。
 
@@ -106,7 +108,8 @@ Negotiation-T；协商能力由独立协议用例覆盖。
 `ExtensionPrePositioner` 对每个 OMC：
 
 1. 用 `sendExtensionMessageFromData` 渲染并发送白名单；ACK 必须为
-   `TASK_STATE_COMPLETED`，否则启动失败。
+   `TASK_STATE_COMPLETED`，且 Authorization-T artifact metadata 必须明确返回成功/失败、
+   策略标识和新增/查询时的策略列表，否则启动失败。
 2. 用 `openNotificationFromData` 建立长连接；ACK 必须为 `WORKING` 或 `COMPLETED`。
 3. OMC 诊断给出抢通方案后，只在 SDK 已验证的白名单精确命中业务场景/处置类型/
    操作名称/有效期时自动执行。没有白名单时 fail-closed。
@@ -116,9 +119,10 @@ Negotiation-T；协商能力由独立协议用例覆盖。
 6. 本地 Order 模拟器识别完整 SSE frame 中的 `recovery-result` 后结束该转发，确保关流
    也传递到 OMC；没有抢通结果的订阅继续保持到显式取消或工作台关闭。
 
-Authorization-T 模板支持新增、修改、删除、查询。示例 OMC 用一条内存白名单演示：
-新增/修改替换当前策略，删除清空，查询不修改状态。生产集成方应在业务回调中持久化、
-按策略标识精确修改/删除并返回查询 artifact。
+Authorization-T 模板支持新增、修改、删除、查询，但示例 OMC 没有持久化策略仓库，因而
+只实现新增、按精确策略标识删除和查询；修改操作明确失败，不会伪装成功。示例新增使用
+确定性的演示策略标识，删除其他标识会 fail-closed 并保留原策略。生产集成方应在业务回调
+中持久化并实现按策略标识精确修改/删除，返回规范的 Authorization-T artifact metadata。
 
 ## 8. 关闭顺序
 
