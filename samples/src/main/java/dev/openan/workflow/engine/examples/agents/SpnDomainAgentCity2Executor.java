@@ -35,8 +35,8 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  * SPN Domain Agent for City2 (City2 OMC).
  *
  * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}). City2 side is
- * NORMAL. Diagnosis/recovery text is LLM-generated when the A2A-T .env is configured, else
- * deterministic. Authorization-T and Notification-T are initiated on independent channels.
+ * NORMAL. Diagnosis text is LLM-generated when the A2A-T .env is configured, else deterministic.
+ * Authorization-T and Notification-T are initiated on independent channels.
  */
 public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity2Executor.class);
@@ -57,10 +57,23 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
 
     private static String llmDiagnosisResult(String input, String fallback) {
         String env = EnvResolver.resolveEnvPath();
-        String sys = "你是SPN领域OMC故障诊断专家。按如下结构输出：1. 诊断结果（成功/失败）；"
-                + "2. 诊断结果详情；3. 修复建议。城市2侧端口正常、无故障。简洁专业，中文。";
-        String user = "输入：\n" + input + "\n\n城市2OMC端口port-3=UP，光功率-17dBm，无告警。请输出诊断结论。";
-        return LlmHelper.text(env, sys, user, fallback);
+        String sys = "你是SPN领域OMC故障诊断专家。诊断结果表示诊断任务是否成功完成，不表示是否发现故障。"
+                + "本例必须输出“1. 诊断结果：成功”；城市2本地端口正常、无故障，不得写成诊断失败，"
+                + "不得把城市2的任务对象称为城市1。继续输出2.诊断结果详情、3.修复建议，限300个中文字符，确保句子完整。";
+        String user = "输入：\n" + input
+                + "\n\n城市2 OMC 已核验本次任务对象：端口状态UP，光功率-17dBm，无告警。"
+                + "结论是城市2侧诊断执行成功且未发现本地故障。请按指定结构输出。";
+        String result = LlmHelper.text(env, sys, user, fallback);
+        String normalized = result.replace("*", "").replace("#", "");
+        boolean successfulDiagnosis =
+                normalized.matches("(?s).*诊断结果\\s*[：:]?\\s*成功.*")
+                        && (normalized.contains("正常") || normalized.contains("未发现"));
+        if (!successfulDiagnosis) {
+            log.warn(
+                    "[SPN-Domain-Agent-City2] LLM output contradicted the verified normal state; using deterministic result");
+            return fallback;
+        }
+        return result;
     }
 
     @Override

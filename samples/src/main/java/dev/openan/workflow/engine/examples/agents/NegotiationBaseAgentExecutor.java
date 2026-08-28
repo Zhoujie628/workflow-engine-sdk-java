@@ -73,7 +73,9 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     // Pre-positioned extensions (Authorization-T / Notification-T) are handled
     // by a dedicated handler, keeping this class focused on Negotiation-T.
     private final PrePositionedExtensionHandler prePositionedHandler;
-    private final BlockingQueue<String> notificationQueue = new LinkedBlockingQueue<>();
+    private final BlockingQueue<NotificationEvent> notificationQueue = new LinkedBlockingQueue<>();
+    private final java.util.concurrent.ConcurrentMap<String, String> pendingNegotiationTasks =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private volatile A2ATClient a2atClient;
 
     protected NegotiationBaseAgentExecutor() {
@@ -94,24 +96,45 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
         return prePositionedHandler.getNotificationSubscription();
     }
 
-    protected void reportRecoveryResult(AgentEmitter emitter, String result) {
-        String notifUri = A2ATExtension.NOTIFICATION_T.uri();
-        Map<String, Object> notifMeta = new LinkedHashMap<>();
-        notifMeta.put(notifUri, result);
-        List<Part<?>> rParts = List.of(new TextPart(result));
-        emitter.addArtifact(rParts, "recovery-result", "recovery-result", notifMeta, false, true);
-        log.info("[{}] RECOVERY_REPORTED resultChars={}", getClass().getSimpleName(), result.length());
-    }
-
-    protected void pushNotificationResult(String result) {
+    /**
+     * Enqueues one business-recovery notification for the independent Notification-T stream.
+     * The artifact part remains the protocol-defined event summary; the full structured prompt is
+     * carried under the Notification-T metadata URI.
+     */
+    protected void pushRecoveryNotification(String artifactName, String content) {
+        if (artifactName == null || artifactName.isBlank()) {
+            throw new IllegalArgumentException("Notification artifact name must not be blank");
+        }
+        if (content == null || content.isBlank()) {
+            throw new IllegalArgumentException("Notification content must not be blank");
+        }
         if (getNotificationSubscription() == null) {
             log.warn(
-                    "[{}] Dropping recovery result because no validated Notification-T subscription is active",
-                    getClass().getSimpleName());
+                    "[{}] Dropping {} because no validated Notification-T subscription is active",
+                    getClass().getSimpleName(),
+                    artifactName);
             return;
         }
-        if (!notificationQueue.offer(result)) {
-            log.warn("[{}] Notification queue rejected a result", getClass().getSimpleName());
+        if (!notificationQueue.offer(new NotificationEvent(artifactName, content))) {
+            log.warn(
+                    "[{}] Notification queue rejected {}",
+                    getClass().getSimpleName(),
+                    artifactName);
+        }
+    }
+
+    protected final void pushRecoveryPlan(String content) {
+        pushRecoveryNotification("recovery-plan", content);
+    }
+
+    protected final void pushRecoveryResult(String content) {
+        pushRecoveryNotification("recovery-result", content);
+    }
+
+    private record NotificationEvent(String artifactName, String content) {
+        private NotificationEvent {
+            java.util.Objects.requireNonNull(artifactName, "artifactName");
+            java.util.Objects.requireNonNull(content, "content");
         }
     }
 
@@ -268,20 +291,27 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 taskId,
                 contextId);
         List<Part<?>> ackParts = List.of(new TextPart("订阅成功，启动业务抢通事件上报任务"));
+        Map<String, Object> subscriptionMetadata =
+                Map.of(notifUri, "## 订阅结果\n订阅结果：成功");
         emitter.addArtifact(
-                ackParts, "subscription", agentTag + " subscription", Map.of(), false, true);
+                ackParts,
+                "subscription",
+                agentTag + " subscription",
+                subscriptionMetadata,
+                false,
+                true);
         emitStatus(
                 emitter,
                 TaskState.TASK_STATE_WORKING,
                 contextId,
                 taskId,
                 "订阅成功，启动业务抢通事件上报任务",
-                Map.of());
+                subscriptionMetadata);
         while (!Thread.currentThread().isInterrupted()) {
             long heartbeatSeconds = Math.max(
                     1L, Long.getLong("a2at.notification.heartbeat.seconds", 30L));
-            String result = notificationQueue.poll(heartbeatSeconds, TimeUnit.SECONDS);
-            if (result == null) {
+            NotificationEvent event = notificationQueue.poll(heartbeatSeconds, TimeUnit.SECONDS);
+            if (event == null) {
                 emitStatus(
                         emitter,
                         TaskState.TASK_STATE_WORKING,
@@ -294,16 +324,22 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 continue;
             }
             log.info(
-                    "[{}] NOTIFICATION_PUSH taskId={}, contextId={}, resultChars={}",
+                    "[{}] NOTIFICATION_PUSH taskId={}, contextId={}, artifactName={}, contentChars={}",
                     agentTag,
                     taskId,
                     contextId,
-                    result.length());
+                    event.artifactName(),
+                    event.content().length());
             Map<String, Object> notifMeta = new LinkedHashMap<>();
-            notifMeta.put(notifUri, result);
-            List<Part<?>> resultParts = List.of(new TextPart(result));
+            notifMeta.put(notifUri, event.content());
+            List<Part<?>> resultParts = List.of(new TextPart("业务抢通事件"));
             emitter.addArtifact(
-                    resultParts, "recovery-result", "recovery-result", notifMeta, false, true);
+                    resultParts,
+                    event.artifactName(),
+                    event.artifactName(),
+                    notifMeta,
+                    false,
+                    true);
         }
     }
 
@@ -363,8 +399,16 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
                 return;
             }
         }
-        log.info("[{}] Follow-up received, re-executing business", getClass().getSimpleName());
-        runBusinessAndComplete(ctx, emitter, cleanInput);
+        String originalInput = pendingNegotiationTasks.remove(ctx.getTaskId());
+        String businessInput =
+                originalInput == null
+                        ? cleanInput
+                        : originalInput + "\n\n## Negotiation-T 补充信息\n" + cleanInput;
+        log.info(
+                "[{}] Follow-up received, re-executing business with originalTask={}",
+                getClass().getSimpleName(),
+                originalInput != null);
+        runBusinessAndComplete(ctx, emitter, businessInput);
     }
 
     /**
@@ -383,6 +427,9 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     private void requestNegotiation(RequestContext ctx, AgentEmitter emitter, String input) {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
+        if (taskId != null && input != null) {
+            pendingNegotiationTasks.put(taskId, input);
+        }
         net.openan.a2at.sdk.core.model.NegotiationContext negotiationContext =
                 new net.openan.a2at.sdk.core.model.NegotiationContext(
                         java.util.UUID.randomUUID().toString(),

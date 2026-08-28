@@ -121,22 +121,30 @@ class PrePositionedExtensionHandlerTest {
     @Test
     void queryIsSideEffectFreeAndDeleteClearsTheDemoWhitelist() {
         PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
-        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        PrePositionedExtensionHandler.AuthorizationOperationResult addResult =
+                handler.applyAuthorization(
+                        SpnCasePrompts.addAuthorizationData(), "template", "test");
         AuthorizationPolicy added = handler.getAuthorizationPolicy();
         assertNotNull(added);
+        assertTrue(addResult.metadataText().contains("授权操作执行结果：成功"));
+        assertTrue(
+                addResult.metadataText()
+                        .contains("7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"));
 
-        handler.applyAuthorization(
-                Map.of(AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.QUERY),
-                "template",
-                "test");
+        PrePositionedExtensionHandler.AuthorizationOperationResult queryResult =
+                handler.applyAuthorization(
+                        Map.of(AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.QUERY),
+                        "template",
+                        "test");
         assertSame(added, handler.getAuthorizationPolicy());
+        assertTrue(queryResult.metadataText().contains("动网操作的授权策略列表"));
 
         handler.applyAuthorization(
                 Map.of(
                         AuthorizationPolicy.OPERATION_TYPE_FIELD,
                         AuthorizationPolicy.DELETE,
                         AuthorizationPolicy.POLICY_LIST_FIELD,
-                        "policy-id"),
+                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"),
                 "template",
                 "test");
         assertNull(handler.getAuthorizationPolicy());
@@ -154,6 +162,25 @@ class PrePositionedExtensionHandlerTest {
                         Map.of(
                                 AuthorizationPolicy.OPERATION_TYPE_FIELD,
                                 AuthorizationPolicy.DELETE),
+                        "template",
+                        "test"));
+        assertSame(existing, handler.getAuthorizationPolicy());
+    }
+
+    @Test
+    void deleteMustTargetTheExactActivePolicyIdentifier() {
+        PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
+        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        AuthorizationPolicy existing = handler.getAuthorizationPolicy();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> handler.applyAuthorization(
+                        Map.of(
+                                AuthorizationPolicy.OPERATION_TYPE_FIELD,
+                                AuthorizationPolicy.DELETE,
+                                AuthorizationPolicy.POLICY_LIST_FIELD,
+                                "different-policy-id"),
                         "template",
                         "test"));
         assertSame(existing, handler.getAuthorizationPolicy());

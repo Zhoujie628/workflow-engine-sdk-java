@@ -251,13 +251,26 @@ class SpnCrossCityE2ETest {
                     .join();
         }
 
-        CountDownLatch recoveryNotification = new CountDownLatch(1);
+        CountDownLatch recoveryPlanNotification = new CountDownLatch(1);
+        CountDownLatch recoveryResultNotification = new CountDownLatch(1);
+        AtomicReference<String> recoveryPlanNotificationText = new AtomicReference<>();
         AtomicReference<String> recoveryNotificationText = new AtomicReference<>();
         java.util.function.Consumer<Map<String, Object>> notificationCallback =
                 event -> {
+                    Object metadataValue = event.get("metadata");
+                    String protocolContent = "";
+                    if (metadataValue instanceof Map<?, ?> metadata) {
+                        Object content = metadata.get(
+                                dev.openan.workflow.engine.client.A2ATExtension.NOTIFICATION_T.uri());
+                        if (content != null) protocolContent = String.valueOf(content);
+                    }
+                    if ("recovery-plan".equals(event.get("artifact_name"))) {
+                        recoveryPlanNotificationText.set(protocolContent);
+                        recoveryPlanNotification.countDown();
+                    }
                     if ("recovery-result".equals(event.get("artifact_name"))) {
-                        recoveryNotificationText.set(String.valueOf(event.get("text")));
-                        recoveryNotification.countDown();
+                        recoveryNotificationText.set(protocolContent);
+                        recoveryResultNotification.countDown();
                     }
                 };
         for (String agent : List.of("SPN Domain Agent City1", "SPN Domain Agent City2")) {
@@ -275,7 +288,7 @@ class SpnCrossCityE2ETest {
         }
 
         Map<String, Object> allOutputs = new ConcurrentHashMap<>();
-        AtomicBoolean sawRecovery = new AtomicBoolean(false);
+        AtomicBoolean workflowTaskContainedRecovery = new AtomicBoolean(false);
         AtomicBoolean sawSelfLoop = new AtomicBoolean(false);
         AtomicBoolean sawNegotiation = new AtomicBoolean(false);
         EventCallback cb =
@@ -287,10 +300,9 @@ class SpnCrossCityE2ETest {
                                     data.get("text") != null
                                             ? String.valueOf(data.get("text"))
                                             : "";
-                            if (text.contains("抢通")
-                                    || text.contains("恢复")
-                                    || text.contains("Notification")) {
-                                sawRecovery.set(true);
+                            if (text.contains("业务抢通方案执行状态")
+                                    || text.contains("Notification-T")) {
+                                workflowTaskContainedRecovery.set(true);
                             }
                         }
                         if (EventType.TASK_RESPONSE.equals(type)
@@ -330,11 +342,21 @@ class SpnCrossCityE2ETest {
                 "The complete-input diagnosis workflow must not trigger Negotiation-T");
         // Self-loop merge step executed locally (no A2A-T to self)
         assertTrue(sawSelfLoop.get(), "Self-loop merge must run via onSelfTask");
-        // SPN agents reported recovery via Notification-T channel
+        // Recovery is outside the workflow task channel: first the plan, then the result.
+        assertFalse(
+                workflowTaskContainedRecovery.get(),
+                "Task-T diagnosis artifacts must not contain Notification-T recovery output");
         assertTrue(
-                sawRecovery.get(), "SPN must self-trigger recovery and report via Notification-T");
+                await(recoveryPlanNotification, 5),
+                "Recovery plan must arrive first on the isolated Notification-T stream");
         assertTrue(
-                await(recoveryNotification, 5),
+                recoveryPlanNotificationText.get() != null
+                        && recoveryPlanNotificationText.get().contains("业务抢通方案执行状态：未启动")
+                        && recoveryPlanNotificationText.get().contains("是否已授权OMC自动抢通：是"),
+                "Recovery plan must contain the required protocol fields: "
+                        + recoveryPlanNotificationText.get());
+        assertTrue(
+                await(recoveryResultNotification, 5),
                 "Recovery result must arrive on the isolated Notification-T stream");
         assertTrue(
                 recoveryNotificationText.get() != null

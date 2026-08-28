@@ -39,10 +39,10 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  *
  * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}): on a new task
  * it replies INPUT_REQUIRED to start a Negotiation-T round, and on the follow-up it runs the
- * diagnosis/recovery business. City1 side has a FAULT (port Down, optical power -28dBm).
- * Diagnosis/recovery text is LLM-generated (deepseek) when the A2A-T .env is configured, else
- * deterministic. Authorization-T and Notification-T are initiated on independent channels,
- * so this agent no longer injects them in response metadata.
+ * diagnosis business. City1 side has a FAULT (port Down, optical power -28dBm). Diagnosis text is
+ * LLM-generated when the A2A-T .env is configured, otherwise deterministic. The recovery event
+ * payload is formatted deterministically so required protocol fields and identifiers cannot be
+ * hallucinated. Authorization-T and Notification-T use independent channels.
  */
 public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpnDomainAgentCity1Executor.class);
@@ -54,18 +54,10 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                     + "判断原因为对端设备掉电或端口关闭\n"
                     + "3. 修复建议：恢复供电后重新启动网元，或者重新开启端口";
 
-    // Recovery (business-preemption) result reported via Notification-T, mirroring spec case 7.9.
-    private static final String RECOVERY_RESULT =
-            "### 业务抢通事件\n"
-                    + "1. 业务抢通方案执行状态：已结束\n"
-                    + "2. 投诉诊断任务流水号：9de168c0-6179-4778-8b72-4279582c0a3f\n"
-                    + "3. OSS侧事件流水号：event-id-202606250128\n"
-                    + "4. 接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17\n"
-                    + "5. 是否已授权OMC自动抢通：是\n"
-                    + "6. 业务抢通方案名称：隧道调优\n"
-                    + "7. 业务抢通方案详情：将受影响的隧道列表调优到新的路径列表，业务恢复。\n"
-                    + "8. 业务抢通方案执行结束时间：2026-05-11T08:31:46Z\n"
-                    + "9. 业务抢通方案执行结果：成功";
+    private static final String OSS_EVENT_ID = "event-id-20260511-09013";
+    private static final String ACCESS_PORT = "P781-珠江新城-PTN7900-23-TPA1EG24-17";
+    private static final String RECOVERY_DETAIL =
+            "将时延越限和丢包越限的受影响隧道调优到新的可用路径，保留原路径用于回退。";
 
     public SpnDomainAgentCity1Executor() {
         super();
@@ -83,14 +75,6 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
         return LlmHelper.text(env, sys, user, fallback);
     }
 
-    private static String llmRecoveryResult(String input, String fallback) {
-        String env = EnvResolver.resolveEnvPath();
-        String sys = "你是SPN领域OMC业务抢通执行专家。按业务抢通事件数据格式输出结果，"
-                + "包含执行状态、方案名称、详情、执行结果。中文。";
-        String user = "输入：\n" + input + "\n\n已执行隧道调优，业务恢复。请输出业务抢通结果。";
-        return LlmHelper.text(env, sys, user, fallback);
-    }
-
     @Override
     protected String resolveEnvPath() {
         return EnvResolver.resolveEnvPath();
@@ -99,16 +83,17 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     @Override
     protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, String input) {
         String diagnosisResult = llmDiagnosisResult(input, FAULT_DIAGNOSIS_RESULT);
-        String recoveryResult = selfTriggerRecovery(ctx, diagnosisResult);
-        return diagnosisResult + "\n\n" + recoveryResult;
+        publishRecoveryLifecycle(ctx);
+        // Task-T returns diagnosis only. Recovery plan/result belong exclusively to the
+        // independently established Notification-T subscription.
+        return diagnosisResult;
     }
 
     /**
-     * After diagnosis, check the active Authorization-T whitelist policy. If the repair
-     * action matches the whitelist, execute recovery and return the result (reported as
-     * Notification-T metadata by the base class). If not in whitelist, return a refusal message.
+     * After diagnosis, publish the recovery plan. If it matches the active Authorization-T
+     * whitelist, execute it automatically and publish the final result as a second event.
      */
-    private String selfTriggerRecovery(RequestContext ctx, String diagnosisResult) {
+    private void publishRecoveryLifecycle(RequestContext ctx) {
         AuthorizationPolicy policy = getAuthorizationPolicy();
         boolean inWhitelist =
                 policy != null
@@ -117,19 +102,60 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                                 "业务抢通",
                                 "隧道调优",
                                 LocalDate.now(ZoneId.of("Asia/Shanghai")));
+        String taskId = ctx.getTaskId() != null ? ctx.getTaskId() : "unknown-task";
+        pushRecoveryPlan(formatRecoveryEvent("未启动", taskId, inWhitelist, null, null));
         if (inWhitelist) {
             log.info("[SPN-Domain-Agent] Fault in whitelist, self-triggering recovery");
-            String recoveryResult = llmRecoveryResult(diagnosisResult, RECOVERY_RESULT);
+            String recoveryResult =
+                    formatRecoveryEvent(
+                            "已结束",
+                            taskId,
+                            true,
+                            "成功",
+                            java.time.Instant.now().toString());
             log.info(
                     "[SPN-Domain-Agent] Recovery result reported via Notification-T: {}",
                     recoveryResult);
-            pushNotificationResult(recoveryResult);
-            return recoveryResult;
+            pushRecoveryResult(recoveryResult);
+            return;
         }
-        log.info("[SPN-Domain-Agent] Fault not in whitelist, refusing recovery");
-        String refusalResult = "## 授权操作执行结果\n    授权操作执行结果：失败\n\n## 失败原因\n操作不在授权白名单内，拒绝执行业务抢通。";
-        pushNotificationResult(refusalResult);
-        return refusalResult;
+        log.info(
+                "[SPN-Domain-Agent] Recovery plan reported but automatic execution was not started because it is outside the active whitelist");
+    }
+
+    private static String formatRecoveryEvent(
+            String state,
+            String taskId,
+            boolean authorized,
+            String executionResult,
+            String finishedAt) {
+        StringBuilder event =
+                new StringBuilder("### 业务抢通事件\n")
+                        .append("1. 业务抢通方案执行状态：").append(state).append('\n')
+                        .append("2. 投诉诊断任务流水号：").append(taskId).append('\n')
+                        .append("3. OSS侧事件流水号：").append(OSS_EVENT_ID).append('\n')
+                        .append("4. 接入端口名称：").append(ACCESS_PORT).append('\n')
+                        .append("5. 是否已授权OMC自动抢通：").append(authorized ? "是" : "否").append('\n')
+                        .append("6. 业务抢通方案名称：隧道调优\n")
+                        .append("7. 业务抢通方案详情：").append(RECOVERY_DETAIL);
+        if (finishedAt != null) {
+            event.append('\n').append("8. 业务抢通方案执行结束时间：").append(finishedAt);
+        }
+        if (executionResult != null) {
+            event.append('\n').append("9. 业务抢通方案执行结果：").append(executionResult);
+        }
+        return event.toString();
+    }
+
+    @Override
+    protected boolean needsNegotiation(String input) {
+        // Case 7.4 represents an inventory-level semantic error that a generic JSON schema cannot
+        // express: this OMC knows port ...-18 is not a valid complaint access port.
+        if (input != null && input.contains("P781-珠江新城-PTN7900-23-TPA1EG24-18")) {
+            log.info("[SPN-Domain-Agent] Unknown access port; Negotiation-T correction required");
+            return true;
+        }
+        return super.needsNegotiation(input);
     }
 
     @Override

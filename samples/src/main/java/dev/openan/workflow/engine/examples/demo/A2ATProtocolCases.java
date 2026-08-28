@@ -21,8 +21,11 @@ import org.slf4j.LoggerFactory;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -47,8 +50,12 @@ public class A2ATProtocolCases {
     private DefaultExtensionSender notificationSender;
     private final AtomicReference<String> lastTaskId = new AtomicReference<>();
     private final AtomicReference<String> notificationTaskId = new AtomicReference<>();
+    private final AtomicBoolean recoveryPlanReceived = new AtomicBoolean();
     private final AtomicBoolean recoveryNotificationReceived = new AtomicBoolean();
+    private final AtomicInteger negotiationRequests = new AtomicInteger();
+    private final CountDownLatch reconnectEvent = new CountDownLatch(1);
     private NotificationSubscription notificationSubscription;
+    private CompletableFuture<SendMessageResult> reconnectedSubscription;
 
     public static void main(String[] args) throws Exception {
         String caseId = "all";
@@ -65,7 +72,7 @@ public class A2ATProtocolCases {
             if ("all".equalsIgnoreCase(caseId)) {
                 case_0(); case_7_1(); case_7_2(); case_7_3(); case_7_4();
                 case_7_5(); case_7_6(); case_7_7(); case_7_8();
-                case_7_9(); case_7_10(); case_7_11();
+                case_7_9(); case_7_11(); case_7_10();
             } else {
                 switch (caseId) {
                     case "0" -> case_0();
@@ -109,6 +116,20 @@ public class A2ATProtocolCases {
         authorizationTransport = new A2ATransport(cards, null, config);
         notificationTransport = new A2ATransport(cards, null, config);
         client = new DefaultWorkflowEngineClient(taskTransport);
+        client.setControlPoint(
+                new dev.openan.workflow.engine.control.DefaultControlPoint(
+                        new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(
+                                EnvResolver.resolveEnvPath())));
+        client.setEventCallback(
+                new dev.openan.workflow.engine.control.EventCallback() {
+                    @Override
+                    public void onEvent(String type, Map<String, Object> data) {
+                        if (dev.openan.workflow.engine.control.EventType.NEGOTIATION_REQUEST
+                                .equals(type)) {
+                            negotiationRequests.incrementAndGet();
+                        }
+                    }
+                });
         notificationControlClient = new DefaultWorkflowEngineClient(notificationTransport);
         authorizationSender = new DefaultExtensionSender(authorizationTransport);
         notificationSender = new DefaultExtensionSender(notificationTransport);
@@ -166,23 +187,47 @@ public class A2ATProtocolCases {
     }
 
     private void case_7_3() {
-        log.info("[Case 7.3] Negotiation - param missing (Task-T fromData + Negotiation-T)");
+        log.info("[Case 7.3] Negotiation - missing required parameter");
+        int before = negotiationRequests.get();
         Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(A2ATExtension.TASK_DATA_META_KEY, SpnCasePrompts.privateLineComplaintDataBlankObject());
-        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, SpnCasePrompts.privateLineComplaintSchema());
+        metadata.put(
+                A2ATExtension.TASK_T.uri(),
+                SpnCasePrompts.privateLineComplaintPromptBlankObject());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
         SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(参数缺失)", null, metadata).join();
+        requireCompletedNegotiation("7.3", result, before);
         log.info("[Case 7.3] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
 
     private void case_7_4() {
         log.info("[Case 7.4] Negotiation - semantic error (Task-T fromData + Negotiation-T)");
+        int before = negotiationRequests.get();
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(A2ATExtension.TASK_DATA_META_KEY, SpnCasePrompts.privateLineComplaintDataUnknownPort());
         metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, SpnCasePrompts.privateLineComplaintSchema());
+        metadata.put(
+                A2ATExtension.TASK_TEMPLATE_META_KEY,
+                net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
         metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
         SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(语义错误)", null, metadata).join();
+        requireCompletedNegotiation("7.4", result, before);
         log.info("[Case 7.4] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
+    }
+
+    private void requireCompletedNegotiation(
+            String caseId, SendMessageResult result, int requestCountBefore) {
+        if (result == null
+                || result.getTaskState() == null
+                || !result.getTaskState().endsWith("COMPLETED")
+                || negotiationRequests.get() <= requestCountBefore) {
+            throw new IllegalStateException(
+                    "Case "
+                            + caseId
+                            + " did not complete a Negotiation-T round: state="
+                            + (result != null ? result.getTaskState() : "null")
+                            + ", negotiationRequests="
+                            + negotiationRequests.get());
+        }
     }
 
     private void case_7_5() {
@@ -197,6 +242,11 @@ public class A2ATProtocolCases {
                                         .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
+        requireExtensionResponse(
+                result,
+                A2ATExtension.AUTHORIZATION_T.uri(),
+                "授权操作执行结果：成功",
+                "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3");
         log.info("[Case 7.5] state={}", result.getTaskState());
     }
 
@@ -216,6 +266,10 @@ public class A2ATProtocolCases {
                                         .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
+        requireExtensionResponse(
+                result,
+                A2ATExtension.AUTHORIZATION_T.uri(),
+                "授权操作执行结果：成功");
         log.info("[Case 7.6] state={}", result.getTaskState());
     }
 
@@ -235,11 +289,17 @@ public class A2ATProtocolCases {
                                         .AUTHORIZATION_POLICY_MANAGEMENT,
                                 A2ATExtension.AUTHORIZATION_T)
                         .join();
+        requireExtensionResponse(
+                result,
+                A2ATExtension.AUTHORIZATION_T.uri(),
+                "授权操作执行结果：成功",
+                "无匹配授权策略");
         log.info("[Case 7.7] state={}", result.getTaskState());
     }
 
     private void case_7_8() {
         log.info("[Case 7.8] Subscribe notification (Notification-T)");
+        recoveryPlanReceived.set(false);
         recoveryNotificationReceived.set(false);
         notificationSubscription =
                 notificationSender.openNotificationFromData(
@@ -250,16 +310,41 @@ public class A2ATProtocolCases {
                                 net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
                                 data -> {
                                     log.info("[Case 7.8] callback: keys={}", data.keySet());
+                                    if ("recovery-plan".equals(data.get("artifact_name"))) {
+                                        recoveryPlanReceived.set(true);
+                                    }
                                     if ("recovery-result".equals(data.get("artifact_name"))) {
                                         recoveryNotificationReceived.set(true);
                                     }
                                 })
                         .join();
         SendMessageResult result = notificationSubscription.acknowledgement().join();
+        requireExtensionResponse(
+                result,
+                A2ATExtension.NOTIFICATION_T.uri(),
+                "订阅结果：成功");
         if (result.getTask() != null) {
             notificationTaskId.set(result.getTask().id());
         }
         log.info("[Case 7.8] ack state={}", result.getTaskState());
+    }
+
+    private static void requireExtensionResponse(
+            SendMessageResult result, String extensionUri, String... expectedFragments) {
+        Map<String, Object> metadata = result != null ? result.getMetadata() : null;
+        Object value = metadata != null ? metadata.get(extensionUri) : null;
+        String response = value instanceof String text ? text : "";
+        for (String fragment : expectedFragments) {
+            if (!response.contains(fragment)) {
+                throw new IllegalStateException(
+                        "Protocol response metadata for "
+                                + extensionUri
+                                + " is missing '"
+                                + fragment
+                                + "': "
+                                + response);
+            }
+        }
     }
 
     private void case_7_9() throws Exception {
@@ -268,18 +353,26 @@ public class A2ATProtocolCases {
             log.info("[Case 7.9] No notification task, running 7.8 first");
             case_7_8();
         }
-        log.info("[Case 7.9] Waiting 5s for pushed events...");
-        TimeUnit.SECONDS.sleep(5);
-        if (recoveryNotificationReceived.get() && notificationSubscription != null) {
-            notificationSubscription.close();
-            notificationSubscription = null;
-            log.info("[Case 7.9] Recovery result received; Notification-T stream closed");
-        } else {
-            log.info("[Case 7.9] No recovery result yet; Notification-T stream remains active");
+        // Case 7.6 deliberately removed the policy. Re-add it before diagnosis so the documented
+        // plan -> whitelist match -> automatic execution -> result lifecycle can complete.
+        case_7_5();
+        case_7_1();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while ((!recoveryPlanReceived.get() || !recoveryNotificationReceived.get())
+                && System.nanoTime() < deadline) {
+            TimeUnit.MILLISECONDS.sleep(100);
         }
+        if (!recoveryPlanReceived.get() || !recoveryNotificationReceived.get()) {
+            throw new IllegalStateException(
+                    "Case 7.9 expected both recovery-plan and recovery-result events; plan="
+                            + recoveryPlanReceived.get()
+                            + ", result="
+                            + recoveryNotificationReceived.get());
+        }
+        log.info("[Case 7.9] Recovery plan and automatic-execution result received");
     }
 
-    private void case_7_10() {
+    private void case_7_10() throws Exception {
         if (notificationTaskId.get() == null) {
             log.info("[Case 7.10] No notification task, running 7.8 first");
             case_7_8();
@@ -287,6 +380,16 @@ public class A2ATProtocolCases {
         String taskId = notificationTaskId.getAndSet(null);
         log.info("[Case 7.10] Cancel subscription: {}", taskId);
         SendMessageResult result = notificationControlClient.cancelTask(AGENT_NAME, taskId).join();
+        if (reconnectedSubscription != null) {
+            SendMessageResult terminal = reconnectedSubscription.get(5, TimeUnit.SECONDS);
+            if (terminal.getTaskState() == null
+                    || !terminal.getTaskState().contains("CANCELED")) {
+                throw new IllegalStateException(
+                        "Case 7.10 expected reconnected stream to end as CANCELED, state="
+                                + terminal.getTaskState());
+            }
+            reconnectedSubscription = null;
+        }
         if (notificationSubscription != null) {
             notificationSubscription.close();
             notificationSubscription = null;
@@ -294,7 +397,7 @@ public class A2ATProtocolCases {
         log.info("[Case 7.10] state={}", result.getTaskState());
     }
 
-    private void case_7_11() {
+    private void case_7_11() throws Exception {
         String taskId = notificationTaskId.get();
         if (taskId == null) {
             log.info("[Case 7.11] No notification task, running 7.8 first");
@@ -306,15 +409,22 @@ public class A2ATProtocolCases {
             notificationSubscription = null;
         }
         log.info("[Case 7.11] Reconnect: {}", taskId);
-        SendMessageResult result =
+        reconnectedSubscription =
                 notificationControlClient
                         .subscribeToTask(
                                 AGENT_NAME,
                                 taskId,
-                                data ->
-                                        log.info(
-                                                "[Case 7.11] callback: keys={}", data.keySet()))
-                        .join();
-        log.info("[Case 7.11] state={}", result.getTaskState());
+                                data -> {
+                                    reconnectEvent.countDown();
+                                    log.info("[Case 7.11] callback: keys={}", data.keySet());
+                                });
+        if (!reconnectEvent.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Case 7.11 reconnect produced no protocol event");
+        }
+        if (reconnectedSubscription.isDone()) {
+            throw new IllegalStateException(
+                    "Case 7.11 reconnect stream ended before explicit cancellation");
+        }
+        log.info("[Case 7.11] reconnected stream is active");
     }
 }
