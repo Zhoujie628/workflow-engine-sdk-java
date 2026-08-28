@@ -55,25 +55,60 @@ public final class LlmHelper {
     public static String text(String envPath, String system, String user, String fallback) {
         Config config = resolve(envPath);
         if (config == null) {
+            log.info("[LlmHelper] LLM_FALLBACK reason=not_configured_or_disabled");
             return fallback;
         }
+        long started = System.nanoTime();
         try {
+            log.info(
+                    "[LlmHelper] LLM_CALL_START model={}, inputChars={}",
+                    config.model,
+                    (system != null ? system.length() : 0) + (user != null ? user.length() : 0));
             String body = buildRequestBody(config, system, user);
             HttpResponse response = post(config, body);
             if (response.statusCode != 200) {
-                log.warn("[LlmHelper] HTTP {}: {}", response.statusCode, response.body);
+                log.warn(
+                        "[LlmHelper] LLM_FALLBACK reason=http_status, status={}, elapsedMs={}",
+                        response.statusCode,
+                        elapsedMillis(started));
                 return fallback;
             }
-            String content = extractContent(response.body);
+            ModelReply reply = extractReply(response.body);
+            String content = reply != null ? reply.content() : null;
             if (content == null || content.isBlank()) {
-                log.warn("[LlmHelper] empty model reply, using fallback");
+                log.warn(
+                        "[LlmHelper] LLM_FALLBACK reason=empty_reply, elapsedMs={}",
+                        elapsedMillis(started));
                 return fallback;
             }
+            if (reply.finishReason() != null && !"stop".equalsIgnoreCase(reply.finishReason())) {
+                log.warn(
+                        "[LlmHelper] LLM_FALLBACK reason=incomplete_reply, finishReason={}, outputChars={}, elapsedMs={}",
+                        reply.finishReason(),
+                        content.length(),
+                        elapsedMillis(started));
+                return fallback;
+            }
+            log.info(
+                    "[LlmHelper] LLM_CALL_DONE model={}, finishReason={}, outputChars={}, elapsedMs={}",
+                    config.model,
+                    reply.finishReason(),
+                    content.length(),
+                    elapsedMillis(started));
             return content;
         } catch (Exception e) {
-            log.warn("[LlmHelper] LLM call failed, using fallback: {}", e.getMessage());
+            log.warn(
+                    "[LlmHelper] LLM_FALLBACK reason=call_failed, errorType={}, elapsedMs={}, message={}",
+                    e.getClass().getSimpleName(),
+                    elapsedMillis(started),
+                    e.getMessage());
             return fallback;
         }
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                System.nanoTime() - startedNanos);
     }
 
     private static HttpResponse post(Config config, String body) throws IOException {
@@ -222,13 +257,19 @@ public final class LlmHelper {
         }
     }
 
-    private static String extractContent(String responseBody) {
+    private static ModelReply extractReply(String responseBody) {
         try {
             JsonNode choices = MAPPER.readTree(responseBody).path("choices");
             if (choices.isArray() && !choices.isEmpty()) {
-                JsonNode message = choices.get(0).path("message").path("content");
+                JsonNode choice = choices.get(0);
+                JsonNode message = choice.path("message").path("content");
                 if (!message.isMissingNode()) {
-                    return message.asText();
+                    JsonNode finishReason = choice.path("finish_reason");
+                    return new ModelReply(
+                            message.asText(),
+                            finishReason.isMissingNode() || finishReason.isNull()
+                                    ? null
+                                    : finishReason.asText());
                 }
             }
             return null;
@@ -260,4 +301,6 @@ public final class LlmHelper {
     }
 
     private record HttpResponse(int statusCode, String body) {}
+
+    private record ModelReply(String content, String finishReason) {}
 }

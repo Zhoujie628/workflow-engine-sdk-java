@@ -34,6 +34,7 @@ import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.core.model.TemplateUri;
 import net.openan.a2at.sdk.core.validation.ContentValidationException;
 import java.nio.file.Path;
+import java.time.Instant;
 import org.a2aproject.sdk.spec.TextPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,7 +56,7 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
  *
  * <ol>
  *   <li>Store the payload for later use during business execution
- *   <li>Acknowledge receipt with a short artifact
+ *   <li>Return the protocol-defined structured response artifact under the same extension URI
  *   <li>Complete the task immediately (no negotiation, no business logic)
  * </ol>
  *
@@ -67,6 +68,9 @@ public class PrePositionedExtensionHandler {
     private final AuthorizationPromptValidator authorizationValidator;
     private final NotificationPromptValidator notificationValidator;
     private volatile AuthorizationPolicy authorizationPolicy;
+    private volatile String authorizationPolicyId;
+    private volatile Instant authorizationCreatedAt;
+    private volatile Instant authorizationModifiedAt;
     private volatile NotificationPolicy notificationSubscription;
     private volatile A2ATServer a2atServer;
     private volatile String validationLanguage = "zh-CN";
@@ -186,10 +190,11 @@ public class PrePositionedExtensionHandler {
         if (ctx.getMessage().metadata() != null) {
             templateUri = ctx.getMessage().metadata().get(MetadataContent.TEMPLATE_URI_METADATA_KEY);
         }
+        AuthorizationOperationResult operationResult;
         if (A2ATExtension.AUTHORIZATION_T.uri().equals(extKeyword)) {
             try {
                 FilledParamData filled = validateAuthorization(payloadText, templateUri);
-                applyAuthorization(filled.data(), templateUri, agentTag);
+                operationResult = applyAuthorization(filled.data(), templateUri, agentTag);
             } catch (Exception validationError) {
                 log.warn(
                         "[{}] Authorization-T rejected; existing policy unchanged: {}",
@@ -201,6 +206,10 @@ public class PrePositionedExtensionHandler {
         } else if (A2ATExtension.NOTIFICATION_T.uri().equals(extKeyword)) {
             try {
                 acceptNotification(payloadText, templateUri, agentTag);
+                operationResult =
+                        new AuthorizationOperationResult(
+                                "订阅成功，启动业务抢通事件上报任务",
+                                "## 订阅结果\n订阅结果：成功");
             } catch (Exception validationError) {
                 log.warn(
                         "[{}] Notification-T rejected; existing subscription unchanged: {}",
@@ -218,59 +227,126 @@ public class PrePositionedExtensionHandler {
                 agentTag,
                 extKeyword,
                 payloadText.length());
-        String ackText = extKeyword + " operation acknowledged";
-        List<Part<?>> parts = List.of(new TextPart(ackText));
-        emitter.addArtifact(parts, "result", agentTag + " ack", Map.of(), false, true);
+        List<Part<?>> parts = List.of(new TextPart(operationResult.text()));
+        Map<String, Object> responseMetadata =
+                Map.of(extKeyword, operationResult.metadataText());
+        emitter.addArtifact(
+                parts, "result", agentTag + " ack", responseMetadata, false, true);
         emitStatus(
                 emitter,
                 TaskState.TASK_STATE_COMPLETED,
                 contextId,
                 taskId,
-                extKeyword + " operation applied successfully",
-                Map.of());
+                operationResult.text(),
+                responseMetadata);
         emitter.complete(BaseAgentExecutor.buildStatusMessage(contextId, taskId, "Completed"));
         log.info("[{}] {} operation completed", agentTag, extKeyword);
     }
 
-    synchronized void applyAuthorization(
+    synchronized AuthorizationOperationResult applyAuthorization(
             Map<String, Object> validatedData, Object templateUri, String agentTag) {
         String operation = AuthorizationPolicy.operationFromValidated(validatedData);
         switch (operation) {
             case AuthorizationPolicy.ADD -> {
                 AuthorizationPolicy candidate = AuthorizationPolicy.fromValidated(validatedData);
+                Instant now = Instant.now();
                 authorizationPolicy = candidate;
+                // The demo models the single policy shown in the scenario specification. A real
+                // integration callback should replace this with its persisted policy identifier.
+                authorizationPolicyId = "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3";
+                authorizationCreatedAt = now;
+                authorizationModifiedAt = now;
                 log.info(
                         "[{}] Authorization-T accepted, templateUri={}, operation={}, rules={}",
                         agentTag,
                         templateUri,
                         operation,
                         candidate.rules().size());
+                return authorizationResult("新增动网操作的授权成功", candidate);
             }
             case AuthorizationPolicy.MODIFY -> throw new UnsupportedOperationException(
                     "The SPN sample has no persisted policy identifiers; Authorization-T modify "
                             + "must be implemented by the integrating policy store");
             case AuthorizationPolicy.DELETE -> {
-                // This sample models one active whitelist per OMC agent. A production callback
-                // should use the validated selector/list to delete matching persisted policies.
-                AuthorizationPolicy.requirePolicyList(validatedData);
+                String selector = AuthorizationPolicy.requirePolicyList(validatedData);
+                if (authorizationPolicy == null || !selector.equals(authorizationPolicyId)) {
+                    throw new IllegalArgumentException(
+                            "Authorization policy identifier does not match the active policy");
+                }
                 authorizationPolicy = null;
+                authorizationPolicyId = null;
+                authorizationCreatedAt = null;
+                authorizationModifiedAt = null;
                 log.info(
                         "[{}] Authorization-T accepted, templateUri={}, operation={}, active policy cleared",
                         agentTag,
                         templateUri,
                         operation);
+                return new AuthorizationOperationResult(
+                        "删除动网操作的授权成功",
+                        "## 授权操作执行结果\n授权操作执行结果：成功");
             }
-            case AuthorizationPolicy.QUERY ->
-                    // Query is side-effect free. The current sample returns the normal protocol ACK;
-                    // an integration callback can render its persisted policies in the artifact.
-                    log.info(
-                            "[{}] Authorization-T accepted, templateUri={}, operation={}, activeRules={}",
-                            agentTag,
-                            templateUri,
-                            operation,
-                            authorizationPolicy == null ? 0 : authorizationPolicy.rules().size());
+            case AuthorizationPolicy.QUERY -> {
+                log.info(
+                        "[{}] Authorization-T accepted, templateUri={}, operation={}, activeRules={}",
+                        agentTag,
+                        templateUri,
+                        operation,
+                        authorizationPolicy == null ? 0 : authorizationPolicy.rules().size());
+                return authorizationResult(
+                        "符合查询条件的动网操作的授权策略列表", authorizationPolicy);
+            }
             default -> throw new IllegalArgumentException(
                     "Unsupported Authorization-T operation: " + operation);
+        }
+    }
+
+    private AuthorizationOperationResult authorizationResult(
+            String text, AuthorizationPolicy policy) {
+        StringBuilder metadata =
+                new StringBuilder("## 授权操作执行结果\n授权操作执行结果：成功");
+        metadata.append("\n\n## 动网操作的授权策略列表\n");
+        if (policy == null) {
+            metadata.append("（无匹配授权策略）");
+        } else {
+            int index = 1;
+            for (AuthorizationPolicy.Rule rule : policy.rules()) {
+                metadata.append("- 动网操作的授权策略").append(index++).append('\n');
+                metadata.append("  - 动网操作的授权策略标识：")
+                        .append(authorizationPolicyId)
+                        .append('\n');
+                metadata.append("  - 动网操作的业务场景：")
+                        .append(rule.businessScenario())
+                        .append('\n');
+                metadata.append("  - 动网操作的处置类型：")
+                        .append(rule.disposalType())
+                        .append('\n');
+                metadata.append("  - 动网操作名称：").append(rule.actionName()).append('\n');
+                metadata.append("  - 有效期：")
+                        .append(formatValidity(rule))
+                        .append('\n');
+                metadata.append("  - 创建时间：")
+                        .append(authorizationCreatedAt)
+                        .append('\n');
+                metadata.append("  - 最后修改时间：")
+                        .append(authorizationModifiedAt);
+            }
+        }
+        return new AuthorizationOperationResult(text, metadata.toString());
+    }
+
+    private static String formatValidity(AuthorizationPolicy.Rule rule) {
+        if (java.time.LocalDate.MIN.equals(rule.validFrom())
+                && java.time.LocalDate.MAX.equals(rule.validUntil())) {
+            return "永久生效";
+        }
+        return rule.validFrom() + " ~ " + rule.validUntil();
+    }
+
+    record AuthorizationOperationResult(String text, String metadataText) {
+        AuthorizationOperationResult {
+            Objects.requireNonNull(text, "Authorization response text");
+            Objects.requireNonNull(metadataText, "Authorization response metadata");
         }
     }
 
@@ -290,10 +366,17 @@ public class PrePositionedExtensionHandler {
             if (server == null) {
                 throw new IllegalStateException("A2A-T server validator is unavailable");
             }
-            filled = server.validateAuthPromptAndDataFilling(
-                    prompt,
-                    validationSchema(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
-                    StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+            try {
+                filled = validateAuthorizationWithSdk(server, prompt);
+            } catch (ContentValidationException firstFailure) {
+                // The current SDK validation pipeline may use an external LLM even for a canonical
+                // prompt rendered from structured data. Retry only the side-effect-free validation
+                // stage once; business state is not touched until a validated result is returned.
+                log.warn(
+                        "Authorization-T SDK validation failed once; retrying the same canonical prompt: {}",
+                        validationFailureSummary(firstFailure));
+                filled = validateAuthorizationWithSdk(server, prompt);
+            }
         }
         requireExtractedSectionsMatch(
                 prompt,
@@ -301,6 +384,13 @@ public class PrePositionedExtensionHandler {
                 AuthorizationPolicy.OPERATION_TYPE_FIELD,
                 AuthorizationPolicy.POLICY_LIST_FIELD);
         return filled;
+    }
+
+    private FilledParamData validateAuthorizationWithSdk(A2ATServer server, String prompt) {
+        return server.validateAuthPromptAndDataFilling(
+                prompt,
+                validationSchema(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
+                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
     }
 
     /** Validates and stores a Notification-T subscription before the server opens its SSE loop. */

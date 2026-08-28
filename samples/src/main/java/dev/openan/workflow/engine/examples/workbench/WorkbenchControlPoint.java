@@ -214,7 +214,9 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                 request.getAgentName());
         String message = request.getMessage();
         String fallback = analyzeFaultLocation(message);
-        String sys = "你是SPN跨城故障协同诊断汇总专家。按如下结构输出：1. 诊断结果；2. 诊断结果详情；3. 修复建议。简洁专业，中文。";
+        String sys = "你是SPN跨城故障协同诊断汇总专家。仅依据两地市结果进行汇总，不补造网元和端口。"
+                + "按1.诊断结果、2.诊断结果详情、3.修复建议输出；明确城市1存在无收光故障、城市2诊断成功且本地正常。"
+                + "全文不超过450个中文字符，不使用表格，最后一句必须完整结束。";
         String result = LlmHelper.text(a2atEnvPath, sys, message, fallback);
         log.info("[onSelfTask] Merge result ({} chars): {}", result.length(), result);
         return CompletableFuture.completedFuture(

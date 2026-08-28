@@ -95,6 +95,15 @@ public final class SpnCasePrompts {
         return data;
     }
 
+    /** Protocol-case fixture intentionally carrying a blank required task object. */
+    public static String privateLineComplaintPromptBlankObject() {
+        return "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
+                + "## 任务对象(Task Object)\n接入端口名称：\n\n"
+                + "## 任务上下文(Task Context)\n投诉分类：专线质差；"
+                + "问题发生时间：2026-05-11T08:21:46Z；"
+                + "OSS侧事件流水号：event-id-20260511-09013";
+    }
+
     /** Unknown-port variant (spec case 7.4): triggers the semantic-error negotiation path. */
     public static Map<String, Object> privateLineComplaintDataUnknownPort() {
         Map<String, Object> data = new LinkedHashMap<>();
