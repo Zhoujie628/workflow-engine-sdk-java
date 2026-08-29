@@ -294,10 +294,6 @@ public class SpringSpnDemo {
         configured == null
             ? (!"order".equalsIgnoreCase(transportMode) || simulator)
             : parseBoolean(configured, "A2A_EMBEDDED_OMC_ENABLED");
-    if (simulator && !enabled) {
-      throw new IllegalArgumentException(
-          "Embedded OMC servers must be enabled when the Eastcom Order simulator is enabled");
-    }
     return enabled;
   }
 

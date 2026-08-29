@@ -35,18 +35,13 @@ class SpringSpnDemoTest {
   }
 
   @Test
-  void simulatorRequiresEmbeddedOmcServers() {
+  void simulatorDefaultsToEmbeddedOmcButAllowsAnExternalTarget() {
     assertTrue(
         SpringSpnDemo.resolveEmbeddedOmcEnabled(
-            new String[] {"--a2a.order.simulator-enabled=true", "--a2a.embedded-omc-enabled=true"},
+            new String[] {"--a2a.order.simulator-enabled=true"}, "order"));
+    assertFalse(
+        SpringSpnDemo.resolveEmbeddedOmcEnabled(
+            new String[] {"--a2a.order.simulator-enabled=true", "--a2a.embedded-omc-enabled=false"},
             "order"));
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            SpringSpnDemo.resolveEmbeddedOmcEnabled(
-                new String[] {
-                  "--a2a.order.simulator-enabled=true", "--a2a.embedded-omc-enabled=false"
-                },
-                "order"));
   }
 }
