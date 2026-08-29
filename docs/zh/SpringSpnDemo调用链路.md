@@ -24,8 +24,10 @@ sequenceDiagram
     participant WB as Spring Workbench
     participant Ext as WorkbenchExtensionLifecycle
 
-    Demo->>OMC1: 启动 HTTPS/SSE Agent (:26335)
-    Demo->>OMC2: 启动 HTTPS/SSE Agent (:26336)
+    opt direct 本地演示或 Order simulator
+        Demo->>OMC1: 启动 HTTPS/SSE Agent (:26335)
+        Demo->>OMC2: 启动 HTTPS/SSE Agent (:26336)
+    end
     Demo->>WB: SpringApplication.run (:26337)
     WB->>Ext: ApplicationReadyEvent
     Ext->>OMC1: Authorization-T（独立一次通道）
@@ -33,6 +35,10 @@ sequenceDiagram
     Ext->>OMC1: Notification-T（独立长连接通道）
     Ext->>OMC2: Notification-T（独立长连接通道）
 ```
+
+真实 Order 模式默认 `embeddedOmc=false`，跳过两个本地 JDK Server；目标 OMC 由东信平台
+按 NE 路由。`credentials.json` 的登录 URL 与 AgentCard 的服务 URL 都不会被拿来绑定本机地址。
+直连本地演示和 Order simulator 保持 `embeddedOmc=true`。
 
 `SpringWorkbenchExtensionLifecycle` 为 Authorization-T 和 Notification-T 分别调用
 `ClientRuntimeFactory.create()`，并拒绝两者复用同一 runtime 实例。Authorization transport 在全部
@@ -109,7 +115,7 @@ Negotiation-T；协商能力由独立协议用例覆盖。
 
 1. 用 `sendExtensionMessageFromData` 渲染并发送白名单；ACK 必须为
    `TASK_STATE_COMPLETED`，且 Authorization-T artifact metadata 必须明确返回成功/失败、
-   策略标识和新增/查询时的策略列表，否则启动失败。
+   策略标识和新增/查询时的策略列表，否则本次授权操作记为失败。
 2. 用 `openNotificationFromData` 建立长连接；ACK 必须为 `WORKING` 或 `COMPLETED`。
 3. OMC 诊断给出抢通方案后，只在 SDK 已验证的白名单精确命中业务场景/处置类型/
    操作名称/有效期时自动执行。没有白名单时 fail-closed。
@@ -118,6 +124,10 @@ Negotiation-T；协商能力由独立协议用例覆盖。
    observer 异常不影响流关闭。
 6. 本地 Order 模拟器识别完整 SSE frame 中的 `recovery-result` 后结束该转发，确保关流
    也传递到 OMC；没有抢通结果的订阅继续保持到显式取消或工作台关闭。
+
+Demo 在 Spring 就绪时尝试授权和订阅只是前置时机选择，不是工作流前置条件。每个 Agent 的
+Authorization-T 与 Notification-T 分别执行、分别记录结果；任一操作失败都不会阻止另一操作，
+也不会阻止后续投诉 Task-T 工作流。失败只意味着对应白名单未生效或对应通知通道未建立。
 
 Authorization-T 模板支持新增、修改、删除、查询，但示例 OMC 没有持久化策略仓库，因而
 只实现新增、按精确策略标识删除和查询；修改操作明确失败，不会伪装成功。示例新增使用
