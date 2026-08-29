@@ -9,25 +9,19 @@ import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.DefaultExtensionSender;
 import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
-
+import dev.openan.workflow.engine.examples.extension.ExtensionPrePositioner;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-
-import dev.openan.workflow.engine.examples.extension.ExtensionPrePositioner;
-/**
- * Owns workbench-scoped Authorization-T and Notification-T resources outside the workflow DAG.
- *
- * <p>Authorization-T is sent once and its request session is released after its response.
- * Notification-T streams remain owned by this lifecycle until {@link #close()} is called by the
- * workbench service lifecycle; task completion never closes them.
- */
+/** Owns workbench-scoped Authorization-T and Notification-T resources outside the workflow DAG. */
 public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(WorkbenchExtensionLifecycle.class);
 
@@ -36,9 +30,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     private final String a2atEnvPath;
     private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
     private final Consumer<Map<String, Object>> notificationCallback;
-
-    private final Map<String, NotificationSubscription> subscriptions =
-            new ConcurrentHashMap<>();
+    private final Map<String, NotificationSubscription> subscriptions = new ConcurrentHashMap<>();
     private A2ATransport notificationTransport;
 
     public WorkbenchExtensionLifecycle(
@@ -61,7 +53,6 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
                     notificationTransport.getContextId());
             return;
         }
-
         List<AgentCard> agentCards = new WorkbenchAgentCatalog().load();
         A2AJavaClientRuntime authorizationRuntime =
                 runtimeSupplier != null ? runtimeSupplier.get() : null;
@@ -78,10 +69,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
                         .credentialsConfigPath(credentialsPath)
                         .build();
         A2ATransport authorizationTransport =
-                new A2ATransport(
-                        agentCards,
-                        authorizationRuntime,
-                        config);
+                new A2ATransport(agentCards, authorizationRuntime, config);
         A2ATransport notificationCandidate =
                 new A2ATransport(agentCards, notificationRuntime, config);
         long started = System.nanoTime();
@@ -92,13 +80,19 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         try {
             List<NotificationSubscription> opened =
                     new ExtensionPrePositioner()
-                    .prePosition(
-                            new DefaultExtensionSender(authorizationTransport),
-                            new DefaultExtensionSender(notificationCandidate),
-                            agentCards,
-                            this::handleNotification);
-            opened.forEach(subscription -> subscriptions.put(
-                    subscription.agentName(), subscription));
+                            .prePosition(
+                                    new DefaultExtensionSender(authorizationTransport),
+                                    new DefaultExtensionSender(notificationCandidate),
+                                    agentCards,
+                                    this::handleNotification,
+                                    subscription ->
+                                            subscriptions.put(
+                                                    subscription.agentName(), subscription));
+            Set<String> activeAgents =
+                    opened.stream()
+                            .map(NotificationSubscription::agentName)
+                            .collect(Collectors.toUnmodifiableSet());
+            subscriptions.entrySet().removeIf(entry -> !activeAgents.contains(entry.getKey()));
             authorizationTransport.close();
             notificationTransport = notificationCandidate;
             log.info(
@@ -111,13 +105,6 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
             subscriptions.clear();
             authorizationTransport.close();
             notificationCandidate.close();
-            log.error(
-                    "[ExtensionLifecycle] START_FAILED authorizationContextId={}, notificationContextId={}, errorType={}, message={}",
-                    authorizationTransport.getContextId(),
-                    notificationCandidate.getContextId(),
-                    e.getClass().getSimpleName(),
-                    e.getMessage(),
-                    e);
             throw e;
         }
     }
@@ -133,16 +120,8 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         if (active == null) {
             return;
         }
-        log.info(
-                "[ExtensionLifecycle] CLOSE_START contextId={}, reason=workbench_shutdown",
-                active.getContextId());
-        // Let the transport own cancellation and wait for the underlying stream threads before
-        // the Order simulator or web container can be stopped.
         active.close();
         subscriptions.clear();
-        log.info(
-                "[ExtensionLifecycle] CLOSE_DONE contextId={}, reason=workbench_shutdown",
-                active.getContextId());
     }
 
     private void handleNotification(Map<String, Object> data) {

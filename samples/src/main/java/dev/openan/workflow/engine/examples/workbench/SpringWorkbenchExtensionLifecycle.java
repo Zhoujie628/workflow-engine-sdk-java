@@ -1,36 +1,18 @@
 /*
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * All Rights Reserved.
- *
  * SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0 (the License); you may
- *    not use this file except in compliance with the License. You may obtain
- *    a copy of the License at
- *
- *         http://www.apache.org/licenses/LICENSE-2.0
- *
- *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an AS IS BASIS, WITHOUT
- *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- *    License for the specific language governing permissions and limitations
- *    under the License.
  */
-
 package dev.openan.workflow.engine.examples.workbench;
 
-import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
-import dev.openan.workflow.engine.examples.workbench.WorkbenchExtensionLifecycle;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 import jakarta.annotation.PreDestroy;
-
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-
-import java.util.Map;
 
 /** Keeps Authorization-T/Notification-T protocol lifecycles independent from individual tasks. */
 @Component
@@ -39,7 +21,6 @@ public final class SpringWorkbenchExtensionLifecycle {
             LoggerFactory.getLogger(SpringWorkbenchExtensionLifecycle.class);
 
     private final WorkbenchClientProperties properties;
-
     private WorkbenchExtensionLifecycle lifecycle;
 
     public SpringWorkbenchExtensionLifecycle(WorkbenchClientProperties properties) {
@@ -58,8 +39,19 @@ public final class SpringWorkbenchExtensionLifecycle {
                         resolveEnvPath(),
                         null,
                         this::onNotification);
-        candidate.start();
-        lifecycle = candidate;
+        try {
+            candidate.start();
+            lifecycle = candidate;
+        } catch (RuntimeException e) {
+            candidate.close();
+            lifecycle = null;
+            log.warn(
+                    "[ExtensionLifecycle] PREPOSITION_FAILED errorType={}, message={}, "
+                            + "action=continue-workflow",
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
+        }
     }
 
     @PreDestroy
