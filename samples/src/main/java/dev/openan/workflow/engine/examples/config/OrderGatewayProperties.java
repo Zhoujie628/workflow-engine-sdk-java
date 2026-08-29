@@ -21,6 +21,10 @@ public class OrderGatewayProperties {
   private String defaultNe = "";
   private String city1Ne = "sim-city1";
   private String city2Ne = "sim-city2";
+  private String simulatorCity1TargetUrl = "https://127.0.0.1:26335";
+  private String simulatorCity2TargetUrl = "https://127.0.0.1:26336";
+  private int simulatorConnectTimeoutSeconds = 30;
+  private int simulatorReadTimeoutSeconds = 30;
   private int loginTimeoutSeconds = 15;
   private int timeoutSeconds = 600;
   private boolean omcAuthEnabled = true;
@@ -112,6 +116,38 @@ public class OrderGatewayProperties {
 
   public void setCity2Ne(String value) {
     city2Ne = value;
+  }
+
+  public String getSimulatorCity1TargetUrl() {
+    return simulatorCity1TargetUrl;
+  }
+
+  public void setSimulatorCity1TargetUrl(String value) {
+    simulatorCity1TargetUrl = value;
+  }
+
+  public String getSimulatorCity2TargetUrl() {
+    return simulatorCity2TargetUrl;
+  }
+
+  public void setSimulatorCity2TargetUrl(String value) {
+    simulatorCity2TargetUrl = value;
+  }
+
+  public int getSimulatorConnectTimeoutSeconds() {
+    return simulatorConnectTimeoutSeconds;
+  }
+
+  public void setSimulatorConnectTimeoutSeconds(int value) {
+    simulatorConnectTimeoutSeconds = value;
+  }
+
+  public int getSimulatorReadTimeoutSeconds() {
+    return simulatorReadTimeoutSeconds;
+  }
+
+  public void setSimulatorReadTimeoutSeconds(int value) {
+    simulatorReadTimeoutSeconds = value;
   }
 
   public int getLoginTimeoutSeconds() {

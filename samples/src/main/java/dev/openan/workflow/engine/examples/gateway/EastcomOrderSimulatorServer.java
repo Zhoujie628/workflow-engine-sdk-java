@@ -113,6 +113,19 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             String clientId,
             String clientSecret,
             Map<String, String> neTargets) {
+        this(host, port, username, password, clientId, clientSecret, neTargets, 30_000, 30_000);
+    }
+
+    public EastcomOrderSimulatorServer(
+            String host,
+            int port,
+            String username,
+            String password,
+            String clientId,
+            String clientSecret,
+            Map<String, String> neTargets,
+            int connectTimeoutMillis,
+            int readTimeoutMillis) {
         this.host = Objects.requireNonNull(host, "host");
         if (port <= 0 || port > 65535) {
             throw new IllegalArgumentException("port must be between 1 and 65535");
@@ -124,7 +137,9 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                         password,
                         emptyToNull(clientId),
                         emptyToNull(clientSecret),
-                        normalizeTargets(neTargets));
+                        normalizeTargets(neTargets),
+                        positiveTimeout(connectTimeoutMillis, "connectTimeoutMillis"),
+                        positiveTimeout(readTimeoutMillis, "readTimeoutMillis"));
     }
 
     public synchronized void start() {
@@ -186,6 +201,13 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
 
     private static String emptyToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static int positiveTimeout(int value, String name) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return value;
     }
 
     static String decodeRequestData(ByteString data) {
@@ -264,18 +286,24 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         private volatile String lastResolvedTarget;
         private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
         private final SSLContext sslContext = SslContextFactory.createTrustAll();
+        private final int connectTimeoutMillis;
+        private final int readTimeoutMillis;
 
         private SimulatorService(
                 String username,
                 String password,
                 String clientId,
                 String clientSecret,
-                Map<String, String> neTargets) {
+                Map<String, String> neTargets,
+                int connectTimeoutMillis,
+                int readTimeoutMillis) {
             this.username = Objects.requireNonNull(username, "username");
             this.password = Objects.requireNonNull(password, "password");
             this.clientId = clientId;
             this.clientSecret = clientSecret;
             this.neTargets = neTargets;
+            this.connectTimeoutMillis = connectTimeoutMillis;
+            this.readTimeoutMillis = readTimeoutMillis;
         }
 
         private java.util.Set<String> targetNames() {
@@ -571,14 +599,15 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                             sink.onDispose(disconnect::run);
                             connection.setRequestMethod(fMethod.isBlank() ? "POST" : fMethod);
                             connection.setDoOutput(true);
-                            connection.setConnectTimeout(30_000);
-                            // The read timeout must cover LLM-backed OMC processing. A
-                            // Notification-T stream remains open until a recovery event or
-                            // lifecycle shutdown explicitly cancels it.
-                            // A short socket timeout is only a cancellation poll for streaming
-                            // calls. Idle Notification-T subscriptions remain open; shutdown can
-                            // nevertheless release their reader promptly and deterministically.
-                            connection.setReadTimeout(streaming ? 1_000 : 65_000);
+                            connection.setConnectTimeout(connectTimeoutMillis);
+                            // Cover connection establishment and the first response headers from a
+                            // remote, LLM-backed OMC. Once a streaming response starts, switch to a
+                            // short cancellation poll so idle Notification-T subscriptions can be
+                            // released promptly during shutdown.
+                            connection.setReadTimeout(
+                                    streaming
+                                            ? readTimeoutMillis
+                                            : Math.max(readTimeoutMillis, 65_000));
                             copyHeaders(fHeaders, connection);
                             try (OutputStream output = connection.getOutputStream()) {
                                 output.write(fBody.getBytes(StandardCharsets.UTF_8));
@@ -591,6 +620,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                                 sink.next(responseWithHeader(""));
                                 sink.next(responseEnd());
                             } else if (streaming && status < 400) {
+                                connection.setReadTimeout(Math.min(readTimeoutMillis, 1_000));
                                 InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8);
                                 char[] buffer = new char[4096];
                                 StringBuilder terminalScan = new StringBuilder();

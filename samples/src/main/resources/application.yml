@@ -37,6 +37,10 @@ a2a:
     default-ne: ${EASTCOM_ORDER_DEFAULT_NE:}
     city1-ne: ${EASTCOM_ORDER_CITY1_NE:}
     city2-ne: ${EASTCOM_ORDER_CITY2_NE:}
+    simulator-city1-target-url: ${EASTCOM_ORDER_SIMULATOR_CITY1_TARGET_URL:https://127.0.0.1:26335}
+    simulator-city2-target-url: ${EASTCOM_ORDER_SIMULATOR_CITY2_TARGET_URL:https://127.0.0.1:26336}
+    simulator-connect-timeout-seconds: ${EASTCOM_ORDER_SIMULATOR_CONNECT_TIMEOUT_SECONDS:30}
+    simulator-read-timeout-seconds: ${EASTCOM_ORDER_SIMULATOR_READ_TIMEOUT_SECONDS:30}
     login-timeout-seconds: ${EASTCOM_ORDER_LOGIN_TIMEOUT_SECONDS:15}
     timeout-seconds: ${EASTCOM_ORDER_TIMEOUT_SECONDS:600}
     # OMC bearer token is obtained through the Eastcom HttpClient path. The platform
