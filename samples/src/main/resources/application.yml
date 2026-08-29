@@ -20,7 +20,7 @@ a2at:
 a2a:
   orch-url: https://127.0.0.1:5001
   credentials-path: ${A2A_OMC_CREDENTIALS_PATH:classpath:spn_agent_credentials.json}
-  ssl-verify: false
+  ssl-verify: ${A2A_SSL_VERIFY:false}
   # Production default: route A2A messages through the Eastcom Order SDK.
   # Use order plus simulator-enabled=true for the local order demo, or direct to bypass
   # the instruction platform. The simulator is never started outside order mode.
