@@ -19,6 +19,7 @@ a2at:
 
 a2a:
   orch-url: https://127.0.0.1:5001
+  credentials-path: ${A2A_OMC_CREDENTIALS_PATH:classpath:spn_agent_credentials.json}
   ssl-verify: false
   # Production default: route A2A messages through the Eastcom Order SDK.
   # Use order plus simulator-enabled=true for the local order demo, or direct to bypass
@@ -41,6 +42,7 @@ a2a:
     # OMC bearer token is obtained through the Eastcom HttpClient path. The platform
     # substitutes ${ne:username}/${ne:password} from its managed NE credentials.
     omc-auth-enabled: ${EASTCOM_ORDER_OMC_AUTH_ENABLED:true}
+    omc-credentials-path: ${EASTCOM_ORDER_OMC_CREDENTIALS_PATH:classpath:spn_agent_credentials.json}
     omc-login-path: ${EASTCOM_ORDER_OMC_LOGIN_PATH:/rest/plat/smapp/v1/oauth/token}
     omc-login-method: ${EASTCOM_ORDER_OMC_LOGIN_METHOD:PUT}
     omc-token-response-header: ${EASTCOM_ORDER_OMC_TOKEN_RESPONSE_HEADER:bearToken}
