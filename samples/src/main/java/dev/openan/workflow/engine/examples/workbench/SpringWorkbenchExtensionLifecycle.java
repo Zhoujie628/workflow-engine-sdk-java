@@ -19,11 +19,11 @@
 
 package dev.openan.workflow.engine.examples.workbench;
 
-import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
-import dev.openan.workflow.engine.examples.workbench.WorkbenchExtensionLifecycle;
+import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
+import dev.openan.workflow.engine.examples.util.EnvResolver;
 import jakarta.annotation.PreDestroy;
-
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -31,87 +31,94 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-
-import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 /** Keeps Authorization-T/Notification-T protocol lifecycles independent from individual tasks. */
 @Component
 public final class SpringWorkbenchExtensionLifecycle {
-    private static final Logger log =
-            LoggerFactory.getLogger(SpringWorkbenchExtensionLifecycle.class);
+  private static final Logger log =
+      LoggerFactory.getLogger(SpringWorkbenchExtensionLifecycle.class);
 
-    private final ClientRuntimeFactory runtimeFactory;
-    private final ConfigurableListableBeanFactory beanFactory;
-    private final WorkbenchClientProperties properties;
+  private final ClientRuntimeFactory runtimeFactory;
+  private final ConfigurableListableBeanFactory beanFactory;
+  private final WorkbenchClientProperties properties;
 
-    private WorkbenchExtensionLifecycle lifecycle;
+  private WorkbenchExtensionLifecycle lifecycle;
 
-    public SpringWorkbenchExtensionLifecycle(
-            ClientRuntimeFactory runtimeFactory,
-            ConfigurableListableBeanFactory beanFactory,
-            WorkbenchClientProperties properties) {
-        this.runtimeFactory = runtimeFactory;
-        this.beanFactory = beanFactory;
-        this.properties = properties;
+  public SpringWorkbenchExtensionLifecycle(
+      ClientRuntimeFactory runtimeFactory,
+      ConfigurableListableBeanFactory beanFactory,
+      WorkbenchClientProperties properties) {
+    this.runtimeFactory = runtimeFactory;
+    this.beanFactory = beanFactory;
+    this.properties = properties;
+  }
+
+  @EventListener(ApplicationReadyEvent.class)
+  public synchronized void start() {
+    if (lifecycle != null && lifecycle.isActive()) {
+      return;
     }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public synchronized void start() {
-        if (lifecycle != null && lifecycle.isActive()) {
-            return;
-        }
-        if (beanFactory.containsBean("eastcomOrderSimulatorServer")) {
-            beanFactory.registerDependentBean(
-                    "eastcomOrderSimulatorServer", "springWorkbenchExtensionLifecycle");
-        }
-        WorkbenchExtensionLifecycle candidate =
-                new WorkbenchExtensionLifecycle(
-                        runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
-                                ? null
-                                : resolveCredentialsPath(),
-                        properties.isSslVerify(),
-                        resolveEnvPath(),
-                        runtimeFactory::create,
-                        this::onNotification,
-                        runtimeFactory.authProvider());
-        candidate.start();
-        lifecycle = candidate;
+    if (beanFactory.containsBean("eastcomOrderSimulatorServer")) {
+      beanFactory.registerDependentBean(
+          "eastcomOrderSimulatorServer", "springWorkbenchExtensionLifecycle");
     }
-
-    @PreDestroy
-    public synchronized void close() {
-        if (lifecycle == null) {
-            return;
-        }
-        lifecycle.close();
-        lifecycle = null;
+    WorkbenchExtensionLifecycle candidate =
+        new WorkbenchExtensionLifecycle(
+            runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
+                ? null
+                : resolveCredentialsPath(),
+            properties.isSslVerify(),
+            resolveEnvPath(),
+            runtimeFactory::create,
+            this::onNotification,
+            runtimeFactory.authProvider());
+    try {
+      candidate.start();
+      lifecycle = candidate;
+    } catch (RuntimeException e) {
+      candidate.close();
+      lifecycle = null;
+      log.warn(
+          "[ExtensionLifecycle] PREPOSITION_FAILED errorType={}, message={}, "
+              + "action=continue-workflow",
+          e.getClass().getSimpleName(),
+          e.getMessage(),
+          e);
     }
+  }
 
-    private void onNotification(Map<String, Object> data) {
-        Object text = data.get("text");
-        log.info(
-                "[Notification] EVENT scope=workbench, agent={}, state={}, textChars={}, metadata={}",
-                data.get("agent"),
-                data.get("state"),
-                text != null ? String.valueOf(text).length() : 0,
-                data.containsKey("metadata") ? "yes" : "no");
-        if (text != null) {
-            log.debug("[Notification] Recovery result from {}: {}", data.get("agent"), text);
-        }
+  @PreDestroy
+  public synchronized void close() {
+    if (lifecycle == null) {
+      return;
     }
+    lifecycle.close();
+    lifecycle = null;
+  }
 
-    private String resolveEnvPath() {
-        return properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()
-                ? properties.getA2atEnvPath()
-                : EnvResolver.resolveEnvPath();
+  private void onNotification(Map<String, Object> data) {
+    Object text = data.get("text");
+    log.info(
+        "[Notification] EVENT scope=workbench, agent={}, state={}, textChars={}, metadata={}",
+        data.get("agent"),
+        data.get("state"),
+        text != null ? String.valueOf(text).length() : 0,
+        data.containsKey("metadata") ? "yes" : "no");
+    if (text != null) {
+      log.debug("[Notification] Recovery result from {}: {}", data.get("agent"), text);
     }
+  }
 
-    private String resolveCredentialsPath() {
-        if (properties.getCredentialsPath() != null
-                && !properties.getCredentialsPath().isBlank()) {
-            return properties.getCredentialsPath();
-        }
-        var resource = getClass().getClassLoader().getResource("spn_agent_credentials.json");
-        return resource != null ? "classpath:spn_agent_credentials.json" : null;
+  private String resolveEnvPath() {
+    return properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()
+        ? properties.getA2atEnvPath()
+        : EnvResolver.resolveEnvPath();
+  }
+
+  private String resolveCredentialsPath() {
+    if (properties.getCredentialsPath() != null && !properties.getCredentialsPath().isBlank()) {
+      return properties.getCredentialsPath();
     }
+    var resource = getClass().getClassLoader().getResource("spn_agent_credentials.json");
+    return resource != null ? "classpath:spn_agent_credentials.json" : null;
+  }
 }
