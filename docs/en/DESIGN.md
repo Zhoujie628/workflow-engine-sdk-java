@@ -188,9 +188,9 @@ sequenceDiagram
     opt INPUT_REQUIRED with valid Propose
         A-->>E: Task status + Negotiation-T Propose
         E->>H: onNegotiation(originalSubmission, received, history)
-        H->>H: Validate proposal; generate reply
+        H->>H: Validate proposal and generate reply
         H-->>E: Send(MessageContent) or local Stop
-        E->>A: Same task/context; final reply content
+        E->>A: Same task/context with final reply content
     end
     A-->>E: Task result / artifacts
     E->>H: onSelfTask(selected complete upstream results)
