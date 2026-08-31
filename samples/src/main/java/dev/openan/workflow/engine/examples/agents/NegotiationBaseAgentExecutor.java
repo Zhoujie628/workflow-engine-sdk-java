@@ -33,7 +33,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import net.openan.a2at.sdk.client.A2ATClient;
-import net.openan.a2at.sdk.core.exception.A2ATErrorCodes;
+import net.openan.a2at.sdk.core.exception.ErrorCatalog;
 import net.openan.a2at.sdk.core.model.FilledParamData;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
 import net.openan.a2at.sdk.core.validation.ContentValidationException;
@@ -384,8 +384,8 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
           SpnTaskInput.selected(
               java.util.Objects.requireNonNull(filled, "Task validator returned null").data());
     } catch (ContentValidationException error) {
-      if (!A2ATErrorCodes.VALIDATION_SEMANTIC_REJECTED.equals(error.getCode())
-          && !A2ATErrorCodes.SLOT_VALIDATION_ERROR.equals(error.getCode())) throw error;
+      if (!ErrorCatalog.NEGOTIATION_SEMANTIC_REJECTED.getCode().equals(error.getCode())
+          && !ErrorCatalog.SLOT_RULE_VIOLATION.getCode().equals(error.getCode())) throw error;
       // A rejected prompt supplies no trusted partial data. Ask for the complete business fields.
       data = Map.of();
     }
