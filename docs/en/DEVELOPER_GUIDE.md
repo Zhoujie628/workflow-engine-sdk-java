@@ -15,9 +15,7 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
-The engine transitively pulls in the A2A protocol SDK (`a2a-java-sdk-client` with REST,
-JSON-RPC, and gRPC transports) and the A2A-T extension SDK (`a2a-t-client`). No additional
-dependencies are needed.
+The engine pulls in A2A protocol transports and a2a-t-core only. Hosts generating A2A-T content explicitly add a2a-t-client; receiving hosts may also add a2a-t-server.
 
 ## 2. Core Concepts
 
@@ -29,41 +27,33 @@ dependencies are needed.
 
 ## 3. Implement ControlPoint
 
-Only two methods are required:
-
 ```java
-public class MyControlPoint implements ControlPoint {
-    @Override
-    public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, TaskDispatcher dispatcher) {
-        return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage(),
-                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
-                .thenApply(result -> {
-                    String state = result.getTaskState();
-                    boolean success = state == null || state.isBlank()
-                            || "TASK_STATE_COMPLETED".equals(state);
-                    return TaskResponse.builder()
-                            .success(success)
-                            .output(result.getText())
-                            .build();
-                });
-    }
-
-    @Override
-    public CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results,
-            List<JumpCondition> conditions) {
-        return CompletableFuture.completedFuture(
-                RouteDecision.builder()
-                        .nextStep(conditions.get(0).getStep())
-                        .reason("picked first")
-                        .build());
-    }
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```
 
-`onNegotiation` has a default that returns a generic `acceptText` decision. Authorization and notification are independent protocol operations sent via dedicated `ExtensionSender`/transport instances at a workbench-selected business time, not `ControlPoint` callbacks or workflow DAG nodes.
+onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
+onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
+Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
+
+```java
+ControlPoint callbacks = ControlPoint.builder()
+    .onTask(request -> CompletableFuture.completedFuture(
+        MessageContent.text(request.getInstruction())))
+    .onSelfTask(request -> CompletableFuture.completedFuture(
+        TaskResult.success(List.of(Map.of(
+            "sourceResults", request.getWorkflowInput().upstreamResults())))))
+    .onRoute(request -> CompletableFuture.failedFuture(
+        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onNegotiation(request -> CompletableFuture.completedFuture(
+        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+    .build();
+```
 
 ## 4. Execute via Builder (recommended)
 
@@ -75,7 +65,6 @@ ExecutionResult result = ExecutePsop.builder()
         .runtimeIntent("Diagnose SPN fault")
         .lang("zh")
         .sslVerify(false)
-        .a2atEnvPath(".env")
         .credentialsConfigPath("agent_credentials.json")
         .eventCallback(new EventCallback())
         .onFinish((r, e) -> {
@@ -100,18 +89,18 @@ Events come from three layers: the runner (lifecycle bracket), the executor (ste
 | `start`                 | runner             | Workflow begins                                  | `workflow`, `steps`                                     |
 | `step_start`            | executor           | Step begins                                      | `step`                                                  |
 | `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask` | `step`, `agent`, `task`                                 |
-| `task_response`         | executor           | `onTask`/`onSelfTask` returned a `TaskResponse`  | `step`, `agent`, `task`, `output`                       |
+| `task_response`         | executor           | Remote task completed or onSelfTask returned TaskResult  | `step`, `agent`, `task`, `outputs`                      |
 | `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                |
 | `route_decision`        | executor           | Branch chosen                                    | `step`, `next`, `reason`                                |
 | `step_complete`         | executor           | Step finished                                    | `step`, `results`                                       |
 | `workflow_complete`     | executor           | All steps finished                               | `history`, `step_outputs`                               |
-| `agent_request`         | engine client      | Message sent to agent                            | `agent`, `request`, `metadata`                          |
-| `agent_response`        | engine client      | Response from agent                              | `agent`, `response`                                     |
+| `agent_request` | engine client | Dispatch intent, not a wire observation | `agent`, `content` |
+| `agent_response` | engine client | Remote response assembled | `agent`, `response`, `receivedMessages` |
 | `agent_status_update`   | engine client      | Agent SSE status update                          | `agent`, `state`, `is_final`                            |
 | `agent_artifact_update` | engine client      | Agent SSE artifact update                        | `agent`, `artifact_name`, `text`                        |
-| `negotiation_request`   | engine client      | Agent needs clarification                        | `agent`, `round`, `concern`                             |
-| `negotiation_resolved`  | engine client      | Negotiation decision generated                   | `agent`, `round`, `decision`                            |
-| `negotiation_failed`    | engine client      | Negotiation failed                               | `agent`, `round`, `reason`                              |
+| `negotiation_request` | engine client | Valid Propose enters host callback | `agent`, `request`, `exchange` |
+| `negotiation_resolved` | engine client | Host Send passed association checks, not task success | `agent`, `reply`, `exchange` |
+| `negotiation_failed` | engine client | Local negotiation interaction failed | `agent`, `exchange`, `errorType` |
 | `complete`              | runner             | Workflow succeeded                               | `history`, `step_outputs`                               |
 | `error`                 | runner or executor | Workflow failed                                  | runner: `error`, `history`; executor: `step`, `results` |
 | `close`                 | runner             | Cleanup done                                     | (empty)                                                 |
@@ -123,7 +112,6 @@ try(var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
         WorkflowEngineClientConfig.builder()
                 .sslVerify(false)
                 .credentialsConfigPath("etc/conf/agent_credentials.json")
-                .a2atEnvPath(".env")
                 .build())){
 WorkflowExecutor executor = new WorkflowExecutor(
         workflow,
@@ -139,28 +127,20 @@ ExecutionResult result = executor.run().join();
 
 ### 6.1 Negotiation Auto-Loop
 
-After dispatch, the engine client automatically handles negotiation:
-when the agent returns `INPUT_REQUIRED`, the engine extracts the negotiation text from response metadata, calls
-`ControlPoint.onNegotiation()`
-for a typed decision, and sends it back as a follow-up message. The loop repeats up to `maxNegotiationRounds` (default
-3).
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
+Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
+The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
+Use `A2atMessages.contextOf(request.received())` to obtain the received context;
+reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Do not call nextRound for an ending reply or return a new Propose.
 
-Override `onNegotiation()` in your `ControlPoint` to provide business-specific clarifications:
-
-```java
-
-@Override
-public CompletableFuture<NegotiationDecision> onNegotiation(
-        NegotiationRequest request) {
-    return myLlm.generate(
-                    "Agent " + request.agentName() + " needs: " + request.concern())
-            .thenApply(Response::text)
-            .thenApply(NegotiationDecision::acceptText);
-}
-```
-
-Returning `null` fails the round. Use `acceptData/rejectData/abortData` for structured business values; invalid
-names, blank values, and the literal string `"null"` fail before SDK invocation.
+Return `new NegotiationReply.Send(content)` to send that exact content.
+Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
+Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
+Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
+Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
+A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
 
 ### 6.2 Workflow Model Fields
 
@@ -169,8 +149,8 @@ names, blank values, and the literal string `"null"` fail before SDK invocation.
 | `steps[].stepType`    | `WorkflowStep`        | `AllSuccess` (default): every subtask must succeed; `AnySuccess`: any subtask success suffices; `SelfLoop`: the workflow agent handles the step locally via `onSelfTask` (no A2A-T message to the named agent). |
 | `steps[].subtasks[]`  | `Task`                | Each has `agent`, `skill`, `description`. One `onTask` (or `onSelfTask` for SelfLoop) call per subtask.                                                                                                         |
 | `steps[].next[]`      | `List<JumpCondition>` | Branch targets. `step` = next step name; `condition` = rule text.                                                                                                                                               |
-| `steps[].layer`       | `WorkflowStep`        | `layer == 0` starts the DAG (context = runtime intent only). Higher layers get upstream results.                                                                                                                |
-| `steps[].contextFrom` | `WorkflowStep`        | Optional step names whose outputs fold into context. `"*"` = all ancestors.                                                                                                                                     |
+| `steps[].layer`       | `WorkflowStep`        | Orchestration-level hint; actual readiness is derived from DAG predecessors.                                                                                                                                    |
+| `steps[].contextFrom` | `WorkflowStep`        | Selects steps exposed through `workflowInput.upstreamResults`; omitted = direct predecessors, `[]` = none, `"*"` = all ancestors, or explicit ancestor names.                                                    |
 
 ### 6.3 AgentCard Type
 
@@ -252,23 +232,13 @@ Set `sslVerify=false` only for dev with self-signed certs.
 
 ## 9. A2A-T Environment (.env)
 
-```ini
-A2AT_LLM_PROVIDER=openai
-A2AT_LLM_MODEL=deepseek-chat
-A2AT_LLM_API_KEY=sk-...
-A2AT_LLM_BASE_URL=https://api.deepseek.com
-A2AT_LANGUAGE=zh-CN
-A2AT_CRED_KEY=<32-byte hex>
-```
-
-When `a2atEnvPath` is null, unstructured `sendMessage` sends plain A2A text and does not claim
-Task-T semantics. Structured Task-T, Authorization-T, Notification-T, and Negotiation-T operations
-fail explicitly.
-
-**Offline tests**: test `.env` resources select `OfflineA2ATLlmClient` through the SDK SPI. This
-keeps the real A2ATClient/A2ATServer generation, validation, and parameter-filling pipelines
-repeatable without network access. There is no production fallback that disables the SDK and sends
-default negotiation text.
+The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T,
+initialize A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL
+and A2AT_LANGUAGE. The sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option.
+Do not put OMC credential decryption ownership in LLM configuration: pass the secret explicitly through
+WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) when using encrypted built-in credentials,
+then pass that configured engineClient to ExecutePsop. Custom AuthProvider owns its own token/configuration.
+Tests use the current SDK SPI with an offline provider, not template overrides or production fallbacks.
 
 ## 10. Integration Patterns
 
@@ -302,16 +272,32 @@ public Flux<String> execute(@PathVariable String psopId) {
 
 ### Cancellation
 
-`ExecutePsop.builder().execute()` returns a `CompletableFuture`. You can
-`cancel(true)` it, but the internal executor does not actively interrupt a running A2A call. For SSE, drop the
-subscriber and let the future complete.
+ExecutePsop.builder().execute() returns a CompletableFuture. Cancellation prevents late callback results
+from being sent and requests conversation cleanup. Hosts must separately cancel their own LLM/business work.
+A remote task already submitted may require an explicit cancelTask operation; local cancellation is not protocol Abort.
+
 
 ## 11. Checklist
 
 1. Add Maven dependencies
-2. Implement `ControlPoint` (at minimum `onTask` + `onRoute`; `onSelfTask` and `onNegotiation` have defaults)
+2. Implement `ControlPoint` (implement final onTask content plus local tasks, conditional routes and negotiation when required)
 3. Get AgentCards (from registry or JSON files)
 4. Load Workflow (via `LoadPsop` or build your own)
 5. Configure `.env` and credentials file
 6. Call `ExecutePsop.builder().execute()`
 7. Handle events + onFinish persistence
+
+### Pretty protocol log display
+
+Protocol logs default to pretty display: one header value per line and indented JSON bodies.
+SSE keeps event controls (id/event/comments); JSON appears between `=== SSE data (JSON display; not wire text) ===`
+and `=== End SSE data ===`, without repeating `data:` on every JSON line. Event boundaries remain separate.
+Set the environment variable or JVM property `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` to retain redacted raw body text.
+Formatting changes presentation only (JSON whitespace and SSE display labels), never transmitted bytes, metadata, number tokens or extension headers.
+The raw observer content remains unchanged.
+SSE pretty output is a display, not a replayable packet capture. Escaped newlines inside JSON strings stay escaped;
+invalid/incomplete or non-JSON content stays raw. Redaction and capacity limits still apply.
+The demo logs `NEGOTIATION_DEMO enabled=..., city=...` at startup. Locally City1 negotiates by default while City2 diagnoses directly;
+`-Da2at.samples.negotiation=false` disables the missing-input scenario.
+Look for `A2A-Extensions: .../Negotiation-T/v1`, the matching metadata key and `negotiationContext`;
+there is no dedicated Negotiation-T HTTP header.

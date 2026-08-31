@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — business callback boundary
+
+- Use published A2A-T 1.1.0 from Maven Central; remove SDK source checkout/install from CI; move content generation, validation, templates and SDK initialization to the host.
+- onTask returns final MessageContent; onNegotiation returns Send/Stop. Remove engine profiles and content handlers.
+- Preserve complete ReceivedMessage and metadata layers alongside deterministic convenience outputs; keep local nested multi-output values.
+- Deduplicate negotiation rounds, separate resource budgets from protocol rounds, and suppress late sends after timeout/cancellation.
+- Separate authorization/notification lifecycle from workflow outcomes; never synthesize a subscription ACK.
+- Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and bounded SSE.
+- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation remains separate.
+- Refresh bilingual callback, architecture and integration contracts. No older SDK compatibility layer.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
