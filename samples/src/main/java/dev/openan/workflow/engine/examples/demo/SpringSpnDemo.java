@@ -102,16 +102,8 @@ public class SpringSpnDemo {
   }
 
   static boolean resolveEmbeddedOmcEnabled(String[] args, String transportMode) {
-    String configured = argumentValue(args, "--a2a.embedded-omc-enabled=");
-    if (configured == null) {
-      configured = configuredValue("A2A_EMBEDDED_OMC_ENABLED");
-    }
     boolean simulator = resolveOrderSimulatorEnabled(args);
-    boolean enabled =
-        configured == null
-            ? (!"order".equalsIgnoreCase(transportMode) || simulator)
-            : parseBoolean(configured, "A2A_EMBEDDED_OMC_ENABLED");
-    return enabled;
+    return EmbeddedOmcSupport.enabled(args, !"order".equalsIgnoreCase(transportMode) || simulator);
   }
 
   private static boolean resolveOrderSimulatorEnabled(String[] args) {
@@ -159,6 +151,7 @@ public class SpringSpnDemo {
     boolean success = false;
     String transportMode = resolveTransportMode(applicationArgs);
     boolean embeddedOmc = resolveEmbeddedOmcEnabled(applicationArgs, transportMode);
+    List<AgentCard> embeddedCards = EmbeddedOmcSupport.prepare(embeddedOmc);
     boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(embeddedOmc);
     log.info(
         "[Demo] NEGOTIATION_DEMO enabled={}, city={}, embeddedOmc={} (local default: City1 negotiates, "
@@ -191,10 +184,8 @@ public class SpringSpnDemo {
       if (embeddedOmc) {
         stageStarted = System.nanoTime();
         log.info("[Demo] STAGE_START stage=start-omc-agents");
-        omc.startFromResource(
-            "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
-        omc.startFromResource(
-            "agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
+        omc.startFromCard(embeddedCards.get(0), new SpnDomainAgentCity1Executor());
+        omc.startFromCard(embeddedCards.get(1), new SpnDomainAgentCity2Executor());
         log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
         TimeUnit.SECONDS.sleep(STARTUP_WAIT);
         log.info(
