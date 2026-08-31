@@ -104,17 +104,17 @@ public class WorkbenchOrchestrator {
 
   static String buildResultText(ExecutionResult result) {
     if (result.isSuccess()) {
-      for (String preferredStep : List.of("merge_analysis", "merge")) {
-        String output = outputText(result.getStepOutputs().get(preferredStep));
-        if (!output.isBlank()) {
-          return output;
-        }
-      }
       if (result.getHistory() != null) {
         for (int i = result.getHistory().size() - 1; i >= 0; i--) {
-          Object output = result.getHistory().get(i).get("output");
-          if (output != null && !String.valueOf(output).isBlank()) {
-            return String.valueOf(output);
+          Map<String, Object> last = result.getHistory().get(i);
+          if (last.get("outputs") instanceof List<?> outputs && !outputs.isEmpty()) {
+            Object step = last.get("step");
+            return result.getHistory().stream()
+                .filter(entry -> java.util.Objects.equals(step, entry.get("step")))
+                .filter(entry -> entry.get("outputs") instanceof List<?>)
+                .flatMap(entry -> ((List<?>) entry.get("outputs")).stream())
+                .map(WorkbenchOrchestrator::renderOutput)
+                .collect(java.util.stream.Collectors.joining("\n\n"));
           }
         }
       }
@@ -146,9 +146,32 @@ public class WorkbenchOrchestrator {
     }
     return output.values().stream()
         .filter(value -> value != null && !String.valueOf(value).isBlank())
-        .map(String::valueOf)
-        .distinct()
+        .flatMap(value -> value instanceof List<?> values ? values.stream() : java.util.stream.Stream.of(value))
+        .map(WorkbenchOrchestrator::renderOutput)
         .collect(java.util.stream.Collectors.joining("\n\n"));
+  }
+
+  private static String renderOutput(Object value) {
+    if (value instanceof String text) return text;
+    try {
+      return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+      throw new IllegalArgumentException("Cannot serialize business output", error);
+    }
+  }
+
+  static String buildResultText(ExecutionResult result, Workflow workflow) {
+    if (result.isSuccess() && result.getStepOutputs() != null) {
+      String terminalOutputs = workflow.getSteps().stream()
+          .filter(step -> result.getStepOutputs().containsKey(step.getName()))
+          .filter(step -> step.getNext() == null || step.getNext().stream()
+              .noneMatch(next -> result.getStepOutputs().containsKey(next.getStep())))
+          .map(step -> outputText(result.getStepOutputs().get(step.getName())))
+          .filter(output -> !output.isBlank())
+          .collect(java.util.stream.Collectors.joining("\n\n"));
+      if (!terminalOutputs.isBlank()) return terminalOutputs;
+    }
+    return buildResultText(result);
   }
 
   static Workflow fallbackWorkflow() {
@@ -205,6 +228,12 @@ public class WorkbenchOrchestrator {
 
   /** Runs with an explicit sample-host negotiation setting, without changing global properties. */
   public String run(String messageText, boolean demoNegotiationEnabled) throws Exception {
+    return run(messageText, demoNegotiationEnabled, new ExecutionCancellation());
+  }
+
+  String run(String messageText, boolean demoNegotiationEnabled, ExecutionCancellation cancellation)
+      throws Exception {
+    cancellation.check();
     long runStarted = System.nanoTime();
     String runtimeName =
         clientRuntime != null
@@ -220,6 +249,7 @@ public class WorkbenchOrchestrator {
     long stageStarted = System.nanoTime();
     log.info("[Orchestrator] STAGE_START stage=load-agent-cards");
     List<AgentCard> agentCards = loadAgentCards();
+    cancellation.check();
     log.info(
         "[Orchestrator] STAGE_DONE stage=load-agent-cards, count={}, agents={}, elapsedMs={}",
         agentCards.size(),
@@ -229,6 +259,7 @@ public class WorkbenchOrchestrator {
     stageStarted = System.nanoTime();
     log.info("[Orchestrator] STAGE_START stage=search-load-psop");
     ResolvedWorkflow resolvedWorkflow = resolveWorkflow(messageText);
+    cancellation.check();
     String psopId = resolvedWorkflow.psopId();
     Workflow workflow = resolvedWorkflow.workflow();
     log.info(
@@ -267,7 +298,8 @@ public class WorkbenchOrchestrator {
       WorkbenchControlPoint controlPoint =
           new WorkbenchControlPoint(
               a2atEnvPath, new NegotiationStrategy(a2atEnvPath), demoNegotiationEnabled);
-      ExecutionResult result =
+      cancellation.check();
+      CompletableFuture<ExecutionResult> execution =
           ExecutePsop.builder()
               .psop(workflow)
               .agentCards(agentCards)
@@ -287,8 +319,10 @@ public class WorkbenchOrchestrator {
                         events.size());
                     return CompletableFuture.completedFuture(null);
                   })
-              .execute()
-              .join();
+              .execute();
+      cancellation.bind(execution);
+      ExecutionResult result = execution.join();
+      cancellation.check();
       log.info(
           "[Orchestrator] STAGE_DONE stage=execute-workflow, contextId={}, success={}, "
               + "history={}, elapsedMs={}",
@@ -296,7 +330,7 @@ public class WorkbenchOrchestrator {
           result.isSuccess(),
           result.getHistory() != null ? result.getHistory().size() : 0,
           elapsedMillis(stageStarted));
-      String resultText = buildResultText(result);
+      String resultText = buildResultText(result, workflow);
       log.info(
           "[Orchestrator] DONE contextId={}, success={}, resultChars={}, elapsedMs={}",
           transport.getContextId(),
