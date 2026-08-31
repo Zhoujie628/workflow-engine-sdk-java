@@ -266,7 +266,7 @@ public class A2ATProtocolCases {
                                         "授权策略的操作类型",
                                         "删除授权策略",
                                         "动网操作的授权策略列表",
-                                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        "1. 策略标识是7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
                                         .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
                                 List.of(new org.a2aproject.sdk.spec.TextPart("删除动网操作的授权"))))
                         .join();
@@ -286,7 +286,7 @@ public class A2ATProtocolCases {
                                         "授权策略的操作类型",
                                         "查询授权策略",
                                         "动网操作的授权策略列表",
-                                        "业务场景：业务投诉诊断，处置类型：业务抢通，操作名称：隧道调优"), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        ""), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
                                         .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
                                 List.of(new org.a2aproject.sdk.spec.TextPart("查询业务抢通操作授权信息"))))
                         .join();

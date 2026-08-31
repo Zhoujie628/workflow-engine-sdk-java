@@ -120,7 +120,9 @@ public final class OfflineA2ATLlmClient implements LLMClient {
         for (Object rawName : properties.keySet()) {
             String name = String.valueOf(rawName);
             if ("items".equals(name)) {
-                values.put(name, negotiationItems(source).keySet().stream().toList());
+                // Replay the real provider's paraphrase of an item description, not just ideal keys.
+                values.put(name, negotiationItems(source).keySet().stream()
+                        .map(key -> key.equals("任务对象") ? "本地市实际接入端口名称" : key).toList());
             } else if ("relationship".equals(name)) {
                 values.put(name, source.contains("AND") ? "AND" : null);
             } else if ("reason".equals(name)) {
@@ -150,6 +152,19 @@ public final class OfflineA2ATLlmClient implements LLMClient {
             String context = String.valueOf(params.getOrDefault("任务上下文", ""));
             return !portValue(object).isEmpty() && !label(context, "投诉分类").isEmpty()
                     && !label(context, "OSS侧事件流水号").isEmpty();
+        }
+        if (source.contains("## 授权策略的操作类型")) {
+            String operation = String.valueOf(params.get("授权策略的操作类型"));
+            String policies = String.valueOf(params.getOrDefault("动网操作的授权策略列表", ""));
+            if ("新增授权策略".equals(operation)) {
+                String[] entries = policies.split("\\R", -1);
+                for (int i = 0; i < entries.length; i++) {
+                    if (!entries[i].startsWith((i + 1) + ". 业务场景是")
+                            || !entries[i].contains("，处置类型是")
+                            || !entries[i].contains("，操作名称是")
+                            || !entries[i].contains("，有效期是")) return false;
+                }
+            }
         }
         return true;
     }

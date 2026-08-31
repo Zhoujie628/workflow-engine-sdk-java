@@ -50,10 +50,8 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
         }
         String policyList = requireText(data.get(POLICY_LIST_FIELD), POLICY_LIST_FIELD);
         List<Rule> rules = new ArrayList<>();
-        for (String entry : policyList.split("\uff1b", -1)) {
-            if (!entry.isBlank()) {
-                rules.add(Rule.parse(entry.strip()));
-            }
+        for (String entry : numberedEntries(policyList)) {
+            rules.add(Rule.parse(entry));
         }
         return new AuthorizationPolicy(operationType, rules);
     }
@@ -73,6 +71,38 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
     public static String requirePolicyList(Map<String, Object> data) {
         Objects.requireNonNull(data, "Validated Authorization-T data is required");
         return requireText(data.get(POLICY_LIST_FIELD), POLICY_LIST_FIELD);
+    }
+
+    /** Decodes the sample's single exact-id delete selector; conditions are not supported. */
+    public static String policyIdSelector(Map<String, Object> data) {
+        List<String> entries = numberedEntries(requirePolicyList(data));
+        if (entries.size() != 1 || entries.get(0).contains("，")) {
+            throw new IllegalArgumentException("The sample requires one numbered 策略标识是<UUID> selector");
+        }
+        return labeledValue(entries.get(0), "策略标识");
+    }
+
+    private static List<String> numberedEntries(String policyList) {
+        String[] lines = policyList.strip().split("\\R", -1);
+        List<String> entries = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            String prefix = (i + 1) + ".";
+            String line = lines[i].strip();
+            if (!line.startsWith(prefix)) {
+                throw new IllegalArgumentException(
+                        "Authorization policies require consecutive numbered lines starting with 1.");
+            }
+            entries.add(requireText(line.substring(prefix.length()), POLICY_LIST_FIELD));
+        }
+        return entries;
+    }
+
+    private static String labeledValue(String field, String label) {
+        String prefix = label + "是";
+        if (!field.strip().startsWith(prefix)) {
+            throw new IllegalArgumentException("Authorization field must use " + prefix + "<value>");
+        }
+        return requireText(field.strip().substring(prefix.length()), label);
     }
 
     /** Exact whitelist match; no substring or fuzzy authorization is permitted. */
@@ -118,16 +148,19 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
                                 + "SDK, separated by full-width commas: "
                                 + entry);
             }
-            String validity = fields[3].strip();
+            String scenario = labeledValue(fields[0], "业务场景");
+            String disposal = labeledValue(fields[1], "处置类型");
+            String action = labeledValue(fields[2], "操作名称");
+            String validity = labeledValue(fields[3], "有效期");
             if ("永久生效".equals(validity)) {
                 return new Rule(
-                        fields[0].strip(),
-                        fields[1].strip(),
-                        fields[2].strip(),
+                        scenario,
+                        disposal,
+                        action,
                         LocalDate.MIN,
                         LocalDate.MAX);
             }
-            String[] range = validity.split("[~\uff5e]", -1);
+            String[] range = validity.split("~", -1);
             if (range.length != 2) {
                 throw new IllegalArgumentException(
                         "Authorization validity must be start~end or 永久生效: "
@@ -135,9 +168,9 @@ public record AuthorizationPolicy(String operationType, List<Rule> rules) {
             }
             try {
                 return new Rule(
-                        fields[0].strip(),
-                        fields[1].strip(),
-                        fields[2].strip(),
+                        scenario,
+                        disposal,
+                        action,
                         parseDate(range[0]),
                         parseDate(range[1]));
             } catch (DateTimeParseException e) {
