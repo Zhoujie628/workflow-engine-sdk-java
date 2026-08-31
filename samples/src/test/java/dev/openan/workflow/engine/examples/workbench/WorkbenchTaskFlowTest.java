@@ -21,6 +21,53 @@ import net.openan.a2at.sdk.core.model.StandardTemplates;
 import org.junit.jupiter.api.Test;
 
 class WorkbenchTaskFlowTest {
+  @Test
+  void failureSummaryPreservesEachCityReasonWithoutPassingPartialOutputsAsDiagnosis() {
+    var result =
+        ExecutionResult.builder()
+            .success(false)
+            .error("Step execution failed")
+            .history(
+                List.of(
+                    Map.of(
+                        "step",
+                        "diagnosis_city1",
+                        "agent",
+                        "city1",
+                        "status",
+                        "failed",
+                        "errorCode",
+                        "remote.problem.429",
+                        "error",
+                        "OMC capacity reached",
+                        "errorDetails",
+                        Map.of(
+                            "status",
+                            429,
+                            "detail",
+                            "capacity reached",
+                            "type",
+                            "",
+                            "accessSession",
+                            "private-token")),
+                    Map.of(
+                        "step",
+                        "diagnosis_city2",
+                        "agent",
+                        "city2",
+                        "status",
+                        "success",
+                        "outputs",
+                        List.of("partial diagnosis must not masquerade as summary"))))
+            .build();
+    String summary = WorkbenchOrchestrator.buildResultText(result);
+    assertTrue(summary.contains("city1"));
+    assertTrue(summary.contains("remote.problem.429"));
+    assertTrue(summary.contains("capacity reached"));
+    assertTrue(summary.contains("city2"));
+    org.junit.jupiter.api.Assertions.assertFalse(summary.contains("private-token"));
+    org.junit.jupiter.api.Assertions.assertFalse(summary.contains("partial diagnosis"));
+  }
 
   @Test
   void localFallbackKeepsBothCityDiagnosesParallelBeforeSelfLoopMerge() {
