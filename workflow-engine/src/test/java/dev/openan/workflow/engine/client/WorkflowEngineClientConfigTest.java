@@ -18,21 +18,33 @@
  */
 
 package dev.openan.workflow.engine.client;
-import org.junit.jupiter.api.Test;
-import java.util.*;
+
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.*;
+import org.junit.jupiter.api.Test;
+
 class WorkflowEngineClientConfigTest {
-    @Test void rejectsInvalidResourceLimits() {
-        assertThrows(IllegalArgumentException.class, () -> WorkflowEngineClientConfig.builder().maxNegotiationExchanges(0).build());
-        assertThrows(IllegalArgumentException.class, () -> WorkflowEngineClientConfig.builder().sendTimeoutSeconds(0).build());
-    }
-    @Test void credentialKeyIsExplicitAndConfigurationIsSnapshotted() {
-        Map<String, Object> scheme = new LinkedHashMap<>(Map.of("username", "test"));
-        var config = WorkflowEngineClientConfig.builder()
-                .credentialsConfig(Map.of("agent", Map.of("auth", scheme))).credentialEncryptionKey("test-key").build();
-        scheme.clear();
-        assertEquals("test", config.getCredentialsConfig().get("agent").get("auth").get("username"));
-        assertEquals("test-key", config.getCredentialEncryptionKey());
-    }
+  @Test
+  void rejectsInvalidResourceLimits() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkflowEngineClientConfig.builder().maxNegotiationExchanges(0).build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkflowEngineClientConfig.builder().sendTimeoutSeconds(0).build());
+  }
+
+  @Test
+  void credentialKeyIsExplicitAndConfigurationIsSnapshotted() {
+    Map<String, Object> scheme = new LinkedHashMap<>(Map.of("username", "test"));
+    var config =
+        WorkflowEngineClientConfig.builder()
+            .credentialsConfig(Map.of("agent", Map.of("auth", scheme)))
+            .credentialEncryptionKey("test-key")
+            .build();
+    scheme.clear();
+    assertEquals("test", config.getCredentialsConfig().get("agent").get("auth").get("username"));
+    assertEquals("test-key", config.getCredentialEncryptionKey());
+  }
 }

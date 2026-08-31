@@ -25,20 +25,27 @@ import java.util.*;
 
 /** Maps only generic failures or explicitly safe host-selected business facts. */
 final class FailureMapping {
-    static TaskResult from(Throwable error) {
-        Throwable root = error;
-        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        while (root.getCause() != null && seen.add(root) && !(root instanceof BusinessFailure)) {
-            root = root.getCause();
-        }
-        if (root instanceof BusinessFailure business) {
-            return TaskResult.builder().success(false).errorCode(business.code())
-                    .error(business.getMessage()).errorDetails(business.details()).build();
-        }
-        String code = root instanceof java.util.concurrent.TimeoutException ? "workflow.timeout"
-                : root instanceof java.util.concurrent.CancellationException ? "workflow.cancelled"
-                : "workflow.execution_failed";
-        // Raw SDK/provider exceptions may contain credentials; the host chooses safe business facts.
-        return TaskResult.failure(code, root.getClass().getSimpleName());
+  static TaskResult from(Throwable error) {
+    Throwable root = error;
+    Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    while (root.getCause() != null && seen.add(root) && !(root instanceof BusinessFailure)) {
+      root = root.getCause();
     }
+    if (root instanceof BusinessFailure business) {
+      return TaskResult.builder()
+          .success(false)
+          .errorCode(business.code())
+          .error(business.getMessage())
+          .errorDetails(business.details())
+          .build();
+    }
+    String code =
+        root instanceof java.util.concurrent.TimeoutException
+            ? "workflow.timeout"
+            : root instanceof java.util.concurrent.CancellationException
+                ? "workflow.cancelled"
+                : "workflow.execution_failed";
+    // Raw SDK/provider exceptions may contain credentials; the host chooses safe business facts.
+    return TaskResult.failure(code, root.getClass().getSimpleName());
+  }
 }

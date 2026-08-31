@@ -53,6 +53,14 @@ public final class WorkbenchAgentCatalog {
     this.explicitlyConfigured = true;
   }
 
+  private static String configuredLocations() {
+    String value = System.getProperty(LOCATIONS_PROPERTY);
+    if (value == null || value.isBlank()) {
+      value = System.getenv(LOCATIONS_PROPERTY);
+    }
+    return value == null || value.isBlank() ? null : value.trim();
+  }
+
   public List<AgentCard> load() {
     Map<String, AgentCard> byName = new LinkedHashMap<>();
     for (String location : locations) {
@@ -99,13 +107,5 @@ public final class WorkbenchAgentCatalog {
             ? Path.of(URI.create(location))
             : Path.of(location).toAbsolutePath().normalize();
     return Files.isRegularFile(path) ? Files.newInputStream(path) : null;
-  }
-
-  private static String configuredLocations() {
-    String value = System.getProperty(LOCATIONS_PROPERTY);
-    if (value == null || value.isBlank()) {
-      value = System.getenv(LOCATIONS_PROPERTY);
-    }
-    return value == null || value.isBlank() ? null : value.trim();
   }
 }

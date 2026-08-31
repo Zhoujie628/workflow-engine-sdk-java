@@ -24,20 +24,31 @@ import dev.openan.workflow.engine.model.TaskResult;
 
 /** Maps transport state independently from the presence or absence of business content. */
 final class ProtocolResultAdapter {
-    private ProtocolResultAdapter() {}
+  private ProtocolResultAdapter() {}
 
-    static TaskResult toTaskResult(SendMessageResult result) {
-        if (result == null) return TaskResult.failure("remote.no_response", "Agent returned no response");
-        String state = result.getTaskState();
-        boolean standaloneMessage = result.getTask() == null && !result.getReceivedMessages().isEmpty();
-        boolean success = "TASK_STATE_COMPLETED".equals(state)
-                || ((state == null || state.isBlank() || state.endsWith("UNSPECIFIED")) && standaloneMessage);
-        if (result.getFailureCode() != null) success = false;
-        return TaskResult.builder().success(success)
-                .receivedMessages(result.getReceivedMessages())
-                .error(success ? null : result.getFailureCode() == null
-                        ? "Agent returned state=" + state : result.getFailureMessage())
-                .errorCode(success ? null : result.getFailureCode() == null ? "remote.task_failed" : result.getFailureCode())
-                .build();
-    }
+  static TaskResult toTaskResult(SendMessageResult result) {
+    if (result == null)
+      return TaskResult.failure("remote.no_response", "Agent returned no response");
+    String state = result.getTaskState();
+    boolean standaloneMessage = result.getTask() == null && !result.getReceivedMessages().isEmpty();
+    boolean success =
+        "TASK_STATE_COMPLETED".equals(state)
+            || ((state == null || state.isBlank() || state.endsWith("UNSPECIFIED"))
+                && standaloneMessage);
+    if (result.getFailureCode() != null) success = false;
+    return TaskResult.builder()
+        .success(success)
+        .receivedMessages(result.getReceivedMessages())
+        .error(
+            success
+                ? null
+                : result.getFailureCode() == null
+                    ? "Agent returned state=" + state
+                    : result.getFailureMessage())
+        .errorCode(
+            success
+                ? null
+                : result.getFailureCode() == null ? "remote.task_failed" : result.getFailureCode())
+        .build();
+  }
 }

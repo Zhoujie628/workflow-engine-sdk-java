@@ -26,23 +26,24 @@ import lombok.Value;
 @Value
 @Builder
 public class TaskRequest {
-    /** Unique execution identity, separate from remote A2A context IDs. */
-    private String executionId;
+  /** Unique execution identity, separate from remote A2A context IDs. */
+  String executionId;
 
-    /** Logical task identity, stable across self-loop re-entry within this execution. */
-    private String taskId;
+  /** Logical task identity, stable across self-loop re-entry within this execution. */
+  String taskId;
 
-    /** Business text or structured data, independent of upstream evidence. */
-    private BusinessInput input;
+  /** Business text or structured data, independent of upstream evidence. */
+  BusinessInput input;
 
-    private String agentName;
-    private String skill;
+  String agentName;
+  String skill;
 
-    /** Current task instruction only; never contains rendered upstream results. */
-    private String instruction;
-    @Builder.Default private String language = "zh";
-    private String stepName;
+  /** Current task instruction only; never contains rendered upstream results. */
+  String instruction;
 
-    /** Engine-assembled, protocol-neutral input selected by the workflow definition. */
-    @Builder.Default private WorkflowInput workflowInput = WorkflowInput.empty();
+  @Builder.Default String language = "zh";
+  String stepName;
+
+  /** Engine-assembled, protocol-neutral input selected by the workflow definition. */
+  @Builder.Default WorkflowInput workflowInput = WorkflowInput.empty();
 }

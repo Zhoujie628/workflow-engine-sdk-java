@@ -1,10 +1,18 @@
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 55, "rankSpacing": 75}}}%%
+%%{
+  init: {
+    "flowchart": {
+      "curve": "basis",
+      "nodeSpacing": 55,
+      "rankSpacing": 75
+    }
+  }
+}%%
 flowchart TB
-    classDef external fill:#EEF4FF,stroke:#2563EB,color:#172554,stroke-width:1.5px
-    classDef host fill:#FFF7ED,stroke:#EA580C,color:#431407,stroke-width:1.5px
-    classDef sdk fill:#ECFDF5,stroke:#059669,color:#052E16,stroke-width:1.5px
-    classDef local fill:#F8FAFC,stroke:#64748B,color:#0F172A,stroke-dasharray:5 3
-    classDef agent fill:#F5F3FF,stroke:#7C3AED,color:#2E1065,stroke-width:1.5px
+    classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
+    classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
+    classDef sdk fill: #ECFDF5, stroke: #059669, color: #052E16, stroke-width: 1.5px
+    classDef local fill: #F8FAFC, stroke: #64748B, color: #0F172A, stroke-dasharray: 5 3
+    classDef agent fill: #F5F3FF, stroke: #7C3AED, color: #2E1065, stroke-width: 1.5px
 
     subgraph CONTROL["周边控制面与上游系统"]
         direction LR
@@ -13,7 +21,7 @@ flowchart TB
         ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
     end
 
-    subgraph HOST["宿主智能体：传输工作台 / Workbench Agent"]
+    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
         direction TB
         ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
         ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
@@ -26,7 +34,7 @@ flowchart TB
             EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["工作台业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
     end
 
     subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]
@@ -39,18 +47,17 @@ flowchart TB
         OMCS["地市 OMC 智能体群<br/>地市 1 OMC ｜ 地市 2 OMC"]:::agent
     end
 
-    WAIMO <-->|"Task-T 诊断任务 / 汇总 artifact"| ENTRY
-    ENTRY -->|"运行意图"| ADAPTER
-    REG -->|"生产：查询 AgentCard"| LOAD
-    ORCH -->|"search / load PSOP"| LOAD
-    LOCALCARD -.->|"Demo 替代注册中心"| ADAPTER
-    LOCALPSOP -.->|"Demo 检索失败时"| ADAPTER
-    LOAD -->|"发现结果交给宿主"| ADAPTER
-    ADAPTER -->|"Workflow + AgentCards"| RUN
-    RUN <-->|"业务决策与执行结果"| CALLBACK
-    CALLBACK <-->|"回调"| BIZ
-    ADAPTER -->|"独立业务时机"| EXT
-
-    RUN <-->|"向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果"| OMCS
-    EXT <-->|"Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE"| OMCS
-    BIZ -->|"汇总结果"| ENTRY
+    WAIMO <-->|" Task-T 诊断任务 / 汇总 artifact "| ENTRY
+    ENTRY -->|" 运行意图 "| ADAPTER
+    REG -->|" 生产：查询 AgentCard "| LOAD
+    ORCH -->|" search / load PSOP "| LOAD
+    LOCALCARD -.->|" Demo 替代注册中心 "| ADAPTER
+    LOCALPSOP -.->|" Demo 检索失败时 "| ADAPTER
+    LOAD -->|" 发现结果交给宿主 "| ADAPTER
+    ADAPTER -->|" Workflow + AgentCards "| RUN
+    RUN <-->|" 业务决策与执行结果 "| CALLBACK
+    CALLBACK <-->|" 回调 "| BIZ
+    ADAPTER -->|" 独立业务时机 "| EXT
+    RUN <-->|" 向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果 "| OMCS
+    EXT <-->|" Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE "| OMCS
+    BIZ -->|" 汇总结果 "| ENTRY

@@ -25,31 +25,31 @@ import java.util.Objects;
 
 /** Uninterpreted received content and history for one task's current negotiation session. */
 public record NegotiationRequest(
-        TaskRequest task,
-        MessageContent originalSubmission,
-        ReceivedMessage received,
-        List<Exchange> previousExchanges,
-        Duration remainingWait) {
+    TaskRequest task,
+    MessageContent originalSubmission,
+    ReceivedMessage received,
+    List<Exchange> previousExchanges,
+    Duration remainingWait) {
 
-    /** One completed local interaction, without an engine-defined business schema. */
-    public record Exchange(ReceivedMessage received, NegotiationReply reply) {
-        public Exchange {
-            Objects.requireNonNull(received, "received");
-            Objects.requireNonNull(reply, "reply");
-        }
-    }
+  public NegotiationRequest {
+    Objects.requireNonNull(task, "task");
+    Objects.requireNonNull(originalSubmission, "originalSubmission");
+    Objects.requireNonNull(received, "received");
+    previousExchanges = List.copyOf(previousExchanges);
+    Objects.requireNonNull(remainingWait, "remainingWait");
+    if (remainingWait.isNegative()) throw new IllegalArgumentException("Negative remaining wait");
+  }
 
-    public NegotiationRequest {
-        Objects.requireNonNull(task, "task");
-        Objects.requireNonNull(originalSubmission, "originalSubmission");
-        Objects.requireNonNull(received, "received");
-        previousExchanges = List.copyOf(previousExchanges);
-        Objects.requireNonNull(remainingWait, "remainingWait");
-        if (remainingWait.isNegative()) throw new IllegalArgumentException("Negative remaining wait");
-    }
+  /** Counterpart identity, not a remote protocol task identifier. */
+  public String agentName() {
+    return task.getAgentName();
+  }
 
-    /** Counterpart identity, not a remote protocol task identifier. */
-    public String agentName() {
-        return task.getAgentName();
+  /** One completed local interaction, without an engine-defined business schema. */
+  public record Exchange(ReceivedMessage received, NegotiationReply reply) {
+    public Exchange {
+      Objects.requireNonNull(received, "received");
+      Objects.requireNonNull(reply, "reply");
     }
+  }
 }

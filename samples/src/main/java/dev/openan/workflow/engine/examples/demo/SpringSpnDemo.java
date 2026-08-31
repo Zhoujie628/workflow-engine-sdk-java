@@ -20,7 +20,6 @@
 package dev.openan.workflow.engine.examples.demo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
@@ -33,15 +32,13 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.workbench.SpringWorkbenchExtensionLifecycle;
 import dev.openan.workflow.engine.model.SendMessageResult;
 import dev.openan.workflow.engine.spring.A2AController;
-
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
-
-import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Demo entry point for the SPN cross-city diagnosis (direct HTTP+JSON transport).
@@ -59,208 +56,213 @@ import java.util.concurrent.TimeUnit;
  * communicate via the unified A2A-T protocol.
  */
 public class SpringSpnDemo {
-    private static final Logger log = LoggerFactory.getLogger(SpringSpnDemo.class);
-    private static final ObjectMapper mapper =
-            new ObjectMapper().registerModule(new AgentCardJacksonModule());
+  private static final Logger log = LoggerFactory.getLogger(SpringSpnDemo.class);
+  private static final ObjectMapper mapper =
+      new ObjectMapper().registerModule(new AgentCardJacksonModule());
 
-    private static final String WB_AGENT_NAME = "Transport Workbench Agent";
-    private static final long STARTUP_WAIT = 3;
+  private static final String WB_AGENT_NAME = "Transport Workbench Agent";
+  private static final long STARTUP_WAIT = 3;
 
-    private final OmcAgentLauncher omc = new OmcAgentLauncher();
+  private final OmcAgentLauncher omc = new OmcAgentLauncher();
 
-    public static void main(String[] args) throws Exception {
-        SpringWorkbenchApplication.loadDotEnv();
-        new SpringSpnDemo().run(args);
+  public static void main(String[] args) throws Exception {
+    SpringWorkbenchApplication.loadDotEnv();
+    new SpringSpnDemo().run(args);
+  }
+
+  static void requireCompleted(SendMessageResult result) {
+    if (result == null
+        || result.getTaskState() == null
+        || !result.getTaskState().contains("TASK_STATE_COMPLETED")) {
+      throw new IllegalStateException(
+          "Workbench task failed: state="
+              + (result != null ? result.getTaskState() : "null")
+              + ", response="
+              + (result != null ? result.getText() : "null"));
     }
+  }
 
-    public void run(String... applicationArgs) throws Exception {
-        long demoStarted = System.nanoTime();
-        ConfigurableApplicationContext ctx = null;
-       boolean success = false;
-        boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(true);
-        log.info("[Demo] NEGOTIATION_DEMO enabled={}, city={} (local default: City1 negotiates, City2 diagnoses directly; "
-                + "disable with -Da2at.samples.negotiation=false)", demoNegotiation,
-                System.getProperty("a2at.samples.negotiation.city", "city1"));
-        log.info(
-                "[Demo] START mode=direct, "
-                        + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]");
+  private static long elapsedMillis(long startedNanos) {
+    return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+  }
+
+  public void run(String... applicationArgs) throws Exception {
+    long demoStarted = System.nanoTime();
+    ConfigurableApplicationContext ctx = null;
+    boolean success = false;
+    boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(true);
+    log.info(
+        "[Demo] NEGOTIATION_DEMO enabled={}, city={} (local default: City1 negotiates, City2 diagnoses directly; "
+            + "disable with -Da2at.samples.negotiation=false)",
+        demoNegotiation,
+        System.getProperty("a2at.samples.negotiation.city", "city1"));
+    log.info(
+        "[Demo] START mode=direct, "
+            + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]");
+    try {
+      long stageStarted;
+      stageStarted = System.nanoTime();
+      log.info("[Demo] STAGE_START stage=start-omc-agents");
+      omc.startFromResource(
+          "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
+      omc.startFromResource(
+          "agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
+      log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
+      TimeUnit.SECONDS.sleep(STARTUP_WAIT);
+      log.info(
+          "[Demo] STAGE_DONE stage=start-omc-agents, count={}, elapsedMs={}",
+          omc.servers().size(),
+          elapsedMillis(stageStarted));
+
+      stageStarted = System.nanoTime();
+      log.info("[Demo] STAGE_START stage=start-spring-workbench");
+      SpringApplication application = new SpringApplication(SpringWorkbenchApplication.class);
+      application.addInitializers(
+          context ->
+              context
+                  .getEnvironment()
+                  .getPropertySources()
+                  .addFirst(
+                      new org.springframework.core.env.MapPropertySource(
+                          "spnDemoNegotiation",
+                          java.util.Map.of("a2a.demo-negotiation-enabled", demoNegotiation))));
+      ctx = application.run(applicationArgs);
+      log.info(
+          "[Demo] STAGE_DONE stage=start-spring-workbench, elapsedMs={}",
+          elapsedMillis(stageStarted));
+
+      stageStarted = System.nanoTime();
+      log.info(
+          "[Demo] STAGE_START stage=send-workbench-task, target={}, inputChars={}",
+          WB_AGENT_NAME,
+          SpnCasePrompts.TASK_TEXT.length());
+      log.debug("[Demo] Workbench task text={}", SpnCasePrompts.TASK_TEXT);
+      SendMessageResult result = sendTaskToWorkbench();
+      requireCompleted(result);
+      String response = result.getText();
+      log.info(
+          "[Demo] STAGE_DONE stage=send-workbench-task, responseChars={}, elapsedMs={}",
+          response != null ? response.length() : 0,
+          elapsedMillis(stageStarted));
+      if (response != null) {
+        log.info("[Demo] Workbench response={}", response);
+      } else {
+        log.warn("[Demo] Workbench returned no response text");
+      }
+      success = true;
+      // Task result is already final. This bounded observation only keeps the local
+      // demonstration alive long enough to show its independent recovery notification.
+      {
+        boolean observed =
+            ctx.getBean(SpringWorkbenchExtensionLifecycle.class)
+                .awaitFirstRecovery(java.time.Duration.ofSeconds(10));
+        log.info("[Demo] RECOVERY_OBSERVATION received={}, workflowSuccess=true", observed);
+      }
+    } catch (Exception e) {
+      log.error(
+          "[Demo] FAILED elapsedMs={}, errorType={}, message={}",
+          elapsedMillis(demoStarted),
+          e.getClass().getSimpleName(),
+          e.getMessage(),
+          e);
+      throw e;
+    } finally {
+      log.info(
+          "[Demo] SHUTDOWN_START omcCount={}, springStarted={}", omc.servers().size(), ctx != null);
+      if (ctx != null) {
         try {
-            long stageStarted;
-            stageStarted = System.nanoTime();
-            log.info("[Demo] STAGE_START stage=start-omc-agents");
-            omc.startFromResource(
-                    "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
-            omc.startFromResource(
-                    "agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
-            log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
-            TimeUnit.SECONDS.sleep(STARTUP_WAIT);
-            log.info(
-                    "[Demo] STAGE_DONE stage=start-omc-agents, count={}, elapsedMs={}",
-                    omc.servers().size(),
-                    elapsedMillis(stageStarted));
-
-            stageStarted = System.nanoTime();
-            log.info("[Demo] STAGE_START stage=start-spring-workbench");
-            SpringApplication application = new SpringApplication(SpringWorkbenchApplication.class);
-            application.addInitializers(context -> context.getEnvironment().getPropertySources().addFirst(
-                    new org.springframework.core.env.MapPropertySource("spnDemoNegotiation",
-                            java.util.Map.of("a2a.demo-negotiation-enabled", demoNegotiation))));
-            ctx = application.run(applicationArgs);
-            log.info(
-                    "[Demo] STAGE_DONE stage=start-spring-workbench, elapsedMs={}",
-                    elapsedMillis(stageStarted));
-
-            stageStarted = System.nanoTime();
-            log.info(
-                    "[Demo] STAGE_START stage=send-workbench-task, target={}, inputChars={}",
-                    WB_AGENT_NAME,
-                    SpnCasePrompts.TASK_TEXT.length());
-            log.debug("[Demo] Workbench task text={}", SpnCasePrompts.TASK_TEXT);
-            SendMessageResult result = sendTaskToWorkbench();
-            requireCompleted(result);
-            String response = result.getText();
-            log.info(
-                    "[Demo] STAGE_DONE stage=send-workbench-task, responseChars={}, elapsedMs={}",
-                    response != null ? response.length() : 0,
-                    elapsedMillis(stageStarted));
-            if (response != null) {
-                log.info("[Demo] Workbench response={}", response);
-            } else {
-                log.warn("[Demo] Workbench returned no response text");
-            }
-            success = true;
-            // Task result is already final. This bounded observation only keeps the local
-            // demonstration alive long enough to show its independent recovery notification.
-            {
-                boolean observed =
-                        ctx.getBean(SpringWorkbenchExtensionLifecycle.class)
-                                .awaitFirstRecovery(java.time.Duration.ofSeconds(10));
-                log.info("[Demo] RECOVERY_OBSERVATION received={}, workflowSuccess=true", observed);
-            }
+          boolean drained =
+              ctx.getBean(A2AController.class).awaitStreamsDrained(java.time.Duration.ofSeconds(2));
+          if (!drained) {
+            log.warn(
+                "[Demo] SSE_DRAIN_TIMEOUT activeStreams={}, timeoutSeconds=2",
+                ctx.getBean(A2AController.class).activeStreamCount());
+          } else {
+            log.info("[Demo] SSE_DRAIN_DONE activeStreams=0");
+          }
         } catch (Exception e) {
-            log.error(
-                    "[Demo] FAILED elapsedMs={}, errorType={}, message={}",
-                    elapsedMillis(demoStarted),
-                    e.getClass().getSimpleName(),
-                    e.getMessage(),
-                    e);
-            throw e;
-        } finally {
-            log.info(
-                    "[Demo] SHUTDOWN_START omcCount={}, springStarted={}",
-                    omc.servers().size(),
-                    ctx != null);
-            if (ctx != null) {
-                try {
-                    boolean drained =
-                            ctx.getBean(A2AController.class)
-                                    .awaitStreamsDrained(java.time.Duration.ofSeconds(2));
-                    if (!drained) {
-                        log.warn(
-                                "[Demo] SSE_DRAIN_TIMEOUT activeStreams={}, timeoutSeconds=2",
-                                ctx.getBean(A2AController.class).activeStreamCount());
-                    } else {
-                        log.info("[Demo] SSE_DRAIN_DONE activeStreams=0");
-                    }
-                } catch (Exception e) {
-                    log.warn("[Demo] Failed to drain SSE responses: {}", e.getMessage(), e);
-                }
-                try {
-                    // Drain outbound Notification-T calls before Spring starts stopping Tomcat.
-                    // The bean's @PreDestroy call is idempotent.
-                    ctx.getBean(SpringWorkbenchExtensionLifecycle.class).close();
-                } catch (Exception e) {
-                    log.warn(
-                            "[Demo] Failed to close workbench extension lifecycle: {}",
-                            e.getMessage(),
-                            e);
-                }
-                try {
-                    // Outbound subscriptions are closed. Stop locally owned OMC streams before
-                    // dependent gateway/server infrastructure is disposed.
-                    omc.close();
-                    ctx.close();
-                } catch (Exception e) {
-                    log.warn("[Demo] Failed to close Spring context: {}", e.getMessage(), e);
-                }
-            }
-            omc.close();
-            log.info(
-                    "[Demo] SHUTDOWN_DONE success={}, elapsedMs={}",
-                    success,
-                    elapsedMillis(demoStarted));
+          log.warn("[Demo] Failed to drain SSE responses: {}", e.getMessage(), e);
         }
-    }
-
-    /**
-     * Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1.
-     *
-     * <p>Structured-data track: the demo hands over the raw complaint data + schema and the
-     * A2A-T SDK renders the Task-T prompt through its schema-aware fromData pipeline (no
-     * hand-written prompt and no scenario-recognition call; slot extraction may use the SDK LLM).
-     */
-    private SendMessageResult sendTaskToWorkbench() throws Exception {
-        long started = System.nanoTime();
-        AgentCard wbCard =
-                OmcAgentLauncher.cardFromResource("agentcard/transport_workbench_agent.json");
-        String credPath = OmcAgentLauncher.resourcePath("spn_agent_credentials.json");
-        String envPath = EnvResolver.resolveEnvPath();
-
-        A2ATransport transport =
-                new A2ATransport(
-                        List.of(wbCard),
-                        null,
-                        WorkflowEngineClientConfig.builder()
-                                .sslVerify(false)
-
-                                .credentialsConfigPath(credPath)
-                                .build());
-        DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
         try {
-            log.info(
-                    "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}, track=fromData",
-                    WB_AGENT_NAME,
-                    transport.getContextId(),
-                    wbCard.supportedInterfaces().isEmpty()
-                            ? "?"
-                            : wbCard.supportedInterfaces().get(0).url(),
-                    SpnCasePrompts.TASK_TEXT.length());
-            SendMessageResult result =
-                    client.sendMessage(WB_AGENT_NAME,
-                            dev.openan.workflow.engine.client.A2atMessages.from(
-                                    dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
-                                            () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(envPath)))
-                                            .generateTaskPromptFromDataWithSchema(SpnCasePrompts.privateLineComplaintData(), SpnCasePrompts.privateLineComplaintSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
-                                            .PRIVATE_LINE_COMPLAINT.uri()),
-                                    List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
-                            .join();
-            log.info(
-                    "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",
-                    WB_AGENT_NAME,
-                    transport.getContextId(),
-                    result.getTaskState(),
-                    result.getText() != null ? result.getText().length() : 0,
-                    elapsedMillis(started));
-            return result;
-        } finally {
-            client.close();
-            transport.close();
+          // Drain outbound Notification-T calls before Spring starts stopping Tomcat.
+          // The bean's @PreDestroy call is idempotent.
+          ctx.getBean(SpringWorkbenchExtensionLifecycle.class).close();
+        } catch (Exception e) {
+          log.warn("[Demo] Failed to close workbench extension lifecycle: {}", e.getMessage(), e);
         }
-    }
-
-    static void requireCompleted(SendMessageResult result) {
-        if (result == null
-                || result.getTaskState() == null
-                || !result.getTaskState().contains("TASK_STATE_COMPLETED")) {
-            throw new IllegalStateException(
-                    "Workbench task failed: state="
-                            + (result != null ? result.getTaskState() : "null")
-                            + ", response="
-                            + (result != null ? result.getText() : "null"));
+        try {
+          // Outbound subscriptions are closed. Stop locally owned OMC streams before
+          // dependent gateway/server infrastructure is disposed.
+          omc.close();
+          ctx.close();
+        } catch (Exception e) {
+          log.warn("[Demo] Failed to close Spring context: {}", e.getMessage(), e);
         }
+      }
+      omc.close();
+      log.info(
+          "[Demo] SHUTDOWN_DONE success={}, elapsedMs={}", success, elapsedMillis(demoStarted));
     }
+  }
 
-    private static long elapsedMillis(long startedNanos) {
-        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+  /**
+   * Northbound Task-T message to the Workbench Agent, mirroring spec case 7.1.
+   *
+   * <p>Structured-data track: the demo hands over the raw complaint data + schema and the A2A-T SDK
+   * renders the Task-T prompt through its schema-aware fromData pipeline (no hand-written prompt
+   * and no scenario-recognition call; slot extraction may use the SDK LLM).
+   */
+  private SendMessageResult sendTaskToWorkbench() throws Exception {
+    long started = System.nanoTime();
+    AgentCard wbCard =
+        OmcAgentLauncher.cardFromResource("agentcard/transport_workbench_agent.json");
+    String credPath = OmcAgentLauncher.resourcePath("spn_agent_credentials.json");
+    String envPath = EnvResolver.resolveEnvPath();
+
+    A2ATransport transport =
+        new A2ATransport(
+            List.of(wbCard),
+            null,
+            WorkflowEngineClientConfig.builder()
+                .sslVerify(false)
+                .credentialsConfigPath(credPath)
+                .build());
+    DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
+    try {
+      log.info(
+          "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={}, track=fromData",
+          WB_AGENT_NAME,
+          transport.getContextId(),
+          wbCard.supportedInterfaces().isEmpty() ? "?" : wbCard.supportedInterfaces().get(0).url(),
+          SpnCasePrompts.TASK_TEXT.length());
+      SendMessageResult result =
+          client
+              .sendMessage(
+                  WB_AGENT_NAME,
+                  dev.openan.workflow.engine.client.A2atMessages.from(
+                      dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                              () ->
+                                  new net.openan.a2at.sdk.client.A2ATClient(
+                                      java.nio.file.Path.of(envPath)))
+                          .generateTaskPromptFromDataWithSchema(
+                              SpnCasePrompts.privateLineComplaintData(),
+                              SpnCasePrompts.privateLineComplaintSchema(),
+                              net.openan.a2at.sdk.core.model.StandardTemplates
+                                  .PRIVATE_LINE_COMPLAINT
+                                  .uri()),
+                      List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
+              .join();
+      log.info(
+          "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",
+          WB_AGENT_NAME,
+          transport.getContextId(),
+          result.getTaskState(),
+          result.getText() != null ? result.getText().length() : 0,
+          elapsedMillis(started));
+      return result;
+    } finally {
+      client.close();
+      transport.close();
     }
+  }
 }

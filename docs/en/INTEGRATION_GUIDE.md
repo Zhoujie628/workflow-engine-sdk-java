@@ -5,8 +5,8 @@
 The A2A-T Workflow Execution Engine is a Java SDK for orchestrating multi-agent workflows using the A2A protocol with
 A2A-T telecom extensions.
 
-The engine schedules A2A tasks, envelopes final content, manages authentication/transport and waits for results.
-Host callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
+The engine schedules A2A tasks, envelopes final content, manages authentication/transport and waits for results. Host
+callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
 
 ## 2. Prerequisites
 
@@ -30,6 +30,12 @@ Host callbacks own A2A-T generation, semantic validation, schemas and any LLM ca
 
 Four steps: define workflow -> load AgentCard -> implement ControlPoint -> execute.
 
+Complete runnable source: [HostQuickStart.java](../../samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
+It is compiled and its remote-task/local-aggregation flow is tested by HostQuickStartTest.
+Copy that source into your host project or run it from samples in IDEA (registry URL, target agent name, credentials path).
+The snippets below explain the same API; use one AgentCard loading option, and implement domain-specific content for Task-T.
+Nonempty business conditions require an onRoute policy; this minimal workflow uses unconditional edges.
+
 ### 4.1 Define a Workflow
 
 ```java
@@ -47,7 +53,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("merge")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(0)
                         .build(),
@@ -63,7 +69,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("end")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(1)
                         .contextFrom(List.of("*"))
@@ -83,8 +89,16 @@ AgentCard card = mapper.readValue(
 
 // Option B: From Registry Center
 RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-List<Map<String, Object>> cards = registry.fetchAgentCards();
+ObjectMapper cardMapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
+List<AgentCard> cards = registry.fetchAgentCards().stream()
+        .map(raw -> cardMapper.convertValue(raw, AgentCard.class)).toList();
 ```
+
+
+
+RegistryClient defaults to a 30-second deadline including response-body consumption. For another budget, use
+`new RegistryClient(url, true, Duration.ofSeconds(15))`; only positive durations are accepted. Query access tokens
+are logged as `<anonymous>`; do not log raw discovery URLs from host code.
 
 ### 4.3 Implement ControlPoint
 
@@ -119,10 +133,10 @@ ControlPoint callbacks = ControlPoint.builder()
 ### 4.4 Execute
 
 ```java
-ExecutionResult result = ExecutePsop.builder()
+CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
         .psop(workflow)
-        .agentCards(List.of(card1, card2))
-        .controlPoint(new MyControlPoint())
+        .agentCards(cards)
+        .controlPoint(callbacks)
         .runtimeIntent("SPN cross-city fault diagnosis")
         .lang("zh")
         .credentialsConfigPath("credentials.json")
@@ -130,8 +144,13 @@ ExecutionResult result = ExecutePsop.builder()
         .onFinish((r, history) -> {
             System.out.println("Result: " + r.isSuccess());
         })
-        .execute()
-        .get(10, TimeUnit.MINUTES);
+        .execute();
+try {
+    ExecutionResult result = execution.get(10, TimeUnit.MINUTES);
+    System.out.println(result.getStepOutputs());
+} finally {
+    if (!execution.isDone()) execution.cancel(true);
+}
 ```
 
 Required: `psop`, `controlPoint`. All other config items have defaults.
@@ -140,13 +159,13 @@ Required: `psop`, `controlPoint`. All other config items have defaults.
 
 ### 5.1 .env File
 
-The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T,
-initialize A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL
-and A2AT_LANGUAGE. The sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option.
-Do not put OMC credential decryption ownership in LLM configuration: pass the secret explicitly through
-WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) when using encrypted built-in credentials,
-then pass that configured engineClient to ExecutePsop. Custom AuthProvider owns its own token/configuration.
-Tests use the current SDK SPI with an offline provider, not template overrides or production fallbacks.
+The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T, initialize
+A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. The
+sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option. Do not put OMC credential
+decryption ownership in LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder ()
+.credentialEncryptionKey (key) when using encrypted built-in credentials, then pass that configured engineClient to
+ExecutePsop. Custom AuthProvider owns its own token/configuration. Tests use the current SDK SPI with an offline
+provider, not template overrides or production fallbacks.
 
 ### 5.2 Credentials File
 
@@ -191,21 +210,30 @@ Example output:
 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
-Write the key to the `.env` file:
+Supply the key explicitly as `credentialEncryptionKey`, or set the OS environment variable below.
+Resolution order is explicit instance key > OS environment > JVM property. The engine does not load `.env` automatically:
 
 ```
 A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
+For instance-local encryption, call `CredentialCrypto.encrypt(plaintext, keyHex)`. An explicit key overrides OS/JVM
+configuration without modifying system properties. Never log plaintext or the key.
+
 **Encrypt a password**
+
+Build the jar with `mvn -pl workflow-engine -am package`; commands below run from the repository root.
+`set` is Windows cmd syntax (PowerShell: `$env:A2AT_CRED_KEY='...'`). This CLI needs only the SDK jar and JDK.
+Use disposable example values here: command-line passwords/keys can appear in shell history and process listings.
+For production, obtain secrets securely in the host and use the Java encryption API.
 
 ```bash
 # Option 1: set env var first
 set A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
 
 # Option 2: pass key as second argument
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
 Output:
@@ -219,14 +247,17 @@ Paste the output into the `value` field of the credentials JSON.
 **Rotating the key**
 
 1. Generate a new key: `openssl rand -hex 32`
-2. Update `A2AT_CRED_KEY` in `.env`
-3. Re-encrypt all passwords: `java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
+2. Update the host secret store / explicit `credentialEncryptionKey`, or its OS/JVM `A2AT_CRED_KEY`
+3. Re-encrypt all passwords:
+   `java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
 4. Update the `enc:...` results in the credentials JSON file
 
 > The `.env` file should not be committed to version control. Add it to `.gitignore`.
+
 ### 5.3 Custom Authentication (AuthProvider)
 
-When tokens are obtained by the workbench or an external identity service, or the mechanism is non-standard, implement the `AuthProvider` interface. It has a single method:
+When tokens are obtained by the integrator or an external identity service, or the mechanism is non-standard, implement
+the `AuthProvider` interface. It has a single method:
 
 ```java
 public interface AuthProvider {
@@ -285,10 +316,14 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 **Notes:**
 
 - `applyAuth` is called on every message send; implement token caching/refresh logic inside
-- `securitySchemes` lists authentication methods the agent supports; `securityRequirements` marks the methods required by this integration. Empty `securityRequirements` disables built-in credential authentication, but `AuthProvider` is still called
+- `securitySchemes` lists authentication methods the agent supports; `securityRequirements` marks the methods required
+  by this integration. Empty `securityRequirements` disables built-in credential authentication, but `AuthProvider` is
+  still called
 - `AuthProvider` can be the sole authentication source even when `securityRequirements` is non-empty
-- If both credentials and `AuthProvider` are configured, their headers are generated independently and merged; different values for the same header fail fast
+- If both credentials and `AuthProvider` are configured, their headers are generated independently and merged; different
+  values for the same header fail fast
 - On auth failure (e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
+
 ## 6. AgentCard Definition
 
 AgentCards declare extensions via `capabilities.extensions`:
@@ -346,24 +381,25 @@ AgentCards declare extensions via `capabilities.extensions`:
 
 Extension URIs must match the A2A-T definitions exactly.
 
-Both `securitySchemes` and `securityRequirements` are optional. The former lists authentication methods the agent supports; the latter marks methods required by this integration. `securityRequirements: []` disables built-in credential authentication.
+Both `securitySchemes` and `securityRequirements` are optional. The former lists authentication methods the agent
+supports; the latter marks methods required by this integration. `securityRequirements: []` disables built-in credential
+authentication.
 
 ## 7. A2A-T Extensions
 
-Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
-Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
-The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
-Use `A2atMessages.contextOf(request.received())` to obtain the received context;
-reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
+restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
+generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to
+obtain the received context; reply with the same id, round and maxRounds. The last allowed round can still be answered.
 Do not call nextRound for an ending reply or return a new Propose.
 
-Return `new NegotiationReply.Send(content)` to send that exact content.
-Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
-Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
-`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
-Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
-Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
-A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
+Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
+to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
+exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
+SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
+diagnosis success, even if the remote acknowledges it with COMPLETED.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -371,7 +407,10 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-The host generates final Authorization-T/Notification-T content and calls these methods on separate transport/runtime/context instances. The listener receives handle and complete ReceivedMessage and closes on the business recovery event. acknowledgement() and completion() separately represent ACK and actual stream exit, never workflow prerequisites.
+The host generates final Authorization-T/Notification-T content and calls these methods on separate
+transport/runtime/context instances. The listener receives handle and complete ReceivedMessage and closes on the
+business recovery event. acknowledgement () and completion () separately represent ACK and actual stream exit, never
+workflow prerequisites.
 
 ## 8. HTTPS Configuration
 
@@ -397,16 +436,13 @@ so mTLS and `crlPath` cannot be combined with that mode and fail fast instead of
 
 ## 9. Logging
 
-The `PROTOCOL` logger at DEBUG records observations at the actual transport boundary.
-HTTP/JSON-RPC logs preserve the serialized body and application headers after A2A SDK processing,
-including A2A-Version when actually present. gRPC records actual metadata and a protobuf JSON view;
-that view is not an HTTP JSON body. The engine never adds a missing header just to make logs look uniform.
-Automatic network headers, HTTP/2 frames, TLS records and server-side bytes are not captured.
+The `PROTOCOL` logger at DEBUG records observations at the actual transport boundary. HTTP/JSON-RPC logs preserve the
+serialized body and application headers after A2A SDK processing, including A2A-Version when actually present. gRPC
+records actual metadata and a protobuf JSON view; that view is not an HTTP JSON body. The engine never adds a missing
+header just to make logs look uniform. Automatic network headers, HTTP/2 frames, TLS records and server-side bytes are
+not captured.
 
-On dev, `ORDER_FORWARD_REQUEST` records the vendor SDK input and `ORDER_SDK_RESPONSE` records
-the status, multi-value headers and text delivered by the SDK. `sdk-sse-text` assembles available SSE
-framing from SDK string chunks; original byte encoding and the platform-to-OMC wire remain unobserved.
-It is not OMC packet-capture evidence. `MODEL_PREVIEW` is optional, disabled by default, and never wire proof.
+`MODEL_PREVIEW` is optional, disabled by default, and never wire proof.
 
 ```properties
 logger.protocol.name=PROTOCOL
@@ -416,36 +452,35 @@ WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
 WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
 ```
 
-Body observation defaults to enabled when DEBUG is enabled; disable it explicitly for sensitive deployments.
-JVM properties take precedence over same-named environment variables.
-Header credentials/cookies/tokens and recognized secret body fields are always redacted; this cannot be disabled.
-This is field-based redaction, not a classifier for all personal/business-sensitive content.
-Bodies are bounded (raw collectors use the configured numeric limit as bytes; emitted text uses characters).
-Oversized SSE frames are dropped whole until the next delimiter and marked `dropped-capacity`;
-disabled, truncated and interrupted observations are labeled. UTF-8 is decoded after assembling chunks.
-Observers cannot fail delivery. File references are recorded as references and are never downloaded for logging.
+Body observation defaults to enabled when DEBUG is enabled; disable it explicitly for sensitive deployments. JVM
+properties take precedence over same-named environment variables. Header credentials/cookies/tokens and recognized
+secret body fields are always redacted; this cannot be disabled. This is field-based redaction, not a classifier for all
+personal/business-sensitive content. Bodies are bounded (raw collectors use the configured numeric limit as bytes;
+emitted text uses characters). Oversized SSE frames are dropped whole until the next delimiter and marked
+`dropped-capacity`; disabled, truncated and interrupted observations are labeled. UTF-8 is decoded after assembling
+chunks. Observers cannot fail delivery. File references are recorded as references and are never downloaded for logging.
 requestId correlates each call; workflow calls additionally carry executionId/logicalTaskId/attempt,
 agent/contextId/channel and remoteTaskId when known. These are local log fields, not wire metadata.
 
 ### Inspect negotiation in the local Demo
 
-Running the local SpringSpnDemo without VM options now negotiates missing City1 input; City2 diagnoses directly.
-This is a local sample scenario, not an engine default. To use complete inputs in both cities, add this IDEA **VM option**:
+Running the local SpringSpnDemo without VM options now negotiates missing City1 input; City2 diagnoses directly. This is
+a local sample scenario, not an engine default. To use complete inputs in both cities, add this IDEA **VM option**:
 
 ```text
 -Da2at.samples.negotiation=false
 ```
 
 By default only City1 loses its Task-T task object. Add `-Da2at.samples.negotiation.city=city2` or `both`
-to exercise City2 or both cities. The host retains city-scoped authoritative input and the complaint context is preserved.
-Expect DEMO_NEGOTIATION → INPUT_REQUIRED/PROPOSE → onNegotiation → ACCEPT → both diagnoses → one aggregate.
-External-OMC mode defaults to no injection and rejects an explicit true switch.
-The Demo passes its setting into the current Spring application context without modifying JVM-wide properties.
-Protocol observations are in the console and `logs/spn-demo.log` relative to the run directory.
+to exercise City2 or both cities. The host retains city-scoped authoritative input and the complaint context is
+preserved. Expect DEMO_NEGOTIATION → INPUT_REQUIRED/PROPOSE → onNegotiation → ACCEPT → both diagnoses → one aggregate.
+External-OMC mode defaults to no injection and rejects an explicit true switch. The Demo passes its setting into the
+current Spring application context without modifying JVM-wide properties. Protocol observations are in the console and
+`logs/spn-demo.log` relative to the run directory.
 
-Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially.
-Each tests the no-VM-option single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM provider.
-This is local protocol E2E evidence, not real model/platform/OMC validation.
+Run `SpringSpnDemoE2ETest` for direct transport. It tests the no-VM-option
+single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
+provider. This is local protocol E2E evidence, not real model/platform/OMC validation.
 
 ## 10. Event Callback
 
@@ -489,21 +524,23 @@ Workflow workflow = LoadPsop.load(
 
 ## 12. Custom Extensions
 
-Construct final MessageContent(parts, metadata, extensions), with host-owned content generation/validation. No engine handler or SDK instance registration. A2atMessages.from copies A2A-T metadata; other extensions can directly supply metadata and activation URIs. AgentCard declarations never cause implicit generation.
+Construct final MessageContent (parts, metadata, extensions), with host-owned content generation/validation. No engine
+handler or SDK instance registration. A2atMessages.from copies A2A-T metadata; other extensions can directly supply
+metadata and activation URIs. AgentCard declarations never cause implicit generation.
 
 ## 13. Interface Reference
 
-| Interface/Class                                        | Purpose                                                               |
-|--------------------------------------------------------|-----------------------------------------------------------------------|
-| `ExecutePsop.Builder`                                  | Workflow execution entry point                                        |
-| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.) |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                         |
+| Interface/Class                                        | Purpose                                                                 |
+|--------------------------------------------------------|-------------------------------------------------------------------------|
+| `ExecutePsop.Builder`                                  | Workflow execution entry point                                          |
+| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)   |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                           |
 | `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
-| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)       |
-| `WorkflowEngineClientConfig`                           | Configuration (SSL, auth, A2A-T, negotiation rounds, custom handlers) |
-| `AuthProvider`                                         | Custom authentication                                                 |
-| `EventCallback` / `EventType`                          | Event callback                                                        |
-| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                 |
-| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                   |
-| `ExecutionResult`                                      | Execution result                                                      |
-| `SendMessageResult` / `TaskResult`                   | Message/task response                                                 |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)         |
+| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget)   |
+| `AuthProvider`                                         | Custom authentication                                                   |
+| `EventCallback` / `EventType`                          | Event callback                                                          |
+| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                   |
+| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                     |
+| `ExecutionResult`                                      | Execution result                                                        |
+| `SendMessageResult` / `TaskResult`                     | Message/task response                                                   |

@@ -19,25 +19,24 @@
 
 package dev.openan.workflow.engine.model;
 
-import java.util.Map;
 
 /** Business content, not a protocol message. Exactly one of text/data is present. */
 public record BusinessInput(String text, Object data) {
-    public BusinessInput {
-        if ((text == null) == (data == null))
-            throw new IllegalArgumentException("Exactly one of text or data is required");
-        if (text != null && text.isBlank())
-            throw new IllegalArgumentException("Text must not be blank");
-        data = data == null ? null : BusinessValues.snapshot(data);
-    }
+  public BusinessInput {
+    if ((text == null) == (data == null))
+      throw new IllegalArgumentException("Exactly one of text or data is required");
+    if (text != null && text.isBlank())
+      throw new IllegalArgumentException("Text must not be blank");
+    data = data == null ? null : BusinessValues.snapshot(data);
+  }
 
-    /** Natural-language input. */
-    public static BusinessInput text(String text) {
-        return new BusinessInput(text, null);
-    }
+  /** Natural-language input. */
+  public static BusinessInput text(String text) {
+    return new BusinessInput(text, null);
+  }
 
-    /** Arbitrary JSON input; any schema and interpretation belong to the host. */
-    public static BusinessInput data(Object data) {
-        return new BusinessInput(null, data);
-    }
+  /** Arbitrary JSON input; any schema and interpretation belong to the host. */
+  public static BusinessInput data(Object data) {
+    return new BusinessInput(null, data);
+  }
 }

@@ -24,28 +24,30 @@ import java.util.Objects;
 
 /** Immutable result of one upstream workflow subtask. */
 public record TaskExecutionResult(
-        String agentName,
-        String skill,
-        String taskId,
-        String taskDescription,
-        TaskStatus status,
-        List<Object> outputs,
-        List<ReceivedMessage> receivedMessages,
-        String error,
-        String errorCode,
-        java.util.Map<String, Object> errorDetails) {
+    String agentName,
+    String skill,
+    String taskId,
+    String taskDescription,
+    TaskStatus status,
+    List<Object> outputs,
+    List<ReceivedMessage> receivedMessages,
+    String error,
+    String errorCode,
+    java.util.Map<String, Object> errorDetails) {
 
-    public TaskExecutionResult {
-        if (agentName == null || agentName.isBlank()) {
-            throw new IllegalArgumentException("Task result agentName must not be blank");
-        }
-        skill = skill == null ? "" : skill;
-        Objects.requireNonNull(taskId, "Task id");
-        taskDescription = taskDescription == null ? "" : taskDescription;
-        status = Objects.requireNonNull(status, "Task result status is required");
-        receivedMessages = receivedMessages == null ? List.of() : List.copyOf(receivedMessages);
-        outputs = receivedMessages.isEmpty() ? BusinessValues.list(outputs)
-                : receivedMessages.stream().flatMap(message -> message.outputs().stream()).toList();
-        errorDetails = errorDetails == null ? java.util.Map.of() : BusinessValues.map(errorDetails);
+  public TaskExecutionResult {
+    if (agentName == null || agentName.isBlank()) {
+      throw new IllegalArgumentException("Task result agentName must not be blank");
     }
+    skill = skill == null ? "" : skill;
+    Objects.requireNonNull(taskId, "Task id");
+    taskDescription = taskDescription == null ? "" : taskDescription;
+    status = Objects.requireNonNull(status, "Task result status is required");
+    receivedMessages = receivedMessages == null ? List.of() : List.copyOf(receivedMessages);
+    outputs =
+        receivedMessages.isEmpty()
+            ? BusinessValues.list(outputs)
+            : receivedMessages.stream().flatMap(message -> message.outputs().stream()).toList();
+    errorDetails = errorDetails == null ? java.util.Map.of() : BusinessValues.map(errorDetails);
+  }
 }

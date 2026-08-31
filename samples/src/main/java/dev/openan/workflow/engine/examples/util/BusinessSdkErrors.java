@@ -17,22 +17,28 @@
  *    under the License.
  */
 
-
 package dev.openan.workflow.engine.examples.util;
 
 import dev.openan.workflow.engine.model.BusinessFailure;
-import net.openan.a2at.sdk.core.exception.A2ATError;
 import java.util.Map;
 import java.util.function.Supplier;
+import net.openan.a2at.sdk.core.exception.A2ATError;
 
-/** Host-owned SDK error translation. Raw provider errors/input/configuration never cross the callback boundary. */
+/**
+ * Host-owned SDK error translation. Raw provider errors/input/configuration never cross the
+ * callback boundary.
+ */
 public final class BusinessSdkErrors {
-    private BusinessSdkErrors() {}
-    public static <T> T call(String operation, Supplier<T> action) {
-        try { return action.get(); }
-        catch (A2ATError error) {
-            throw new BusinessFailure(error.getCode(), "A2A-T content operation failed: " + operation,
-                    Map.of("operation", operation));
-        }
+  private BusinessSdkErrors() {}
+
+  public static <T> T call(String operation, Supplier<T> action) {
+    try {
+      return action.get();
+    } catch (A2ATError error) {
+      throw new BusinessFailure(
+          error.getCode(),
+          "A2A-T content operation failed: " + operation,
+          Map.of("operation", operation));
     }
+  }
 }

@@ -19,17 +19,13 @@
 
 package dev.openan.workflow.engine.client;
 
+import dev.openan.workflow.engine.model.SendMessageResult;
+import java.util.function.Consumer;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
-import dev.openan.workflow.engine.model.SendMessageResult;
 import org.a2aproject.sdk.spec.AgentCard;
-import org.a2aproject.sdk.spec.CancelTaskParams;
-import org.a2aproject.sdk.spec.Task;
-import org.a2aproject.sdk.spec.TaskIdParams;
-import org.a2aproject.sdk.spec.TaskQueryParams;
 import org.a2aproject.sdk.spec.MessageSendParams;
-
-import java.util.function.Consumer;
+import org.a2aproject.sdk.spec.Task;
 
 /**
  * Runtime seam for sending A2A messages via the a2a-java SDK's {@link
@@ -44,50 +40,43 @@ import java.util.function.Consumer;
  */
 public interface A2AJavaClientRuntime {
 
-    /**
-     * Send a message to an agent and collect the streaming events.
-     *
-     * @param agentCard the target agent's card as a map (from config or registry)
-     * @param params the message send parameters (message, context, metadata)
-     * @param callContext client call context with auth/extension headers
-     * @param eventSink optional callback invoked for each intermediate event (status updates,
-     *     artifact updates, messages). Null = no real-time forwarding.
-     * @param logSink optional log consumer for SDK diagnostics
-     * @return an iterable of {@link ClientEvent} produced by the agent
-     */
-    Iterable<ClientEvent> sendMessage(
-            AgentCard agentCard,
-            MessageSendParams params,
-            ClientCallContext callContext,
-            Consumer<ClientEvent> eventSink,
-            Consumer<String> logSink);
+  /**
+   * Send a message to an agent and collect the streaming events.
+   *
+   * @param agentCard the target agent's card as a map (from config or registry)
+   * @param params the message send parameters (message, context, metadata)
+   * @param callContext client call context with auth/extension headers
+   * @param eventSink optional callback invoked for each intermediate event (status updates,
+   *     artifact updates, messages). Null = no real-time forwarding.
+   * @param logSink optional log consumer for SDK diagnostics
+   * @return an iterable of {@link ClientEvent} produced by the agent
+   */
+  Iterable<ClientEvent> sendMessage(
+      AgentCard agentCard,
+      MessageSendParams params,
+      ClientCallContext callContext,
+      Consumer<ClientEvent> eventSink,
+      Consumer<String> logSink);
 
+  /** Get a task by ID (A2A GET tasks/{id}). */
+  default Task getTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+    throw new UnsupportedOperationException("getTask not supported by this runtime");
+  }
 
-    /**
-     * Get a task by ID (A2A GET tasks/{id}).
-     */
-    default Task getTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
-        throw new UnsupportedOperationException("getTask not supported by this runtime");
-    }
+  /** Cancel a task by ID (A2A POST tasks/{id}:cancel). */
+  default Task cancelTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+    throw new UnsupportedOperationException("cancelTask not supported by this runtime");
+  }
 
-    /**
-     * Cancel a task by ID (A2A POST tasks/{id}:cancel).
-     */
-    default Task cancelTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
-        throw new UnsupportedOperationException("cancelTask not supported by this runtime");
-    }
+  /** Subscribe to a task stream (A2A POST tasks/{id}:subscribe). */
+  default java.util.concurrent.CompletableFuture<SendMessageResult> subscribeToTask(
+      AgentCard agentCard,
+      String taskId,
+      ClientCallContext callContext,
+      java.util.function.Consumer<ClientEvent> eventSink) {
+    throw new UnsupportedOperationException("subscribeToTask not supported by this runtime");
+  }
 
-    /**
-     * Subscribe to a task stream (A2A POST tasks/{id}:subscribe).
-     */
-    default java.util.concurrent.CompletableFuture<SendMessageResult> subscribeToTask(
-            AgentCard agentCard,
-            String taskId,
-            ClientCallContext callContext,
-            java.util.function.Consumer<ClientEvent> eventSink) {
-        throw new UnsupportedOperationException("subscribeToTask not supported by this runtime");
-    }
-
-    /** Release any cached resources (e.g. HTTP clients). */
-    void close();
+  /** Release any cached resources (e.g. HTTP clients). */
+  void close();
 }

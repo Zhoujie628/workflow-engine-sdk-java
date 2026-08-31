@@ -25,87 +25,85 @@ import java.util.function.Function;
 
 /** Business-only callbacks. Implementations must support concurrent calls from different tasks. */
 public interface ControlPoint {
-    /** Prepares content; the engine sends after completion. No transport is exposed. */
-    default CompletableFuture<MessageContent> onTask(
-            TaskRequest request) {
-        return CompletableFuture.failedFuture(
-                new IllegalStateException("onTask handler is required for " + request.getStepName()));
+  /** Registers only the capabilities the host needs. */
+  static Builder builder() {
+    return new Builder();
+  }
+
+  /** Prepares content; the engine sends after completion. No transport is exposed. */
+  default CompletableFuture<MessageContent> onTask(TaskRequest request) {
+    return CompletableFuture.failedFuture(
+        new IllegalStateException("onTask handler is required for " + request.getStepName()));
+  }
+
+  /** Runs a local task. Missing implementation is an error, never an echo-success. */
+  default CompletableFuture<TaskResult> onSelfTask(TaskRequest request) {
+    return CompletableFuture.failedFuture(
+        new IllegalStateException("onSelfTask handler is required for " + request.getStepName()));
+  }
+
+  /** Selects a permitted branch. Unconditional edges bypass this callback. */
+  default CompletableFuture<RouteDecision> onRoute(RouteRequest request) {
+    return CompletableFuture.failedFuture(
+        new IllegalStateException("onRoute handler is required for " + request.stepName()));
+  }
+
+  /** Answers the proposal. Missing handlers never implicitly consent. */
+  default CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
+    return CompletableFuture.failedFuture(
+        new IllegalStateException("onNegotiation handler is required"));
+  }
+
+  /** Independent registration; omitted callbacks retain the documented defaults. */
+  final class Builder {
+    private Function<TaskRequest, CompletableFuture<MessageContent>> task;
+    private Function<TaskRequest, CompletableFuture<TaskResult>> self;
+    private Function<RouteRequest, CompletableFuture<RouteDecision>> route;
+    private Function<NegotiationRequest, CompletableFuture<NegotiationReply>> negotiation;
+
+    public Builder onTask(Function<TaskRequest, CompletableFuture<MessageContent>> handler) {
+      task = handler;
+      return this;
     }
 
-    /** Runs a local task. Missing implementation is an error, never an echo-success. */
-    default CompletableFuture<TaskResult> onSelfTask(TaskRequest request) {
-        return CompletableFuture.failedFuture(
-                new IllegalStateException(
-                        "onSelfTask handler is required for " + request.getStepName()));
+    public Builder onSelfTask(Function<TaskRequest, CompletableFuture<TaskResult>> handler) {
+      self = handler;
+      return this;
     }
 
-    /** Selects a permitted branch. Unconditional edges bypass this callback. */
-    default CompletableFuture<RouteDecision> onRoute(RouteRequest request) {
-        return CompletableFuture.failedFuture(
-                new IllegalStateException("onRoute handler is required for " + request.stepName()));
+    public Builder onRoute(Function<RouteRequest, CompletableFuture<RouteDecision>> handler) {
+      route = handler;
+      return this;
     }
 
-    /** Answers the proposal. Missing handlers never implicitly consent. */
-    default CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
-        return CompletableFuture.failedFuture(
-                new IllegalStateException("onNegotiation handler is required"));
+    public Builder onNegotiation(
+        Function<NegotiationRequest, CompletableFuture<NegotiationReply>> handler) {
+      negotiation = handler;
+      return this;
     }
 
-    /** Registers only the capabilities the host needs. */
-    static Builder builder() {
-        return new Builder();
-    }
-
-    /** Independent registration; omitted callbacks retain the documented defaults. */
-    final class Builder {
-        private Function<TaskRequest, CompletableFuture<MessageContent>> task;
-        private Function<TaskRequest, CompletableFuture<TaskResult>> self;
-        private Function<RouteRequest, CompletableFuture<RouteDecision>> route;
-        private Function<NegotiationRequest, CompletableFuture<NegotiationReply>> negotiation;
-
-        public Builder onTask(Function<TaskRequest, CompletableFuture<MessageContent>> handler) {
-            task = handler;
-            return this;
+    public ControlPoint build() {
+      var t = task;
+      var s = self;
+      var r = route;
+      var n = negotiation;
+      return new ControlPoint() {
+        public CompletableFuture<MessageContent> onTask(TaskRequest q) {
+          return t == null ? ControlPoint.super.onTask(q) : t.apply(q);
         }
 
-        public Builder onSelfTask(Function<TaskRequest, CompletableFuture<TaskResult>> handler) {
-            self = handler;
-            return this;
+        public CompletableFuture<TaskResult> onSelfTask(TaskRequest q) {
+          return s == null ? ControlPoint.super.onSelfTask(q) : s.apply(q);
         }
 
-        public Builder onRoute(Function<RouteRequest, CompletableFuture<RouteDecision>> handler) {
-            route = handler;
-            return this;
+        public CompletableFuture<RouteDecision> onRoute(RouteRequest q) {
+          return r == null ? ControlPoint.super.onRoute(q) : r.apply(q);
         }
 
-        public Builder onNegotiation(
-                Function<NegotiationRequest, CompletableFuture<NegotiationReply>> handler) {
-            negotiation = handler;
-            return this;
+        public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest q) {
+          return n == null ? ControlPoint.super.onNegotiation(q) : n.apply(q);
         }
-
-        public ControlPoint build() {
-            var t = task;
-            var s = self;
-            var r = route;
-            var n = negotiation;
-            return new ControlPoint() {
-                public CompletableFuture<MessageContent> onTask(TaskRequest q) {
-                    return t == null ? ControlPoint.super.onTask(q) : t.apply(q);
-                }
-
-                public CompletableFuture<TaskResult> onSelfTask(TaskRequest q) {
-                    return s == null ? ControlPoint.super.onSelfTask(q) : s.apply(q);
-                }
-
-                public CompletableFuture<RouteDecision> onRoute(RouteRequest q) {
-                    return r == null ? ControlPoint.super.onRoute(q) : r.apply(q);
-                }
-
-                public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest q) {
-                    return n == null ? ControlPoint.super.onNegotiation(q) : n.apply(q);
-                }
-            };
-        }
+      };
     }
+  }
 }

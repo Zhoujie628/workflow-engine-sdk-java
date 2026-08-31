@@ -21,7 +21,12 @@ package dev.openan.workflow.engine.spring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
-
+import java.io.InputStream;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import org.a2aproject.sdk.server.AgentCardCacheMetadata;
 import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
 import org.a2aproject.sdk.server.config.A2AConfigProvider;
@@ -49,13 +54,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 
-import java.io.InputStream;
-import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
 /**
  * Spring Boot autoconfiguration for the A2A-T server side.
  *
@@ -80,140 +78,138 @@ import java.util.concurrent.TimeUnit;
 @EnableConfigurationProperties(A2AProperties.class)
 public class A2AAutoConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(A2AAutoConfiguration.class);
+  private static final Logger log = LoggerFactory.getLogger(A2AAutoConfiguration.class);
 
-    @Bean
-    @ConditionalOnMissingBean
-    public AgentCard agentCard(A2AProperties props, ResourceLoader resourceLoader)
-            throws Exception {
-        ObjectMapper mapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
-        Resource resource = resourceLoader.getResource(props.getAgentCard());
-        if (!resource.exists()) {
-            throw new IllegalStateException("AgentCard not found: " + props.getAgentCard());
-        }
-        try (InputStream is = resource.getInputStream()) {
-            AgentCard card = mapper.readValue(is, AgentCard.class);
-            log.info("[A2A] Loaded AgentCard: name={}, version={}", card.name(), card.version());
-            return card;
-        }
+  @Bean
+  @ConditionalOnMissingBean
+  public AgentCard agentCard(A2AProperties props, ResourceLoader resourceLoader) throws Exception {
+    ObjectMapper mapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
+    Resource resource = resourceLoader.getResource(props.getAgentCard());
+    if (!resource.exists()) {
+      throw new IllegalStateException("AgentCard not found: " + props.getAgentCard());
     }
+    try (InputStream is = resource.getInputStream()) {
+      AgentCard card = mapper.readValue(is, AgentCard.class);
+      log.info("[A2A] Loaded AgentCard: name={}, version={}", card.name(), card.version());
+      return card;
+    }
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public A2AConfigProvider a2aConfigProvider(A2AProperties properties) {
-        return new A2AConfigProvider() {
-            @Override
-            public String getValue(String key) {
-                return switch (key) {
-                    case "a2a.blocking.agent.timeout.seconds" ->
-                            Integer.toString(properties.getAgentTimeoutSeconds());
-                    case "a2a.blocking.consumption.timeout.seconds" ->
-                            Integer.toString(properties.getConsumptionTimeoutSeconds());
-                    case "a2a.blocking.reconciliation.timeout.seconds" ->
-                            Integer.toString(properties.getReconciliationTimeoutSeconds());
-                    default -> null;
-                };
-            }
-
-            @Override
-            public Optional<String> getOptionalValue(String key) {
-                String v = getValue(key);
-                return v != null ? Optional.of(v) : Optional.empty();
-            }
+  @Bean
+  @ConditionalOnMissingBean
+  public A2AConfigProvider a2aConfigProvider(A2AProperties properties) {
+    return new A2AConfigProvider() {
+      @Override
+      public String getValue(String key) {
+        return switch (key) {
+          case "a2a.blocking.agent.timeout.seconds" ->
+              Integer.toString(properties.getAgentTimeoutSeconds());
+          case "a2a.blocking.consumption.timeout.seconds" ->
+              Integer.toString(properties.getConsumptionTimeoutSeconds());
+          case "a2a.blocking.reconciliation.timeout.seconds" ->
+              Integer.toString(properties.getReconciliationTimeoutSeconds());
+          default -> null;
         };
-    }
+      }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public InMemoryTaskStore taskStore() {
-        return new InMemoryTaskStore();
-    }
+      @Override
+      public Optional<String> getOptionalValue(String key) {
+        String v = getValue(key);
+        return v != null ? Optional.of(v) : Optional.empty();
+      }
+    };
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public MainEventBus eventBus() {
-        return new MainEventBus();
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public InMemoryTaskStore taskStore() {
+    return new InMemoryTaskStore();
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public InMemoryQueueManager queueManager(InMemoryTaskStore store, MainEventBus bus) {
-        return new InMemoryQueueManager(store, bus);
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public MainEventBus eventBus() {
+    return new MainEventBus();
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public PushNotificationConfigStore pushStore() {
-        return new InMemoryPushNotificationConfigStore();
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public InMemoryQueueManager queueManager(InMemoryTaskStore store, MainEventBus bus) {
+    return new InMemoryQueueManager(store, bus);
+  }
 
-    @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnMissingBean
-    public ExecutorService agentExecutorPool(A2AProperties properties) {
-        if (properties.getExecutorMaxSize() < properties.getExecutorCoreSize()) {
-            throw new IllegalArgumentException(
-                    "a2at.server.executor-max-size must be >= executor-core-size");
-        }
-        return new ThreadPoolExecutor(
-                properties.getExecutorCoreSize(),
-                properties.getExecutorMaxSize(),
-                properties.getExecutorKeepAliveSeconds(),
-                TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(properties.getExecutorQueueCapacity()),
-                r -> {
-                    Thread t = new Thread(r, "a2a-agent-executor");
-                    t.setDaemon(true);
-                    return t;
-                },
-                new ThreadPoolExecutor.CallerRunsPolicy());
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public PushNotificationConfigStore pushStore() {
+    return new InMemoryPushNotificationConfigStore();
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public MainEventBusProcessor eventBusProcessor(
-            MainEventBus bus,
-            InMemoryTaskStore store,
-            InMemoryQueueManager qm,
-            PushNotificationConfigStore pushStore) {
-        PushNotificationSender sender = new BasePushNotificationSender(pushStore);
-        MainEventBusProcessor proc = new MainEventBusProcessor(bus, store, sender, qm);
-        proc.ensureStarted();
-        log.info("[A2A] MainEventBusProcessor started");
-        return proc;
+  @Bean(destroyMethod = "shutdownNow")
+  @ConditionalOnMissingBean
+  public ExecutorService agentExecutorPool(A2AProperties properties) {
+    if (properties.getExecutorMaxSize() < properties.getExecutorCoreSize()) {
+      throw new IllegalArgumentException(
+          "a2at.server.executor-max-size must be >= executor-core-size");
     }
+    return new ThreadPoolExecutor(
+        properties.getExecutorCoreSize(),
+        properties.getExecutorMaxSize(),
+        properties.getExecutorKeepAliveSeconds(),
+        TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(properties.getExecutorQueueCapacity()),
+        r -> {
+          Thread t = new Thread(r, "a2a-agent-executor");
+          t.setDaemon(true);
+          return t;
+        },
+        new ThreadPoolExecutor.CallerRunsPolicy());
+  }
 
-    @Bean(initMethod = "")
-    @ConditionalOnMissingBean
-    public RequestHandler requestHandler(
-            AgentExecutor executor,
-            InMemoryTaskStore store,
-            InMemoryQueueManager qm,
-            PushNotificationConfigStore pushStore,
-            MainEventBusProcessor proc,
-            ExecutorService pool) {
-        RequestHandler delegate =
-                DefaultRequestHandler.builder()
-                        .agentExecutor(executor)
-                        .taskStore(store)
-                        .queueManager(qm)
-                        .pushConfigStore(pushStore)
-                        .mainEventBusProcessor(proc)
-                        .executor(pool)
-                        .eventConsumerExecutor(pool)
-                        .build();
-        return new SpringCompatibleRequestHandler(delegate);
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public MainEventBusProcessor eventBusProcessor(
+      MainEventBus bus,
+      InMemoryTaskStore store,
+      InMemoryQueueManager qm,
+      PushNotificationConfigStore pushStore) {
+    PushNotificationSender sender = new BasePushNotificationSender(pushStore);
+    MainEventBusProcessor proc = new MainEventBusProcessor(bus, store, sender, qm);
+    proc.ensureStarted();
+    log.info("[A2A] MainEventBusProcessor started");
+    return proc;
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public RestHandler restHandler(AgentCard card, RequestHandler handler, ExecutorService pool) {
-        return new RestHandler(card, new AgentCardCacheMetadata(card, null), handler, pool);
-    }
+  @Bean(initMethod = "")
+  @ConditionalOnMissingBean
+  public RequestHandler requestHandler(
+      AgentExecutor executor,
+      InMemoryTaskStore store,
+      InMemoryQueueManager qm,
+      PushNotificationConfigStore pushStore,
+      MainEventBusProcessor proc,
+      ExecutorService pool) {
+    RequestHandler delegate =
+        DefaultRequestHandler.builder()
+            .agentExecutor(executor)
+            .taskStore(store)
+            .queueManager(qm)
+            .pushConfigStore(pushStore)
+            .mainEventBusProcessor(proc)
+            .executor(pool)
+            .eventConsumerExecutor(pool)
+            .build();
+    return new SpringCompatibleRequestHandler(delegate);
+  }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public A2AController a2aController(
-            RestHandler restHandler, RequestHandler requestHandler) {
-        return new A2AController(restHandler, requestHandler);
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public RestHandler restHandler(AgentCard card, RequestHandler handler, ExecutorService pool) {
+    return new RestHandler(card, new AgentCardCacheMetadata(card, null), handler, pool);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public A2AController a2aController(RestHandler restHandler, RequestHandler requestHandler) {
+    return new A2AController(restHandler, requestHandler);
+  }
 }

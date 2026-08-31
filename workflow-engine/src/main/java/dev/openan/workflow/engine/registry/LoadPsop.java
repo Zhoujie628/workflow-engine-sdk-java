@@ -23,12 +23,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.SslContextFactory;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.net.ssl.HttpsURLConnection;
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -37,6 +31,9 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import javax.net.ssl.HttpsURLConnection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Load and search PSOP workflows from the orchestration center's external API.
@@ -47,122 +44,120 @@ import java.util.Map;
  * </ul>
  */
 public class LoadPsop {
-    private static final Logger log = LoggerFactory.getLogger(LoadPsop.class);
-    private static final ObjectMapper mapper = new ObjectMapper();
+  private static final Logger log = LoggerFactory.getLogger(LoadPsop.class);
+  private static final ObjectMapper mapper = new ObjectMapper();
 
-    public static Workflow load(
-            String baseUrl, String psopId, String accessToken, boolean sslVerify) throws Exception {
-        StringBuilder urlBuilder =
-                new StringBuilder(baseUrl).append("/api/v1/orchestrate/psop/").append(psopId);
-        if (accessToken != null && !accessToken.isEmpty()) {
-            urlBuilder
-                    .append("?access_token=")
-                    .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
-        }
-        String url = urlBuilder.toString();
-        log.info("[Registry] Loading PSOP from {} (ssl_verify={})", url, sslVerify);
-        HttpResult resp = execute("GET", url, null, sslVerify);
-        if (resp.statusCode() != 200) {
-            throw new RuntimeException("Orchestration center returned " + resp.statusCode());
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> psopData = (Map<String, Object>) data.getOrDefault("data", data);
-        Workflow wf = Workflow.fromMap(psopData);
-        log.info("[Registry] Loaded workflow: {}, {} steps", wf.getName(), wf.getSteps().size());
-        return wf;
+  public static Workflow load(String baseUrl, String psopId, String accessToken, boolean sslVerify)
+      throws Exception {
+    StringBuilder urlBuilder =
+        new StringBuilder(baseUrl).append("/api/v1/orchestrate/psop/").append(psopId);
+    if (accessToken != null && !accessToken.isEmpty()) {
+      urlBuilder
+          .append("?access_token=")
+          .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
-
-    public static Workflow load(String baseUrl, String psopId) throws Exception {
-        return load(baseUrl, psopId, null, true);
+    String url = urlBuilder.toString();
+    log.info("[Registry] Loading PSOP from {} (ssl_verify={})", anonymousUrl(url, accessToken), sslVerify);
+    HttpResult resp = execute("GET", url, null, sslVerify);
+    if (resp.statusCode() != 200) {
+      throw new RuntimeException("Orchestration center returned " + resp.statusCode());
     }
+    @SuppressWarnings("unchecked")
+    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> psopData = (Map<String, Object>) data.getOrDefault("data", data);
+    Workflow wf = Workflow.fromMap(psopData);
+    log.info("[Registry] Loaded workflow: {}, {} steps", wf.getName(), wf.getSteps().size());
+    return wf;
+  }
 
-    public static List<WorkflowSearchResult> search(
-            String baseUrl, String intent, int topN, String accessToken, boolean sslVerify)
-            throws Exception {
-        StringBuilder urlBuilder = new StringBuilder(baseUrl).append("/api/v1/orchestrate/search");
-        if (accessToken != null && !accessToken.isEmpty()) {
-            urlBuilder
-                    .append("?access_token=")
-                    .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
-        }
-        String url = urlBuilder.toString();
-        log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", url, intent, topN);
-        String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
-        HttpResult resp = execute("POST", url, jsonBody, sslVerify);
-        if (resp.statusCode() != 200) {
-            throw new RuntimeException("Orchestration center returned " + resp.statusCode());
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> rawResults =
-                (List<Map<String, Object>>) data.getOrDefault("data", List.of());
-        List<WorkflowSearchResult> results = new java.util.ArrayList<>();
-        for (Map<String, Object> raw : rawResults) {
-            results.add(
-                    WorkflowSearchResult.builder()
-                            .workflowId(
-                                    (String)
-                                            raw.getOrDefault(
-                                                    "workflow_id", raw.getOrDefault("id", "")))
-                            .workflowType((String) raw.getOrDefault("workflow_type", ""))
-                            .name((String) raw.getOrDefault("name", ""))
-                            .description((String) raw.getOrDefault("description", null))
-                            .createdAt(
-                                    raw.get("created_at") != null
-                                            ? raw.get("created_at").toString()
-                                            : "")
-                            .score(raw.get("score") instanceof Number n ? n.doubleValue() : 1.0)
-                            .userIntent((String) raw.getOrDefault("user_intent", null))
-                            .relatedPreflow((String) raw.getOrDefault("related_preflow", null))
-                            .tasksSummary((String) raw.getOrDefault("tasks_summary", null))
-                            .build());
-        }
-        log.info("[Registry] Search returned {} workflow(s)", results.size());
-        return results;
+  public static Workflow load(String baseUrl, String psopId) throws Exception {
+    return load(baseUrl, psopId, null, true);
+  }
+
+  public static List<WorkflowSearchResult> search(
+      String baseUrl, String intent, int topN, String accessToken, boolean sslVerify)
+      throws Exception {
+    StringBuilder urlBuilder = new StringBuilder(baseUrl).append("/api/v1/orchestrate/search");
+    if (accessToken != null && !accessToken.isEmpty()) {
+      urlBuilder
+          .append("?access_token=")
+          .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
-
-    private static HttpResult execute(
-            String method, String url, String jsonBody, boolean sslVerify) throws Exception {
-        HttpURLConnection connection =
-                (HttpURLConnection) URI.create(url).toURL().openConnection();
-        if (!sslVerify && connection instanceof HttpsURLConnection https) {
-            // Trust policy and hostname policy remain independent: this accepts an untrusted
-            // development CA, but still rejects a certificate issued for another host.
-            https.setSSLSocketFactory(SslContextFactory.createTrustAll().getSocketFactory());
-        }
-        try {
-            connection.setInstanceFollowRedirects(true);
-            connection.setConnectTimeout(30_000);
-            connection.setReadTimeout(30_000);
-            connection.setRequestMethod(method);
-            if (jsonBody != null) {
-                connection.setDoOutput(true);
-                connection.setRequestProperty("Content-Type", "application/json");
-                try (OutputStream output = connection.getOutputStream()) {
-                    output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                }
-            }
-            int status = connection.getResponseCode();
-            InputStream input =
-                    status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            String body = input == null ? "" : new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            if (input != null) {
-                input.close();
-            }
-            return new HttpResult(status, body);
-        } finally {
-            connection.disconnect();
-        }
+    String url = urlBuilder.toString();
+    log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", anonymousUrl(url, accessToken), intent, topN);
+    String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
+    HttpResult resp = execute("POST", url, jsonBody, sslVerify);
+    if (resp.statusCode() != 200) {
+      throw new RuntimeException("Orchestration center returned " + resp.statusCode());
     }
-
-    private record HttpResult(int statusCode, String body) {}
-
-    /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
-    public static List<WorkflowSearchResult> search(String baseUrl, String intent)
-            throws Exception {
-        return search(baseUrl, intent, 5, null, true);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> rawResults =
+        (List<Map<String, Object>>) data.getOrDefault("data", List.of());
+    List<WorkflowSearchResult> results = new java.util.ArrayList<>();
+    for (Map<String, Object> raw : rawResults) {
+      results.add(
+          WorkflowSearchResult.builder()
+              .workflowId((String) raw.getOrDefault("workflow_id", raw.getOrDefault("id", "")))
+              .workflowType((String) raw.getOrDefault("workflow_type", ""))
+              .name((String) raw.getOrDefault("name", ""))
+              .description((String) raw.getOrDefault("description", null))
+              .createdAt(raw.get("created_at") != null ? raw.get("created_at").toString() : "")
+              .score(raw.get("score") instanceof Number n ? n.doubleValue() : 1.0)
+              .userIntent((String) raw.getOrDefault("user_intent", null))
+              .relatedPreflow((String) raw.getOrDefault("related_preflow", null))
+              .tasksSummary((String) raw.getOrDefault("tasks_summary", null))
+              .build());
     }
+    log.info("[Registry] Search returned {} workflow(s)", results.size());
+    return results;
+  }
+
+  /** Preserve token presence for diagnostics without exposing any token characters or length. */
+  static String anonymousUrl(String url, String token) {
+    return token == null || token.isEmpty()
+        ? url
+        : url.substring(0, url.indexOf("?access_token=")) + "?access_token=<anonymous>";
+  }
+
+  private static HttpResult execute(String method, String url, String jsonBody, boolean sslVerify)
+      throws Exception {
+    HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
+    if (!sslVerify && connection instanceof HttpsURLConnection https) {
+      // Trust policy and hostname policy remain independent: this accepts an untrusted
+      // development CA, but still rejects a certificate issued for another host.
+      https.setSSLSocketFactory(SslContextFactory.createTrustAll().getSocketFactory());
+    }
+    try {
+      connection.setInstanceFollowRedirects(true);
+      connection.setConnectTimeout(30_000);
+      connection.setReadTimeout(30_000);
+      connection.setRequestMethod(method);
+      if (jsonBody != null) {
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/json");
+        try (OutputStream output = connection.getOutputStream()) {
+          output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+        }
+      }
+      int status = connection.getResponseCode();
+      InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+      String body = input == null ? "" : new String(input.readAllBytes(), StandardCharsets.UTF_8);
+      if (input != null) {
+        input.close();
+      }
+      return new HttpResult(status, body);
+    } finally {
+      connection.disconnect();
+    }
+  }
+
+  /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
+  public static List<WorkflowSearchResult> search(String baseUrl, String intent) throws Exception {
+    return search(baseUrl, intent, 5, null, true);
+  }
+
+  private record HttpResult(int statusCode, String body) {}
 }

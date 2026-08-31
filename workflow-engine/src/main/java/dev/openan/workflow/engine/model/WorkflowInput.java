@@ -30,12 +30,12 @@ import java.util.List;
  */
 public record WorkflowInput(String runtimeIntent, List<UpstreamStepResult> upstreamResults) {
 
-    public WorkflowInput {
-        runtimeIntent = runtimeIntent == null ? "" : runtimeIntent;
-        upstreamResults = upstreamResults == null ? List.of() : List.copyOf(upstreamResults);
-    }
+  public WorkflowInput {
+    runtimeIntent = runtimeIntent == null ? "" : runtimeIntent;
+    upstreamResults = upstreamResults == null ? List.of() : List.copyOf(upstreamResults);
+  }
 
-    public static WorkflowInput empty() {
-        return new WorkflowInput("", List.of());
-    }
+  public static WorkflowInput empty() {
+    return new WorkflowInput("", List.of());
+  }
 }

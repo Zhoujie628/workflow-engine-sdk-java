@@ -17,23 +17,31 @@
  *    under the License.
  */
 
-
 package dev.openan.workflow.engine.examples.util;
 
-import dev.openan.workflow.engine.model.BusinessFailure;
-import net.openan.a2at.sdk.core.exception.A2ATError;
-import org.junit.jupiter.api.Test;
-import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.openan.workflow.engine.model.BusinessFailure;
+import java.util.Map;
+import net.openan.a2at.sdk.core.exception.A2ATError;
+import org.junit.jupiter.api.Test;
+
 class BusinessSdkErrorsTest {
-    @Test void exposesSdkCodeAndOnlyHostSelectedDetails() {
-        BusinessFailure failure = assertThrows(BusinessFailure.class, () -> BusinessSdkErrors.call(
-                "task-generation", () -> { throw new A2ATError("slot.validation_error",
-                        "password=must-not-leak accessSession=secret"); }));
-        assertEquals("slot.validation_error", failure.code());
-        assertEquals(Map.of("operation", "task-generation"), failure.details());
-        assertNull(failure.getCause());
-        assertFalse(failure.toString().contains("must-not-leak"));
-    }
+  @Test
+  void exposesSdkCodeAndOnlyHostSelectedDetails() {
+    BusinessFailure failure =
+        assertThrows(
+            BusinessFailure.class,
+            () ->
+                BusinessSdkErrors.call(
+                    "task-generation",
+                    () -> {
+                      throw new A2ATError(
+                          "slot.validation_error", "password=must-not-leak accessSession=secret");
+                    }));
+    assertEquals("slot.validation_error", failure.code());
+    assertEquals(Map.of("operation", "task-generation"), failure.details());
+    assertNull(failure.getCause());
+    assertFalse(failure.toString().contains("must-not-leak"));
+  }
 }

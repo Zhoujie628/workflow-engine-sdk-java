@@ -6,9 +6,8 @@
 
 package dev.openan.workflow.engine.client;
 
-import org.a2aproject.sdk.spec.AgentCard;
-
 import java.util.Map;
+import org.a2aproject.sdk.spec.AgentCard;
 
 /**
  * Supplies one isolated group of outbound A2A headers. Contributors return their own map so the
@@ -16,9 +15,9 @@ import java.util.Map;
  */
 interface HeaderContributor {
 
-    Map<String, String> contribute(
-            AgentCard agentCard,
-            String agentName,
-            Map<String, Object> messageMetadata,
-            Map<String, String> currentHeaders);
+  Map<String, String> contribute(
+      AgentCard agentCard,
+      String agentName,
+      Map<String, Object> messageMetadata,
+      Map<String, String> currentHeaders);
 }

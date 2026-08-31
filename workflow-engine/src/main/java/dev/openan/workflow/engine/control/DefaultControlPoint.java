@@ -24,20 +24,18 @@ import java.util.concurrent.CompletableFuture;
 
 /** Explicit business callbacks, with no implicit local success, branch selection or consent. */
 public class DefaultControlPoint implements ControlPoint {
-    private final NegotiationStrategy strategy;
+  private final NegotiationStrategy strategy;
 
-    public DefaultControlPoint() {
-        this(null);
-    }
+  public DefaultControlPoint() {
+    this(null);
+  }
 
-    public DefaultControlPoint(NegotiationStrategy strategy) {
-        this.strategy = strategy;
-    }
+  public DefaultControlPoint(NegotiationStrategy strategy) {
+    this.strategy = strategy;
+  }
 
-    @Override
-    public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
-        return strategy == null
-                ? ControlPoint.super.onNegotiation(request)
-                : strategy.resolve(request);
-    }
+  @Override
+  public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
+    return strategy == null ? ControlPoint.super.onNegotiation(request) : strategy.resolve(request);
+  }
 }
