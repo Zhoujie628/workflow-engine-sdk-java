@@ -20,23 +20,28 @@
 package dev.openan.workflow.engine.model;
 
 import java.util.List;
+import java.util.Map;
+
 import lombok.Builder;
 import lombok.Value;
 
 @Value
 @Builder
 public class TaskResult {
-  private boolean success;
+  boolean success;
 
   /** Ordered business outputs; values may be text or JSON-serializable structured data. */
-  @Builder.Default private List<Object> outputs = List.of();
+  @Builder.Default
+  List<Object> outputs = List.of();
 
   /** Remote evidence; local onSelfTask outputs leave this empty. */
-  @Builder.Default private List<ReceivedMessage> receivedMessages = List.of();
+  @Builder.Default
+  List<ReceivedMessage> receivedMessages = List.of();
 
-  private String error;
-  private String errorCode;
-  @Builder.Default private java.util.Map<String, Object> errorDetails = java.util.Map.of();
+  String error;
+  String errorCode;
+  @Builder.Default
+  Map<String, Object> errorDetails = java.util.Map.of();
 
   public TaskResult(
       boolean success,

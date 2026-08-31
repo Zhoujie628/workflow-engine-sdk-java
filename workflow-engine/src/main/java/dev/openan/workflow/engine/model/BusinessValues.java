@@ -20,6 +20,7 @@
 package dev.openan.workflow.engine.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.*;
 
 /** Defensive JSON snapshots: payloads are unrestricted JSON, never shared mutable objects. */
