@@ -4,43 +4,58 @@
  */
 package dev.openan.workflow.engine.control;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.model.TaskRequest;
+import static org.junit.jupiter.api.Assertions.*;
+import dev.openan.workflow.engine.model.*;
 
 import org.junit.jupiter.api.Test;
+import java.util.List;
 
 class DefaultControlPointTest {
 
-    private static final TaskRequest REQUEST =
-            TaskRequest.builder().agentName("agent").stepName("step").message("run").build();
+    private final TaskRequest request =
+            TaskRequest.builder().agentName("agent").stepName("step").instruction("run").build();
 
     @Test
-    void completedTaskWithEmptyTextIsSuccessful() {
-        StubWorkflowEngineClient client =
-                new StubWorkflowEngineClient("agent")
-                        .withDefaultResponse("")
-                        .withDefaultTaskState("TASK_STATE_COMPLETED");
-        assertTrue(new DefaultControlPoint().onTask(REQUEST, client).join().isSuccess());
+    void preparesTextWithoutSending() {
+        assertThrows(java.util.concurrent.CompletionException.class,
+                () -> new DefaultControlPoint().onTask(request).join());
     }
 
     @Test
-    void failedTaskWithErrorTextIsNotSuccessful() {
-        StubWorkflowEngineClient client =
-                new StubWorkflowEngineClient("agent")
-                        .withDefaultResponse("remote error")
-                        .withDefaultTaskState("TASK_STATE_FAILED");
-        assertFalse(new DefaultControlPoint().onTask(REQUEST, client).join().isSuccess());
+    void localExecutionRequiresBusinessHandler() {
+        assertThrows(
+                java.util.concurrent.CompletionException.class,
+                () -> new DefaultControlPoint().onSelfTask(request).join());
     }
 
     @Test
-    void messageOnlyLegacyResponseFallsBackToText() {
-        StubWorkflowEngineClient client =
-                new StubWorkflowEngineClient("agent")
-                        .withDefaultResponse("ok")
-                        .withDefaultTaskState("");
-        assertTrue(new DefaultControlPoint().onTask(REQUEST, client).join().isSuccess());
+    void conditionalRoutingRequiresBusinessHandler() {
+        assertThrows(
+                java.util.concurrent.CompletionException.class,
+                () ->
+                        new DefaultControlPoint().onRoute(
+                                        new RouteRequest(
+                                                "run",
+                                                "step",
+                                                WorkflowInput.empty(),
+                                                List.of(),
+                                                List.of()))
+                                .join());
+    }
+
+    @Test
+    void handlersCanBeRegisteredIndependently() {
+        var handler =
+                ControlPoint.builder()
+                        .onSelfTask(
+                                q ->
+                                        java.util.concurrent.CompletableFuture.completedFuture(
+                                                TaskResult.builder()
+                                                        .success(true)
+                                                        .outputs(List.of("done"))
+                                                        .build()))
+                        .build();
+        assertEquals(List.of("done"), handler.onSelfTask(request).join().getOutputs());
+        assertThrows(java.util.concurrent.CompletionException.class, () -> handler.onTask(request).join());
     }
 }

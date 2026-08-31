@@ -21,6 +21,9 @@ package dev.openan.workflow.engine.core;
 
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowStep;
+import dev.openan.workflow.engine.model.TaskExecutionResult;
+import dev.openan.workflow.engine.model.UpstreamStepResult;
+import dev.openan.workflow.engine.model.WorkflowInput;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Context assembly from upstream step outputs. Mirrors Python ContextBuilder. */
+/** Selects typed upstream execution results according to the workflow graph. */
 class ContextBuilder {
     private static final Logger log = LoggerFactory.getLogger(ContextBuilder.class);
     private final Workflow workflow;
@@ -88,63 +91,38 @@ class ContextBuilder {
         return new ArrayList<>(ancestors);
     }
 
-    public String buildContext(WorkflowStep step, Map<String, Map<String, Object>> stepOutputs) {
-        if (step.getLayer() <= 0) {
-            log.info("[Context] Step {}: layer 0, using runtime intent only", step.getName());
-            return runtimeIntent.isEmpty() ? "" : "## Runtime Context\n\n" + runtimeIntent;
-        }
-        List<String> parts = new ArrayList<>();
-        if (!runtimeIntent.isEmpty()) {
-            parts.add("## Runtime Context\n\n" + runtimeIntent);
-        }
-        parts.add("## Previous Step Execution Results\n");
-        List<Map.Entry<String, Map<String, Object>>> refPairs = new ArrayList<>();
+    public WorkflowInput buildWorkflowInput(WorkflowStep step, Map<String, List<TaskExecutionResult>> stepResults) {
+        List<String> selectedSteps = new ArrayList<>();
         if (step.getContextFrom() != null && step.getContextFrom().contains("*")) {
             for (String name : getAllPredecessors(step.getName())) {
-                if (stepOutputs.containsKey(name)) {
-                    refPairs.add(Map.entry(name, stepOutputs.get(name)));
+                if (stepResults.containsKey(name)) {
+                    selectedSteps.add(name);
                 }
             }
         } else if (step.getContextFrom() != null && !step.getContextFrom().isEmpty()) {
             for (String name : step.getContextFrom()) {
-                if (stepOutputs.containsKey(name)) {
-                    refPairs.add(Map.entry(name, stepOutputs.get(name)));
+                if (stepResults.containsKey(name)) {
+                    selectedSteps.add(name);
                 }
             }
-        } else {
+        } else if (step.getContextFrom() == null) {
             for (String name : getStepPredecessors(step.getName())) {
-                if (stepOutputs.containsKey(name)) {
-                    refPairs.add(Map.entry(name, stepOutputs.get(name)));
+                if (stepResults.containsKey(name)) {
+                    selectedSteps.add(name);
                 }
             }
         }
-        for (var entry : refPairs) {
-            parts.add("### " + entry.getKey() + " Results\n");
-            for (var taskEntry : entry.getValue().entrySet()) {
-                String text =
-                        taskEntry.getValue() instanceof String
-                                ? (String) taskEntry.getValue()
-                                : String.valueOf(taskEntry.getValue());
-                parts.add("**Task**: " + taskEntry.getKey() + "\n**Output**: " + text + "\n\n");
-            }
+        List<UpstreamStepResult> upstreamResults = new ArrayList<>();
+        for (String name : selectedSteps) {
+            upstreamResults.add(new UpstreamStepResult(name, stepResults.get(name)));
         }
-        String result = String.join("\n", parts).trim();
-        log.info("[Context] Step {}: built context ({} chars)", step.getName(), result.length());
-        return result;
-    }
-
-    public String buildTaskMessage(String taskDescription, String contextMessage, String lang) {
-        String langHint = "";
-        if ("en".equals(lang)) {
-            langHint = "\n\nPlease respond in English.";
-        }
-        if ("zh".equals(lang)) {
-            langHint = "\n\n请用中文回复。";
-        }
-        if (contextMessage != null && !contextMessage.isEmpty()) {
-            return contextMessage + "\n\n## Current Task\n" + taskDescription + langHint;
-        }
-        return taskDescription + langHint;
+        int resultCount =
+                upstreamResults.stream().mapToInt(result -> result.taskResults().size()).sum();
+        log.info(
+                "[Context] Step {}: selected {} upstream step(s), {} task result(s)", step.getName(),
+                upstreamResults.size(),
+                resultCount);
+        return new WorkflowInput(runtimeIntent, upstreamResults);
     }
 
     public Integer findStepIndex(String stepName) {

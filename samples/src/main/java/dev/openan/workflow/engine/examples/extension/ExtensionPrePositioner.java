@@ -36,20 +36,26 @@ import org.slf4j.LoggerFactory;
  * Initializes independent Authorization-T and Notification-T operations for downstream agents.
  *
  * <p>Single responsibility: send a one-shot whitelist operation and open a long-lived result
- * subscription for each non-workbench agent on separate channels. The historical class name is
- * retained for sample source compatibility; individual workflow tasks do not own these operations.
+ * subscription for each non-workbench agent on separate channels. Individual workflow tasks do not own these operations.
  */
 public class ExtensionPrePositioner {
 
   private static final Logger log = LoggerFactory.getLogger(ExtensionPrePositioner.class);
   private static final int AUTHORIZATION_VALIDATION_ATTEMPTS = 3;
 
+  private final net.openan.a2at.sdk.client.A2ATClient contentClient;
   private final Map<String, Object> authData;
   private final Map<String, Object> authSchema;
   private final Map<String, Object> notifData;
   private final Map<String, Object> notifSchema;
 
   public ExtensionPrePositioner() {
+    this(dev.openan.workflow.engine.examples.util.EnvResolver.resolveEnvPath());
+  }
+
+  public ExtensionPrePositioner(String envPath) {
+    contentClient = dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+        () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(envPath)));
     // Structured-data track: the raw policy / subscription fields; the SDK renders the
     // Authorization-T and Notification-T prompts through the SDK schema-aware pipelines
     // (spec cases 7.5/7.8; slot extraction may use the SDK-configured LLM).
@@ -65,13 +71,13 @@ public class ExtensionPrePositioner {
    *
    * <p>When {@code notificationCallback} is non-null, subsequent events pushed by agents through
    * the Notification-T SSE stream (e.g. recovery results) are forwarded to the callback. The
-   * callback receives a Map with keys: agent, text, metadata, state.
+   * callback receives the registered handle and complete ReceivedMessage snapshot.
    */
   public List<NotificationSubscription> prePosition(
       ExtensionSender authorizationSender,
       ExtensionSender notificationSender,
       List<AgentCard> agentCards,
-      Consumer<Map<String, Object>> notificationCallback) {
+      java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback) {
     return prePosition(
         authorizationSender, notificationSender, agentCards, notificationCallback, null);
   }
@@ -84,7 +90,7 @@ public class ExtensionPrePositioner {
       ExtensionSender authorizationSender,
       ExtensionSender notificationSender,
       List<AgentCard> agentCards,
-      Consumer<Map<String, Object>> notificationCallback,
+      java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback,
       Consumer<NotificationSubscription> subscriptionOpened) {
     long allStarted = System.nanoTime();
     int targetCount = 0;
@@ -133,17 +139,13 @@ public class ExtensionPrePositioner {
       NotificationSubscription subscription = null;
       try {
         log.info("[PrePosition] SEND extension=Notification-T, agent={}", name);
-        subscription =
-            notificationSender
-                .openNotificationFromData(
-                    name,
-                    "订阅业务抢通事件",
-                    notifData,
-                    notifSchema,
-                    net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
-                    notificationCallback)
-                .join();
-        if (subscriptionOpened != null) {
+        var notificationContent = contentClient.generateNotificationPromptFromDataWithSchema(
+            notifData, notifSchema, StandardTemplates.SERVICE_RECOVERY.uri());
+        subscription = notificationSender.openNotification(name,
+            dev.openan.workflow.engine.client.A2atMessages.from(notificationContent,
+                List.of(new org.a2aproject.sdk.spec.TextPart("订阅业务抢通事件"))),
+            notificationCallback == null ? (handle, event) -> {} : notificationCallback);
+        if (subscriptionOpened != null && subscription.isActive()) {
           subscriptionOpened.accept(subscription);
         }
         var notificationResult = subscription.acknowledgement().join();
@@ -191,16 +193,11 @@ public class ExtensionPrePositioner {
   private SendMessageResult sendAuthorization(ExtensionSender sender, String agentName) {
     SendMessageResult result = null;
     for (int attempt = 1; attempt <= AUTHORIZATION_VALIDATION_ATTEMPTS; attempt++) {
-      result =
-          sender
-              .sendExtensionMessageFromData(
-                  agentName,
-                  "新增动网操作授权",
-                  authData,
-                  authSchema,
-                  net.openan.a2at.sdk.core.model.StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT,
-                  dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
-              .join();
+      var authorizationContent = contentClient.generateAuthPromptFromDataWithSchema(
+          authData, authSchema, StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT.uri());
+      result = sender.sendAuthorization(agentName,
+          dev.openan.workflow.engine.client.A2atMessages.from(authorizationContent,
+              List.of(new org.a2aproject.sdk.spec.TextPart("新增动网操作授权")))).join();
       boolean retryableValidationFailure =
           "TASK_STATE_FAILED".equals(result.getTaskState())
               && "Authorization-T validation failed".equals(result.getText());

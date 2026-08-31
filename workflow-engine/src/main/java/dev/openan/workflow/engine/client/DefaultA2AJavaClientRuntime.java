@@ -581,6 +581,7 @@ public class DefaultA2AJavaClientRuntime
                                     .task(A2ATransport.extractResponseTask(snapshot))
                                     .taskState(A2ATransport.extractResponseTaskState(snapshot))
                                     .metadata(A2ATransport.extractResponseMetadata(snapshot))
+                                    .receivedMessages(ProtocolResponses.assemble(snapshot))
                                     .build());
                         }
                     }),

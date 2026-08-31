@@ -23,11 +23,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
-import dev.openan.workflow.engine.control.TaskDispatcher;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 
 import dev.openan.workflow.engine.model.*;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.MessageContent;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
@@ -68,22 +69,25 @@ class WorkflowExecutorTest {
     private ControlPoint autoCp() {
         return new ControlPoint() {
             @Override
-            public CompletableFuture<TaskResponse> onTask(
-                    TaskRequest request, TaskDispatcher taskDispatcher) {
-                return taskDispatcher
-                        .dispatch(dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                request.getAgentName(), request.getMessage()))
-                        .thenApply(
-                                r ->
-                                        TaskResponse.builder()
-                                                .success(true)
-                                                .output(r.getText())
-                                                .build());
+            public CompletableFuture<MessageContent> onTask(
+                    TaskRequest request) {
+                return CompletableFuture.completedFuture(
+                        MessageContent.text(
+                                request.getInstruction()));
             }
 
             @Override
-            public CompletableFuture<RouteDecision> onRoute(
-                    String stepName, Map<String, Object> results, List<JumpCondition> conditions) {
+            public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                String stepName = routeRequest.stepName();
+                Map<String, Object> results = java.util.Map.of();
+                List<JumpCondition> conditions =
+                        routeRequest.candidates().stream()
+                                .map(
+                                        option ->
+                                                new JumpCondition(
+                                                        option.nextStep(), option.condition()))
+                                .toList();
+
                 return CompletableFuture.completedFuture(
                         RouteDecision.builder()
                                 .nextStep(conditions.get(0).getStep())
@@ -197,31 +201,36 @@ class WorkflowExecutorTest {
         ControlPoint controlPoint =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, TaskDispatcher taskDispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
                         return CompletableFuture.supplyAsync(
                                 () -> {
                                     awaitBarrier(diagnosisBarrier);
-                                    return TaskResponse.builder()
-                                            .success(true)
-                                            .output(request.getAgentName() + " diagnosis")
-                                            .build();
+                                    return MessageContent.text(request.getInstruction());
                                 },
                                 taskExecutor);
                     }
 
                     @Override
-                    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
+                    public CompletableFuture<TaskResult> onSelfTask(TaskRequest request) {
                         mergeCalls.incrementAndGet();
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder().success(true).output("merged").build());
+                                TaskResult.builder().success(true).outputs(List.of("merged")).build());
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(conditions.get(0).getStep())
@@ -299,24 +308,26 @@ class WorkflowExecutorTest {
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
-                        return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                                req.getAgentName(), req.getMessage()))
-                                .thenApply(
-                                        r ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(r.getText())
-                                                        .build());
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
+                        return CompletableFuture.completedFuture(
+                                MessageContent.text(
+                                                req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder().nextStep("s3").reason("chose s3").build());
                     }
@@ -350,24 +361,26 @@ class WorkflowExecutorTest {
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
-                        return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                                req.getAgentName(), req.getMessage()))
-                                .thenApply(
-                                        r ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(r.getText())
-                                                        .build());
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
+                        return CompletableFuture.completedFuture(
+                                MessageContent.text(
+                                                req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep("nonexistent")
@@ -404,31 +417,30 @@ class WorkflowExecutorTest {
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
                         if (req.getAgentName().equals("A")) {
-                            return CompletableFuture.completedFuture(
-                                    TaskResponse.builder()
-                                            .success(false)
-                                            .error("A failed")
-                                            .build());
+                            return CompletableFuture.failedFuture(
+                                    new IllegalStateException("business preparation failed"));
                         }
-                        return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                                req.getAgentName(), req.getMessage()))
-                                .thenApply(
-                                        r ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(r.getText())
-                                                        .build());
+                        return CompletableFuture.completedFuture(
+                                MessageContent.text(
+                                                req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(conditions.get(0).getStep())
@@ -483,21 +495,29 @@ class WorkflowExecutorTest {
                         .next(List.of())
                         .build();
         Workflow wf = Workflow.builder().name("any-fail").steps(List.of(s1)).build();
-        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B");
+        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B").withDefaultTaskState("TASK_STATE_FAILED");
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder().success(false).error("failed").build());
+                                MessageContent.text(req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(conditions.get(0).getStep())
@@ -553,22 +573,30 @@ class WorkflowExecutorTest {
                         .build();
         Workflow wf = Workflow.builder().name("intent").steps(List.of(s1)).build();
         StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A");
-        List<String> messages = Collections.synchronizedList(new ArrayList<>());
+        List<TaskRequest> requests = Collections.synchronizedList(new ArrayList<>());
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
-                        messages.add(req.getMessage());
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
+                        requests.add(req);
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder().success(true).output("ok").build());
+                                MessageContent.text(req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(conditions.get(0).getStep())
@@ -578,8 +606,10 @@ class WorkflowExecutorTest {
         WorkflowExecutor exec =
                 new WorkflowExecutor(wf, cp, stub, new EventCallback(), "my intent", "zh");
         exec.run().join();
-        assertFalse(messages.isEmpty());
-        assertTrue(messages.get(0).contains("my intent"));
+        assertFalse(requests.isEmpty());
+        assertEquals("do A", requests.get(0).getInstruction());
+        assertEquals("my intent", requests.get(0).getWorkflowInput().runtimeIntent());
+        assertTrue(requests.get(0).getWorkflowInput().upstreamResults().isEmpty());
     }
 
     @Test
@@ -690,24 +720,26 @@ class WorkflowExecutorTest {
         ControlPoint chooseRight =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, TaskDispatcher taskDispatcher) {
-                        return taskDispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                                request.getAgentName(), request.getMessage()))
-                                .thenApply(
-                                        response ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(response.getText())
-                                                        .build());
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
+                        return CompletableFuture.completedFuture(
+                                MessageContent.text(
+                                                request.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder().nextStep("right").reason("test").build());
                     }
@@ -753,34 +785,44 @@ class WorkflowExecutorTest {
                         .next(List.of())
                         .build();
         Workflow wf = Workflow.builder().name("self-loop").steps(List.of(remote, selfStep)).build();
-        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("SPN");
-        List<String> selfTaskMsgs = Collections.synchronizedList(new ArrayList<>());
+        StubWorkflowEngineClient stub = new StubWorkflowEngineClient("SPN")
+                        .withDefaultOutputs(
+                                List.of(Map.of("diagnosis", List.of("found"), "alarmCount", 1)));
+        List<TaskRequest> selfTaskRequests = Collections.synchronizedList(new ArrayList<>());
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest req, TaskDispatcher dispatcher) {
-                        return dispatcher.dispatch(
-                                        dev.openan.workflow.engine.model.TaskSubmission.fromUnclassifiedText(
-                                                req.getAgentName(), req.getMessage()))
-                                .thenApply(
-                                        r ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(r.getText())
-                                                        .build());
-                    }
-
-                    @Override
-                    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest req) {
-                        selfTaskMsgs.add(req.getMessage());
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest req) {
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder().success(true).output("merged").build());
+                                        MessageContent.text(
+                                                req.getInstruction()))
+                                .thenApply(
+                                        r -> MessageContent.text(req.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String s, Map<String, Object> r, List<JumpCondition> c) {
+                    public CompletableFuture<TaskResult> onSelfTask(TaskRequest req) {
+                        selfTaskRequests.add(req);
+                        return CompletableFuture.completedFuture(
+                                TaskResult.builder()
+                                                        .success(true)
+                                                        .outputs(List.of("merged")).build());
+                    }
+
+                    @Override
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String s = routeRequest.stepName();
+                        Map<String, Object> r = java.util.Map.of();
+                        List<JumpCondition> c =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(c.get(0).getStep())
@@ -795,7 +837,27 @@ class WorkflowExecutorTest {
         // Only the remote diagnosis step sends via A2A-T; the merge step is local.
         assertEquals(1, stub.getSentCount());
         assertEquals("SPN", stub.getSentMessages().get(0).agentName);
-        assertEquals(1, selfTaskMsgs.size());
+        assertEquals(1, selfTaskRequests.size());
+        TaskRequest mergeRequest = selfTaskRequests.get(0);
+        assertEquals("merge results", mergeRequest.getInstruction());
+        assertFalse(
+                mergeRequest.getInstruction().contains("diagnose"),
+                "Current instruction must not contain upstream output");
+        assertEquals("intent", mergeRequest.getWorkflowInput().runtimeIntent());
+        assertEquals(1, mergeRequest.getWorkflowInput().upstreamResults().size());
+        assertEquals("diag", mergeRequest.getWorkflowInput().upstreamResults().get(0).stepName());
+        List<Object> upstreamOutputs =
+                mergeRequest
+                        .getWorkflowInput()
+                        .upstreamResults()
+                        .get(0)
+                        .taskResults()
+                        .get(0)
+                        .outputs();
+        Object upstreamOutput = upstreamOutputs.get(0);
+        assertInstanceOf(Map.class, upstreamOutput);
+        assertEquals(1, ((Map<?, ?>) upstreamOutput).get("alarmCount"));
+        assertEquals(1, upstreamOutputs.size());
         assertTrue(events.contains(EventType.TASK_REQUEST));
         assertTrue(events.contains(EventType.TASK_RESPONSE));
     }
@@ -814,20 +876,25 @@ class WorkflowExecutorTest {
         ControlPoint cp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, TaskDispatcher taskDispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder()
-                                        .success(true)
-                                        .output(request.getAgentName() + " result")
-                                        .build());
+                                MessageContent.text(request.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder().nextStep("end").build());
                     }
@@ -840,7 +907,9 @@ class WorkflowExecutorTest {
                                         .steps(List.of(parallel))
                                         .build(),
                                 cp,
-                                new StubWorkflowEngineClient(),
+                                new StubWorkflowEngineClient()
+                                        .withResponse("City1", "City1 result")
+                                        .withResponse("City2", "City2 result"),
                                 recordingCallback(),
                                 "",
                                 "zh")
@@ -850,11 +919,11 @@ class WorkflowExecutorTest {
         assertTrue(result.isSuccess());
         assertEquals(
                 Map.of(
-                        "SPN专线故障诊断 [City1#0]", "City1 result",
-                        "SPN专线故障诊断 [City2#1]", "City2 result"),
+                        "SPN专线故障诊断 [City1#0]", List.of("City1 result"),
+                        "SPN专线故障诊断 [City2#1]", List.of("City2 result")),
                 result.getStepOutputs().get("diagnosis"));
         assertEquals(List.of(0, 1),
-                result.getHistory().stream().map(item -> item.get("subtask_index")).toList());
+                result.getHistory().stream().map(item -> (Integer) item.get("subtask_index")).sorted().toList());
     }
 
     @Test
@@ -868,17 +937,25 @@ class WorkflowExecutorTest {
         ControlPoint nullOutput =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, TaskDispatcher taskDispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
                         return CompletableFuture.completedFuture(
-                                TaskResponse.builder().success(true).output(null).build());
+                                MessageContent.text(request.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder().nextStep("end").build());
                     }
@@ -887,28 +964,36 @@ class WorkflowExecutorTest {
                 new WorkflowExecutor(
                                 Workflow.builder().name("null-output").steps(List.of(step)).build(),
                                 nullOutput,
-                                new StubWorkflowEngineClient(),
+                                new StubWorkflowEngineClient().withDefaultResponse(""),
                                 recordingCallback(),
                                 "",
                                 "zh")
                         .run()
                         .join();
         assertTrue(success.isSuccess());
-        assertEquals("", success.getStepOutputs().get("nullable").get("empty"));
+        assertEquals(List.of(), success.getStepOutputs().get("nullable").get("empty"));
 
         ControlPoint nullMessageFailure =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, TaskDispatcher taskDispatcher) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
                         return CompletableFuture.failedFuture(new RuntimeException((String) null));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(
+                                                option ->
+                                                        new JumpCondition(
+                                                                option.nextStep(),
+                                                                option.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder().nextStep("end").build());
                     }
@@ -917,7 +1002,7 @@ class WorkflowExecutorTest {
                 new WorkflowExecutor(
                                 Workflow.builder().name("null-error").steps(List.of(step)).build(),
                                 nullMessageFailure,
-                                new StubWorkflowEngineClient(),
+                                new StubWorkflowEngineClient().withDefaultResponse(""),
                                 recordingCallback(),
                                 "",
                                 "zh")
@@ -925,5 +1010,27 @@ class WorkflowExecutorTest {
                         .join();
         assertFalse(failure.isSuccess());
         assertFalse(String.valueOf(failure.getHistory().get(0).get("output")).isBlank());
+    }
+
+    @Test
+    void canceledAndTimedOutPreparationCannotSubmitLateContent() throws Exception {
+        for (boolean timeout : List.of(false, true)) {
+            Workflow wf = Workflow.builder().name("late").steps(List.of(WorkflowStep.builder()
+                    .name("s1").subtasks(List.of(task("A", "work"))).build())).build();
+            StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A") {
+                @Override public long callbackTimeoutSeconds() { return 1; }
+            };
+            CompletableFuture<MessageContent> prepared = new CompletableFuture<>();
+            java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+            ControlPoint cp = ControlPoint.builder().onTask(request -> {
+                entered.countDown(); return prepared;
+            }).build();
+            var run = new WorkflowExecutor(wf, cp, stub, recordingCallback(), "", "zh").run();
+            assertTrue(entered.await(1, TimeUnit.SECONDS));
+            if (timeout) assertFalse(run.get(3, TimeUnit.SECONDS).isSuccess());
+            else assertTrue(run.cancel(true));
+            prepared.complete(MessageContent.text("too late"));
+            assertEquals(0, stub.getSentCount());
+        }
     }
 }

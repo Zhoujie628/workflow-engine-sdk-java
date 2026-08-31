@@ -19,7 +19,6 @@
 
 package dev.openan.workflow.engine.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -27,14 +26,43 @@ import lombok.NoArgsConstructor;
 import org.a2aproject.sdk.spec.Task;
 
 import java.util.Map;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class SendMessageResult {
-    @Builder.Default private String text = "";
+    private String text = "";
     private Task task;
     private Map<String, Object> metadata;
-    @Builder.Default private String taskState = "";
+    private String taskState = "";
+    /** Local interaction outcome, separate from the actual remote task state. */
+    private String failureCode;
+    private String failureMessage;
+
+    /** Lossless source of all convenience outputs. */
+    private List<ReceivedMessage> receivedMessages = List.of();
+
+    @Builder
+    public SendMessageResult(String text, Task task, Map<String, Object> metadata, String taskState,
+            String failureCode, String failureMessage, List<ReceivedMessage> receivedMessages) {
+        this.text = text == null ? "" : text;
+        this.task = task;
+        this.metadata = metadata == null ? Map.of() : BusinessValues.map(metadata);
+        this.taskState = taskState == null ? "" : taskState;
+        this.failureCode = failureCode;
+        this.failureMessage = failureMessage;
+        this.receivedMessages = receivedMessages == null ? List.of() : List.copyOf(receivedMessages);
+    }
+
+    /** Projects text/data values from the retained response, without fallback or semantic parsing. */
+    public List<Object> getOutputs() {
+        boolean includeMessage = failureCode == null
+                && (task == null || "TASK_STATE_COMPLETED".equals(taskState));
+        return receivedMessages.stream().flatMap(message -> message.outputs(includeMessage).stream()).toList();
+    }
+
+    /** Snapshots the list supplied by transport adapters. */
+    public void setReceivedMessages(List<ReceivedMessage> messages) {
+        this.receivedMessages = List.copyOf(messages);
+    }
 }

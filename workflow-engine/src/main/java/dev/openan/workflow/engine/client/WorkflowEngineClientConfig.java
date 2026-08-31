@@ -49,12 +49,10 @@ public class WorkflowEngineClientConfig {
     private final int sendExecutorQueueCapacity;
     private final AuthProvider authProvider;
     private final String credentialsConfigPath;
+    private final String credentialEncryptionKey;
     private final Map<String, Map<String, Map<String, Object>>> credentialsConfig;
-    private final String a2atEnvPath;
-    private final int maxNegotiationRounds;
-    private final List<ExtensionHandler> customHandlers;
+    private final int maxNegotiationExchanges;
     private final String preferredProtocol;
-    private final Map<String, Object> negotiationParamSchema;
 
     private WorkflowEngineClientConfig(Builder b) {
         this.sslVerify = b.sslVerify;
@@ -70,16 +68,11 @@ public class WorkflowEngineClientConfig {
         this.sendExecutorQueueCapacity = b.sendExecutorQueueCapacity;
         this.authProvider = b.authProvider;
         this.credentialsConfigPath = b.credentialsConfigPath;
+        this.credentialEncryptionKey = b.credentialEncryptionKey;
         this.credentialsConfig =
                 b.credentialsConfig != null ? copyCredentials(b.credentialsConfig) : null;
-        this.a2atEnvPath = b.a2atEnvPath;
-        this.maxNegotiationRounds = b.maxNegotiationRounds;
-        this.customHandlers = b.customHandlers != null ? List.copyOf(b.customHandlers) : null;
+        this.maxNegotiationExchanges = b.maxNegotiationExchanges;
         this.preferredProtocol = b.preferredProtocol;
-        this.negotiationParamSchema =
-                b.negotiationParamSchema != null
-                        ? immutableObjectMap(b.negotiationParamSchema)
-                        : null;
     }
 
     private static Map<String, Map<String, Map<String, Object>>> copyCredentials(
@@ -140,12 +133,10 @@ public class WorkflowEngineClientConfig {
         private int sendExecutorQueueCapacity = 256;
         private AuthProvider authProvider;
         private String credentialsConfigPath = null;
+        private String credentialEncryptionKey;
         private Map<String, Map<String, Map<String, Object>>> credentialsConfig = null;
-        private String a2atEnvPath = null;
-        private int maxNegotiationRounds = 3;
-        private List<ExtensionHandler> customHandlers = null;
+        private int maxNegotiationExchanges = 3;
         private String preferredProtocol = null;
-        private Map<String, Object> negotiationParamSchema = null;
 
         public Builder sslVerify(boolean v) {
             this.sslVerify = v;
@@ -207,6 +198,12 @@ public class WorkflowEngineClientConfig {
             return this;
         }
 
+        /** Optional credential decryption key supplied by the host, not loaded from LLM config. */
+        public Builder credentialEncryptionKey(String key) {
+            this.credentialEncryptionKey = key;
+            return this;
+        }
+
         public Builder credentialsConfigPath(String v) {
             this.credentialsConfigPath = v;
             return this;
@@ -217,33 +214,13 @@ public class WorkflowEngineClientConfig {
             return this;
         }
 
-        public Builder a2atEnvPath(String v) {
-            this.a2atEnvPath = v;
-            return this;
-        }
-
-        public Builder maxNegotiationRounds(int v) {
-            this.maxNegotiationRounds = v;
+        public Builder maxNegotiationExchanges(int v) {
+            this.maxNegotiationExchanges = v;
             return this;
         }
 
         public Builder preferredProtocol(String v) {
             this.preferredProtocol = v;
-            return this;
-        }
-
-        public Builder customHandlers(List<ExtensionHandler> v) {
-            this.customHandlers = v;
-            return this;
-        }
-
-        /**
-         * Business parameter JSON schema for the Negotiation-T validate-and-fill pipeline. Declares
-         * the caller's domain fields so the engine core stays domain-agnostic; null keeps the
-         * default empty schema (negotiation context params only).
-         */
-        public Builder negotiationParamSchema(Map<String, Object> v) {
-            this.negotiationParamSchema = v;
             return this;
         }
 
@@ -256,8 +233,8 @@ public class WorkflowEngineClientConfig {
                     || sendExecutorQueueCapacity <= 0) {
                 throw new IllegalArgumentException("Invalid send executor configuration");
             }
-            if (maxNegotiationRounds <= 0) {
-                throw new IllegalArgumentException("maxNegotiationRounds must be positive");
+            if (maxNegotiationExchanges <= 0) {
+                throw new IllegalArgumentException("maxNegotiationExchanges must be positive");
             }
             return new WorkflowEngineClientConfig(this);
         }

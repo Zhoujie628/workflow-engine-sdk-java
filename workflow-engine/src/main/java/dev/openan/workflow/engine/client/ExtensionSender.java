@@ -19,136 +19,18 @@
 
 package dev.openan.workflow.engine.client;
 
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.ReceivedMessage;
 import dev.openan.workflow.engine.model.SendMessageResult;
-
-import net.openan.a2at.sdk.core.model.StandardTemplates;
-import net.openan.a2at.sdk.core.model.TemplateUri;
-
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
-/**
- * Facade for protocol operations that are independent of workflow DAG execution.
- *
- * <p>Single responsibility: send Authorization-T operations and establish Notification-T
- * subscriptions. These operations may happen before, during, or after a workflow according to the
- * workbench business lifecycle. They bypass Task-T prompt generation and the Negotiation-T
- * auto-loop. The returned future carries the first response; later Notification-T events flow
- * through the subscription callback.
- *
- * <p>Kept separate from {@link WorkflowEngineClient} so protocol channels and lifecycles cannot be
- * accidentally coupled to a workflow task.
- */
+/** Operations independent of workflow execution; all content is supplied by the host. */
 public interface ExtensionSender {
+    /** Sends final authorization content on this sender's independent transport. */
+    CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
 
-    /**
-     * Send a one-shot Authorization-T message.
-     *
-     * @param agentName target agent name
-     * @param instruction short instruction text (becomes message parts)
-     * @param naturalLanguageInput input for SDK prompt generation
-     * @param templateUri current SDK template used to render the input
-     * @param extension must be {@link A2ATExtension#AUTHORIZATION_T}; Notification-T has a
-     *     different, long-lived lifecycle and must use {@link #openNotification}
-     */
-    CompletableFuture<SendMessageResult> sendExtensionMessage(
-            String agentName,
-            String instruction,
-            String naturalLanguageInput,
-            TemplateUri templateUri,
-            A2ATExtension extension);
-
-    /** Natural-language variant for a one-shot Authorization-T operation. */
-    default CompletableFuture<SendMessageResult> sendAuthorization(
-            String agentName, String instruction, String naturalLanguageInput) {
-        return sendExtensionMessage(
-                agentName,
-                instruction,
-                naturalLanguageInput,
-                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT,
-                A2ATExtension.AUTHORIZATION_T);
-    }
-
-    /**
-     * Structured-data send: renders the extension prompt from typed data via the SDK's
-     * schema-aware fromData pipeline. Scenario recognition is bypassed, but slot mapping may
-     * invoke the configured LLM. Rendering failures are never sent as raw extension metadata.
-     *
-     * <p>Callers holding structured business data (e.g. an authorization policy as fields, not
-     * prose) should prefer this over the natural-language variants.
-     *
-     * @param agentName target agent name
-     * @param instruction short instruction text (becomes message parts)
-     * @param data structured extension input (string-to-object map)
-     * @param schema JSON schema describing the meaning of each data field
-     * @param templateUri current SDK template used to render the data
-     * @param extension must be {@link A2ATExtension#AUTHORIZATION_T}; Notification-T must use
-     *     {@link #openNotificationFromData}
-     * @return future completing with the first response
-     */
-    CompletableFuture<SendMessageResult> sendExtensionMessageFromData(
-            String agentName,
-            String instruction,
-            Map<String, Object> data,
-            Map<String, Object> schema,
-            TemplateUri templateUri,
-            A2ATExtension extension);
-
-    /**
-     * Structured-data Notification-T subscription: renders the service-recovery subscription
-     * prompt from typed data through the SDK schema-aware pipeline, then opens the long-lived
-     * stream. Slot mapping may invoke the configured LLM.
-     * Subsequent events pushed by the agent flow to {@code eventCallback}.
-     */
-    CompletableFuture<SendMessageResult> sendNotificationFromData(
-            String agentName,
-            String instruction,
-            Map<String, Object> data,
-            Map<String, Object> schema,
-            TemplateUri templateUri,
-            Consumer<Map<String, Object>> eventCallback);
-
-    /**
-     * Opens a structured-data Notification-T subscription and exposes its full stream lifecycle.
-     * Callers should retain and close the returned handle after the expected notification arrives.
-     */
-    CompletableFuture<NotificationSubscription> openNotificationFromData(
-            String agentName,
-            String instruction,
-            Map<String, Object> data,
-            Map<String, Object> schema,
-            TemplateUri templateUri,
-            Consumer<Map<String, Object>> eventCallback);
-
-    /**
-     * Establish a Notification-T subscription.
-     *
-     * <p>The returned future completes on the first status-bearing acknowledgement (normally
-     * {@code TASK_STATE_WORKING}), not on an artifact-only event. Subsequent events pushed by the
-     * agent must be forwarded to {@code eventCallback}; implementations cannot silently discard it.
-     */
-    CompletableFuture<SendMessageResult> sendNotification(
-            String agentName,
-            String instruction,
-            String naturalLanguageInput,
-            TemplateUri templateUri,
-            Consumer<Map<String, Object>> eventCallback);
-
-    /** Opens a Notification-T subscription and returns an explicit close/health handle. */
-    CompletableFuture<NotificationSubscription> openNotification(
-            String agentName,
-            String instruction,
-            String naturalLanguageInput,
-            TemplateUri templateUri,
-            Consumer<Map<String, Object>> eventCallback);
-
-    /** Natural-language variant for a Notification-T subscription. */
-    default CompletableFuture<SendMessageResult> sendNotification(
-            String agentName,
-            String instruction,
-            String naturalLanguageInput,
-            TemplateUri templateUri) {
-        return sendNotification(agentName, instruction, naturalLanguageInput, templateUri, null);
-    }
+    /** Registers a handle before starting I/O; early callbacks may close it directly. */
+    NotificationSubscription openNotification(String agentName, MessageContent content,
+            BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 }

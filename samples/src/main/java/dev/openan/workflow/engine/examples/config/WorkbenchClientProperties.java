@@ -15,8 +15,13 @@ public class WorkbenchClientProperties {
     private String credentialsPath = "";
     private boolean sslVerify;
     private String a2atEnvPath = "";
-    private String transportMode = "order";
-    private String mockGatewayUrl = "http://127.0.0.1:26400";
+    private boolean demoNegotiationEnabled;
+
+    /** Internal sample-host setting; SpringSpnDemo supplies its local-only default per application context. */
+    public boolean isDemoNegotiationEnabled() { return demoNegotiationEnabled; }
+
+    /** Enables missing-input demonstration for this host only, never a JVM-wide switch. */
+    public void setDemoNegotiationEnabled(boolean enabled) { demoNegotiationEnabled = enabled; }
 
     public String getOrchUrl() {
         return orchUrl;
@@ -48,21 +53,5 @@ public class WorkbenchClientProperties {
 
     public void setA2atEnvPath(String a2atEnvPath) {
         this.a2atEnvPath = a2atEnvPath;
-    }
-
-    public String getTransportMode() {
-        return transportMode;
-    }
-
-    public void setTransportMode(String transportMode) {
-        this.transportMode = transportMode;
-    }
-
-    public String getMockGatewayUrl() {
-        return mockGatewayUrl;
-    }
-
-    public void setMockGatewayUrl(String mockGatewayUrl) {
-        this.mockGatewayUrl = mockGatewayUrl;
     }
 }

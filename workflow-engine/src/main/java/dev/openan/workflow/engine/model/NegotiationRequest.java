@@ -19,77 +19,37 @@
 
 package dev.openan.workflow.engine.model;
 
-import net.openan.a2at.sdk.core.model.NegotiationPerformative;
-
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 
-/**
- * Immutable business view of an INPUT_REQUIRED Negotiation-T request.
- *
- * @param agentName agent requesting negotiation
- * @param concern rendered concern or question
- * @param sessionId negotiation session identifier
- * @param round current negotiation round
- * @param maxRounds negotiated round limit
- * @param performative communicative intent carried by the received context
- * @param kind semantic negotiation kind inferred from the current SDK template
- * @param templateUri received propose template URI
- * @param parameters immutable business parameters extracted by the SDK validate-and-fill pipeline
- * @param metadata immutable received metadata for application-specific inspection
- */
+/** Uninterpreted received content and history for one task's current negotiation session. */
 public record NegotiationRequest(
-        String agentName,
-        String concern,
-        String sessionId,
-        int round,
-        int maxRounds,
-        NegotiationPerformative performative,
-        Kind kind,
-        String templateUri,
-        Map<String, Object> parameters,
-        Map<String, Object> metadata) {
+        TaskRequest task,
+        MessageContent originalSubmission,
+        ReceivedMessage received,
+        List<Exchange> previousExchanges,
+        Duration remainingWait) {
 
-    /** Negotiation domains supported by the current A2A-T SDK. */
-    public enum Kind {
-        INFORMATION,
-        TARGET,
-        FEASIBILITY
+    /** One completed local interaction, without an engine-defined business schema. */
+    public record Exchange(ReceivedMessage received, NegotiationReply reply) {
+        public Exchange {
+            Objects.requireNonNull(received, "received");
+            Objects.requireNonNull(reply, "reply");
+        }
     }
 
-    /** Validates and defensively copies the request. */
     public NegotiationRequest {
-        if (agentName == null || agentName.isBlank()) {
-            throw new IllegalArgumentException("Negotiation agentName must not be blank");
-        }
-        concern = concern == null ? "" : concern;
-        if (sessionId == null || sessionId.isBlank()) {
-            throw new IllegalArgumentException("Negotiation sessionId must not be blank");
-        }
-        if (round < 1 || maxRounds < 1 || round > maxRounds) {
-            throw new IllegalArgumentException(
-                    "Negotiation rounds must satisfy 1 <= round <= maxRounds");
-        }
-        performative = Objects.requireNonNull(performative, "Negotiation performative is required");
-        if (performative != NegotiationPerformative.PROPOSE) {
-            throw new IllegalArgumentException(
-                    "Negotiation callback requires a PROPOSE performative, got " + performative);
-        }
-        if (kind == null) {
-            throw new IllegalArgumentException("Negotiation kind is required");
-        }
-        if (templateUri == null || templateUri.isBlank()) {
-            throw new IllegalArgumentException("Negotiation templateUri must not be blank");
-        }
-        parameters = immutableCopy(parameters);
-        metadata = immutableCopy(metadata);
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(originalSubmission, "originalSubmission");
+        Objects.requireNonNull(received, "received");
+        previousExchanges = List.copyOf(previousExchanges);
+        Objects.requireNonNull(remainingWait, "remainingWait");
+        if (remainingWait.isNegative()) throw new IllegalArgumentException("Negative remaining wait");
     }
 
-    private static Map<String, Object> immutableCopy(Map<String, Object> values) {
-        return values == null
-                ? Map.of()
-                : Collections.unmodifiableMap(new LinkedHashMap<>(values));
+    /** Counterpart identity, not a remote protocol task identifier. */
+    public String agentName() {
+        return task.getAgentName();
     }
 }

@@ -35,6 +35,7 @@ public final class NotificationSubscription implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicLong eventCount = new AtomicLong();
     private final AtomicReference<Instant> lastEventAt = new AtomicReference<>();
+    private volatile Throwable streamFailure;
 
     NotificationSubscription(String agentName, String contextId, Runnable closeAction) {
         this.agentName = Objects.requireNonNull(agentName, "agentName");
@@ -95,12 +96,11 @@ public final class NotificationSubscription implements AutoCloseable {
 
     void completeStream() {
         closed.set(true);
-        completion.complete(null);
     }
 
     void failStream(Throwable error) {
         closed.set(true);
-        completion.completeExceptionally(error);
+        streamFailure = error;
     }
 
     /** Internal signal that the thread executing the transport call has actually exited. */
@@ -110,6 +110,8 @@ public final class NotificationSubscription implements AutoCloseable {
 
     void markStreamTerminated() {
         streamTermination.complete(null);
+        if (streamFailure == null) completion.complete(null);
+        else completion.completeExceptionally(streamFailure);
     }
 
     @Override
@@ -123,7 +125,6 @@ public final class NotificationSubscription implements AutoCloseable {
             acknowledgement.completeExceptionally(
                     new CancellationException(
                             "Notification-T subscription closed before acknowledgement"));
-            completion.complete(null);
         }
     }
 

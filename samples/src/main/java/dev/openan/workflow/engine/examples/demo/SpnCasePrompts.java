@@ -32,7 +32,7 @@ import java.util.Map;
  * Original business data for the SPN private-line complaint scenario.
  *
  * <p>Holds the raw structured fields (not the rendered prompt): the demo passes these to the
- * engine's fromData track ({@code WorkflowEngineClient.sendMessageFromData}) and the A2A-T SDK
+ * host business callbacks, which call the A2A-T SDK's FromDataWithSchema API. The SDK
  * renders the Task-T prompt from the data + schema. This bypasses scenario recognition but the
  * SDK's schema-aware slot extraction may invoke its configured LLM. Callers hand over business
  * data, never a pre-rendered protocol prompt.
@@ -69,6 +69,21 @@ public final class SpnCasePrompts {
                     "Current SDK private-line complaint schema has no string required list");
         }
         return (List<String>) fields;
+    }
+
+    /** Explicit sample data source, shared by initial task preparation and later negotiation. */
+    public static Map<String, Object> complaintData(dev.openan.workflow.engine.model.TaskRequest request) {
+        Object input = request.getInput() == null ? null : request.getInput().data();
+        if (input != null) {
+            if (!(input instanceof Map<?, ?>)) throw new IllegalArgumentException("Complaint input must be an object");
+            return new com.fasterxml.jackson.databind.ObjectMapper().convertValue(input,
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        }
+        if ("SPN Domain Agent City1".equals(request.getAgentName()) || "diagnosis_city1".equals(request.getStepName()))
+            return privateLineComplaintData();
+        if ("SPN Domain Agent City2".equals(request.getAgentName()) || "diagnosis_city2".equals(request.getStepName()))
+            return privateLineComplaintDataCity2();
+        throw new IllegalArgumentException("No complaint input configured for this sample task");
     }
 
     /** Well-formed complaint (spec case 7.1): known faulty port in City1. */
@@ -135,7 +150,40 @@ public final class SpnCasePrompts {
     public static Map<String, Object> taskTMetadata(String taskPrompt) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(TASK_T_URI, taskPrompt);
+        metadata.put(net.openan.a2at.sdk.core.model.MetadataContent.TEMPLATE_URI_METADATA_KEY,
+                StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
         return metadata;
+    }
+
+    /** Explicit local fault injection; keep the original city complaint context unchanged. */
+    public static String withoutTaskObject(String prompt) {
+        int start = prompt.indexOf("## 任务对象");
+        int end = prompt.indexOf("## 任务上下文", start);
+        if (start < 0 || end < 0) throw new IllegalArgumentException("Missing Task-T sections");
+        return prompt.substring(0, start) + "## 任务对象(Task Object)\n接入端口名称：\n\n"
+                + prompt.substring(end);
+    }
+
+    /** Local Demo defaults to negotiation; external OMCs never receive automatic fault injection. */
+    public static boolean demoNegotiationEnabled(boolean embeddedOmc) {
+        String value = System.getProperty("a2at.samples.negotiation");
+        if (value != null && !List.of("true", "false").contains(value.toLowerCase(java.util.Locale.ROOT)))
+            throw new IllegalArgumentException("a2at.samples.negotiation must be true or false");
+        boolean enabled = value == null ? embeddedOmc : Boolean.parseBoolean(value);
+        if (enabled && !embeddedOmc)
+            throw new IllegalArgumentException("a2at.samples.negotiation is only allowed with local embedded OMCs");
+        if (enabled) injectNegotiation("diagnosis_city1", true); // Validate city before starting servers.
+        return enabled;
+    }
+
+    /** City selection applies only to this host instance's enabled demonstration. */
+    public static boolean injectNegotiation(String stepName, boolean enabled) {
+        if (!enabled) return false;
+        String city = System.getProperty("a2at.samples.negotiation.city", "city1");
+        if (!List.of("city1", "city2", "both").contains(city))
+            throw new IllegalArgumentException("a2at.samples.negotiation.city must be city1, city2 or both");
+        return ("both".equals(city) && List.of("diagnosis_city1", "diagnosis_city2").contains(stepName))
+                || ("diagnosis_" + city).equals(stepName);
     }
 
     // ------------------------------------------------------------------

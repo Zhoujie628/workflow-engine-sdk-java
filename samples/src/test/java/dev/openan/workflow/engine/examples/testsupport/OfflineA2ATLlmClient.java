@@ -63,12 +63,16 @@ public final class OfflineA2ATLlmClient implements LLMClient {
         if (propertiesValue instanceof Map<?, ?> properties
                 && properties.containsKey("semantic_verdict")) {
             Map<String, Object> response = new LinkedHashMap<>();
-            response.put("semantic_verdict", true);
+            String source = validationInput(prompt);
+            Map<String, Object> params = validationParams(properties, source);
+            boolean valid = verdict(properties, params, source);
+            response.put("semantic_verdict", valid);
             if (properties.containsKey("negotiation_type")) {
                 response.put("negotiation_type", "information");
             }
-            response.put("errors", List.of());
-            response.put("params", validationParams(properties, prompt));
+            response.put("errors", valid ? List.of() : List.of(Map.of("slot_name", "input",
+                    "code", "validation.semantic_rejected", "facts", Map.of("reason", "Missing actual input fields"))));
+            response.put("params", params);
             return response(response);
         }
         if (propertiesValue instanceof Map<?, ?> properties
@@ -84,8 +88,8 @@ public final class OfflineA2ATLlmClient implements LLMClient {
                                             "name",
                                             "接入端口名称",
                                             "value",
-                                            "P533-珠江旧城-PTN3900-23-TPA1EG24-1"),
-                                    Map.of("name", "投诉分类", "value", "专线质差"))));
+                                            portValue(validationInput(prompt))),
+                                    Map.of("name", "投诉分类", "value", label(validationInput(prompt), "投诉分类")))));
         }
 
         Object slotNames = jsonSchema.get("slotNames");
@@ -93,7 +97,7 @@ public final class OfflineA2ATLlmClient implements LLMClient {
             Map<String, Object> slots = new LinkedHashMap<>();
             for (Object rawName : names) {
                 String name = String.valueOf(rawName);
-                slots.put(name, slotValue(name, prompt));
+                slots.put(name, slotValue(name, validationInput(prompt)));
             }
             return response(Map.of("slots", slots, "slot_errors", List.of()));
         }
@@ -101,92 +105,129 @@ public final class OfflineA2ATLlmClient implements LLMClient {
                 "Unsupported offline A2A-T LLM schema: " + jsonSchema.keySet());
     }
 
-    private static Map<String, Object> validationParams(
-            Map<?, ?> outputProperties, String prompt) {
-        Object paramsValue = outputProperties.get("params");
-        if (paramsValue instanceof Map<?, ?> paramsSchema
-                && paramsSchema.get("properties") instanceof Map<?, ?> businessProperties
-                && !businessProperties.isEmpty()) {
-            Map<String, Object> params = new LinkedHashMap<>();
-            for (Object rawName : businessProperties.keySet()) {
-                String name = String.valueOf(rawName);
-                params.put(name, slotValue(name, prompt));
+    private static Map<String, Object> validationParams(Map<?, ?> outputProperties, String source) {
+        Map<?, ?> properties = outputProperties.get("params") instanceof Map<?, ?> params
+                && params.get("properties") instanceof Map<?, ?> fields ? fields : Map.of();
+        if (properties.isEmpty()) {
+            List<String> names = source.contains("## 任务类型") ? List.of("任务对象", "任务上下文")
+                    : source.contains("授权策略") ? List.of("授权策略的操作类型", "动网操作的授权策略列表")
+                    : source.contains("订阅条件") ? List.of("订阅条件", "上报通知数据格式") : List.of();
+            Map<String, Object> inferred = new LinkedHashMap<>();
+            names.forEach(name -> inferred.put(name, Map.of()));
+            properties = inferred;
+        }
+        Map<String, Object> values = new LinkedHashMap<>();
+        for (Object rawName : properties.keySet()) {
+            String name = String.valueOf(rawName);
+            if ("items".equals(name)) {
+                values.put(name, negotiationItems(source).keySet().stream().toList());
+            } else if ("relationship".equals(name)) {
+                values.put(name, source.contains("AND") ? "AND" : null);
+            } else if ("reason".equals(name)) {
+                String reason = section(source, "协商终止原因");
+                values.put(name, reason.isEmpty() ? section(source, "信息协商结果内容") : reason);
+            } else {
+                values.put(name, slotValue(name, source));
             }
-            return params;
         }
-        if (prompt.contains("授权策略") || prompt.contains("白名单")) {
-            return authorizationData(prompt);
-        }
-        if (prompt.contains("订阅条件") || prompt.contains("上报通知数据格式")) {
-            return SpnCasePrompts.subscribeServiceRecoveryData();
-        }
-        Map<String, Object> task = new LinkedHashMap<>();
-        task.put("任务对象", slotValue("任务对象", prompt));
-        task.put("任务上下文", slotValue("任务上下文", prompt));
-        return task;
+        return values;
     }
 
-    private static Map<String, Object> authorizationData(String prompt) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("授权策略的操作类型", authorizationOperation(prompt));
-        int ruleIndex = prompt.indexOf("业务投诉诊断，业务抢通，隧道调优，");
-        int idIndex = prompt.indexOf("7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3");
-        data.put(
-                "动网操作的授权策略列表",
-                idIndex >= 0 && (ruleIndex < 0 || idIndex < ruleIndex)
-                        ? "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"
-                        : "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18");
-        return data;
+    private static boolean verdict(Map<?, ?> outputProperties, Map<String, Object> params, String source) {
+        if (outputProperties.containsKey("negotiation_type")) {
+            boolean formal = source.contains("## 信息协商") || source.contains("## 协商结果");
+            if (!formal) return false; // A parts summary is NOT a negotiation prompt.
+        }
+        if (outputProperties.get("params") instanceof Map<?, ?> schema && schema.get("required") instanceof List<?> required) {
+            for (Object key : required) {
+                Object value = params.get(key);
+                if (value == null || value instanceof String s && s.isBlank()
+                        || value instanceof List<?> list && list.isEmpty()) return false;
+            }
+        }
+        if (source.contains("## 任务类型")) {
+            String object = String.valueOf(params.getOrDefault("任务对象", ""));
+            String context = String.valueOf(params.getOrDefault("任务上下文", ""));
+            return !portValue(object).isEmpty() && !label(context, "投诉分类").isEmpty()
+                    && !label(context, "OSS侧事件流水号").isEmpty();
+        }
+        return true;
     }
 
-    private static Object slotValue(String name, String prompt) {
-        if (name.contains("授权策略的操作类型") || name.contains("操作类型")) {
-            return authorizationOperation(prompt);
-        }
-        if (name.contains("动网操作的授权策略列表") || name.contains("策略列表")) {
-            return authorizationData(prompt).get("动网操作的授权策略列表");
-        }
-        if (name.contains("订阅条件")) return "";
-        if (name.contains("上报通知数据格式")) {
-            return SpnCasePrompts.subscribeServiceRecoveryData().get("上报通知数据格式");
-        }
-        if (name.contains("接入端口名称")) {
-            return "P533-珠江旧城-PTN3900-23-TPA1EG24-1";
-        }
-        if (name.contains("投诉分类")) return "专线质差";
-        if (name.contains("任务对象")) {
-            if (prompt.contains("P882-")) {
-                return "接入端口名称：P882-珠江新城-PTN7900-23-TPA1EG24-11";
-            }
-            if (prompt.contains("\"任务对象\":\"\"")
-                    || prompt.contains("'任务对象': ''")) {
-                return "";
-            }
-            return "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17";
-        }
-        if (name.contains("任务上下文")) {
-            return "投诉分类：专线质差；OSS侧事件流水号：event-id-20260511-09013";
-        }
-        return "test-value";
+    private static Map<String, String> negotiationItems(String source) {
+        String content = section(source, "信息协商结果内容");
+        if (content.isEmpty()) content = section(source, "所需信息项");
+        Map<String, String> values = new LinkedHashMap<>();
+        var matcher = java.util.regex.Pattern.compile("(?m)^\\s*\\d+[.、]\\s*([^：:\\r\\n]+)[：:]\\s*(.*)$").matcher(content);
+        while (matcher.find()) values.put(matcher.group(1).strip(), matcher.group(2).strip());
+        return values;
     }
 
-    private static String authorizationOperation(String prompt) {
-        Map<String, String> candidates =
-                Map.of(
-                        "新增授权策略", "新增授权策略",
-                        "修改授权策略", "修改授权策略",
-                        "删除授权策略", "删除授权策略",
-                        "查询授权策略", "查询授权策略");
-        int earliest = Integer.MAX_VALUE;
-        String operation = "新增授权策略";
-        for (Map.Entry<String, String> candidate : candidates.entrySet()) {
-            int index = prompt.indexOf(candidate.getKey());
-            if (index >= 0 && index < earliest) {
-                earliest = index;
-                operation = candidate.getValue();
+    private static Object slotValue(String name, String source) {
+        String value = section(source, name);
+        if (!value.isEmpty()) return value;
+        Map<String, String> items = negotiationItems(source);
+        if (items.containsKey(name)) return items.get(name);
+        // Structured SDK input uses Map.toString(); values are confined to the actual [input] block.
+        String keys = "任务对象|任务上下文|授权策略的操作类型|动网操作的授权策略列表|订阅条件|上报通知数据格式";
+        var field = java.util.regex.Pattern.compile("(?:^|[,{])\\s*" + java.util.regex.Pattern.quote(name)
+                + "=(.*?)(?=,\\s*(?:" + keys + ")=|}\\s*$)", java.util.regex.Pattern.DOTALL).matcher(source);
+        if (field.find()) return field.group(1).strip();
+        if ("接入端口名称".equals(name)) return portValue(source);
+        if ("投诉分类".equals(name)) return label(source, name);
+        // Small explicit natural-language fixture, not general LLM emulation.
+        if ("任务对象".equals(name) || "任务上下文".equals(name)) {
+            int start = source.indexOf(name + "：");
+            if (start >= 0) {
+                start += name.length() + 1;
+                int end = source.indexOf("；任务上下文：", start);
+                return source.substring(start, end < 0 ? source.length() : end).strip();
             }
         }
-        return operation;
+        return "";
+    }
+
+    private static String section(String source, String name) {
+        var heading = java.util.regex.Pattern.compile("(?m)^##\\s+" + java.util.regex.Pattern.quote(name)
+                + "(?:\\([^\\r\\n]*\\))?[ \\t]*\\r?\\n").matcher(source);
+        if (!heading.find()) return "";
+        int end = source.indexOf("\n## ", heading.end());
+        String body = source.substring(heading.end(), end < 0 ? source.length() : end);
+        int guidance = body.indexOf("\n要求");
+        if (guidance >= 0) body = body.substring(0, guidance);
+        return body.replace("（必选）", "").replace("（必填）", "").strip();
+    }
+
+    private static String label(String source, String name) {
+        var matcher = java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(name)
+                + "[：:]\\s*[\\\"“]?([^；;\\\"”\\r\\n]+)").matcher(source);
+        return matcher.find() ? matcher.group(1).strip() : "";
+    }
+
+    /** Only actual inputs, never explanatory examples or template guidance. */
+    private static String validationInput(String prompt) {
+        int start = prompt.indexOf("[input]\n");
+        if (start >= 0) {
+            start += "[input]\n".length();
+            int end = prompt.indexOf("\n\n[slots]", start);
+            return prompt.substring(start, end < 0 ? prompt.length() : end);
+        }
+        start = prompt.indexOf("输入内容：");
+        if (start >= 0) {
+            int end = prompt.indexOf("\n模板标识：", start);
+            return prompt.substring(start + "输入内容：".length(), end < 0 ? prompt.length() : end);
+        }
+        start = prompt.indexOf("待校验的协商报文：\n");
+        if (start >= 0) {
+            int end = prompt.indexOf("\n\n请按系统提示词", start);
+            return prompt.substring(start + "待校验的协商报文：\n".length(), end < 0 ? prompt.length() : end);
+        }
+        return prompt;
+    }
+
+    private static String portValue(String prompt) {
+        var matcher = java.util.regex.Pattern.compile("P\\d+-[\\p{L}\\p{N}-]+").matcher(prompt);
+        return matcher.find() ? matcher.group() : "";
     }
 
     private LLMResponse response(Map<String, ?> body) {

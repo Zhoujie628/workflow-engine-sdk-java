@@ -109,7 +109,9 @@ public class PrePositionedExtensionHandler {
         try {
             Path envPath = Path.of(env);
             validationLanguage = A2ATConfig.load(envPath).prompt().language();
-            a2atServer = new A2ATServer(envPath);
+            a2atServer =
+                    dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                            () -> new A2ATServer(envPath));
             return a2atServer;
         } catch (Exception e) {
             log.warn("A2ATServer init failed: {}", e.getMessage());
@@ -390,7 +392,7 @@ public class PrePositionedExtensionHandler {
         return server.validateAuthPromptAndDataFilling(
                 prompt,
                 validationSchema(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT),
-                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
+                StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT.uri());
     }
 
     /** Validates and stores a Notification-T subscription before the server opens its SSE loop. */
@@ -413,7 +415,7 @@ public class PrePositionedExtensionHandler {
             filled = server.validateNotificationPromptAndDataFilling(
                     prompt,
                     validationSchema(StandardTemplates.SERVICE_RECOVERY),
-                    StandardTemplates.SERVICE_RECOVERY);
+                    StandardTemplates.SERVICE_RECOVERY.uri());
         }
         requireExtractedSectionsMatch(
                 prompt,

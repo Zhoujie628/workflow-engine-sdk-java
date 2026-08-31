@@ -154,6 +154,11 @@ public class WorkbenchOrchestrator {
 
     /** Run the full orchestration pipeline and return the result text. */
     public String run(String messageText) throws Exception {
+        return run(messageText, Boolean.getBoolean("a2at.samples.negotiation"));
+    }
+
+    /** Runs with an explicit sample-host negotiation setting, without changing global properties. */
+    public String run(String messageText, boolean demoNegotiationEnabled) throws Exception {
         long runStarted = System.nanoTime();
         String runtimeName =
                 clientRuntime != null ? clientRuntime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime";
@@ -196,7 +201,7 @@ public class WorkbenchOrchestrator {
                         clientRuntime,
                         WorkflowEngineClientConfig.builder()
                                 .sslVerify(sslVerify)
-                                .a2atEnvPath(a2atEnvPath)
+
                                 .credentialsConfigPath(credentialsPath)
                                 .authProvider(authProvider)
                                 .build());
@@ -215,7 +220,7 @@ public class WorkbenchOrchestrator {
                     psopId,
                     workflow.getName());
             WorkbenchControlPoint controlPoint =
-                    new WorkbenchControlPoint(a2atEnvPath, new NegotiationStrategy(a2atEnvPath));
+                    new WorkbenchControlPoint(a2atEnvPath, new NegotiationStrategy(a2atEnvPath), demoNegotiationEnabled);
             ExecutionResult result =
                     ExecutePsop.builder()
                             .psop(workflow)
@@ -226,7 +231,7 @@ public class WorkbenchOrchestrator {
                             .lang("zh")
                             .sslVerify(sslVerify)
                             .credentialsConfigPath(credentialsPath)
-                            .a2atEnvPath(a2atEnvPath)
+
                             .eventCallback(createLogCallback())
                             .onFinish(
                                     (r, events) -> {

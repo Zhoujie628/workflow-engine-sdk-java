@@ -25,12 +25,12 @@ import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
  * A2A-T extension types supported by the workflow execution engine.
  *
  * <p>Each enum constant encapsulates the full extension URI so callers never need to hardcode URI
- * strings. Use these with {@link ExtensionSender#sendExtensionMessage}.
+ * strings. Use these when explicitly activating final message content.
  *
  * <p>The engine handles these extensions automatically:
  *
  * <ul>
- *   <li>{@link #TASK_T} - structured task prompt generation (in-workflow)
+ *   <li>{@link #TASK_T} - host-generated task content (in-workflow)
  *   <li>{@link #NEGOTIATION_T} - negotiation auto-loop (in-workflow)
  *   <li>{@link #AUTHORIZATION_T} - independent whitelist authorization operation
  *   <li>{@link #NOTIFICATION_T} - independent result subscription
@@ -39,7 +39,7 @@ import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
  */
 public enum A2ATExtension {
 
-    /** Structured task prompt. Handled automatically during workflow execution. */
+    /** Host-generated task content. The engine does not generate it. */
     TASK_T(ExtensionUriConstants.TASK_T_EXTENSION_URI),
 
     /** Negotiation text exchange. Handled automatically via auto-loop. */
@@ -54,42 +54,6 @@ public enum A2ATExtension {
     /** Canonical SDK metadata key carrying id/round/maxRounds/performative. */
     public static final String NEGOTIATION_CONTEXT_META_KEY =
             net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
-
-    /**
-     * Internal metadata key under which {@code NegotiationTHandler} stores the extracted
-     * negotiation message text. Engine-internal, not an A2A-T protocol key.
-     */
-    public static final String NEGOTIATION_MESSAGE_META_KEY = "negotiation_message";
-
-    /**
-     * Internal metadata key under which {@code NegotiationTHandler} stores the parameters
-     * extracted by the validate-and-fill pipeline. Engine-internal, not an A2A-T protocol key.
-     */
-    public static final String NEGOTIATION_PARAMS_META_KEY = "negotiation_params";
-
-    /**
-     * Engine-internal metadata key carrying structured task input (a string-to-object map) for
-     * the SDK's {@code generateTaskPromptFromDataWithSchema} pipeline. When present in the
-     * caller-supplied metadata, {@code TaskTHandler} renders the Task-T prompt from the data
-     * through the schema-aware path instead of running scenario recognition on the message text. Consumed
-     * (removed) before the A2A message goes on the wire; the rendered prompt travels under the
-     * Task-T extension URI.
-     */
-    public static final String TASK_DATA_META_KEY = "a2at.taskData";
-
-    /**
-     * Engine-internal metadata key carrying the JSON schema describing {@link
-     * #TASK_DATA_META_KEY} fields. Required when task data is present; the schema tells the
-     * SDK renderer what each field means. Engine-internal, never sent on the wire.
-     */
-    public static final String TASK_SCHEMA_META_KEY = "a2at.taskSchema";
-
-    /**
-     * Engine-internal metadata key carrying the template URI string for the fromData rendering
-     * track (e.g. {@code "Task-T/network-layer/private-line-complaint/v1"}). Required for
-     * structured Task-T rendering. Engine-internal, never sent on the wire.
-     */
-    public static final String TASK_TEMPLATE_META_KEY = "a2at.taskTemplate";
 
     private final String uri;
 

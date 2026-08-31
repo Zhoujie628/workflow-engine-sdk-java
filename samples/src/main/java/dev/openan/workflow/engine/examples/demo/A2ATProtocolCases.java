@@ -45,6 +45,7 @@ public class A2ATProtocolCases {
     private A2ATransport authorizationTransport;
     private A2ATransport notificationTransport;
     private DefaultWorkflowEngineClient client;
+    private net.openan.a2at.sdk.client.A2ATClient contentClient;
     private DefaultWorkflowEngineClient notificationControlClient;
     private DefaultExtensionSender authorizationSender;
     private DefaultExtensionSender notificationSender;
@@ -106,7 +107,7 @@ public class A2ATProtocolCases {
         WorkflowEngineClientConfig config =
                 WorkflowEngineClientConfig.builder()
                         .sslVerify(false)
-                        .a2atEnvPath(EnvResolver.resolveEnvPath())
+
                         .credentialsConfigPath(
                                 OmcAgentLauncher.resourcePath("spn_agent_credentials.json"))
                         .build();
@@ -116,6 +117,8 @@ public class A2ATProtocolCases {
         authorizationTransport = new A2ATransport(cards, null, config);
         notificationTransport = new A2ATransport(cards, null, config);
         client = new DefaultWorkflowEngineClient(taskTransport);
+        contentClient = dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(EnvResolver.resolveEnvPath())));
         client.setControlPoint(
                 new dev.openan.workflow.engine.control.DefaultControlPoint(
                         new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(
@@ -145,37 +148,46 @@ public class A2ATProtocolCases {
         omc.close();
     }
 
-    /** Case 0: enumerate available A2A-T templates via the engine's template-query surface. */
+    /** Case 0: enumerate available A2A-T templates via the host-owned SDK. */
     private void case_0() {
         log.info("[Case 0] Enumerate A2A-T templates");
-        var prompts = client.getPrompts();
+        var prompts = contentClient.getPrompts();
         log.info("[Case 0] All templates: {}", prompts.size());
         for (var t : prompts) {
             log.info("[Case 0]   {} ({} chars)", t.templateUri().uri(),
                     t.content() != null ? t.content().length() : 0);
         }
-        var negPrompts = client.getNegotiationPrompts();
+        var negPrompts = contentClient.getPrompts().stream().filter(p -> p.templateUri().extensionName().equals("Negotiation-T")).toList();
         log.info("[Case 0] Negotiation templates: {}", negPrompts.size());
         for (var t : negPrompts) {
             log.info("[Case 0]   {} -> {}", t.templateUri().uri(), t.description());
         }
-        var one = client.getPrompt(net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT);
+        var one = contentClient.getPrompt(net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
         log.info("[Case 0] getTaskTemplate(private-line-complaint): present={}", one.isPresent());
     }
 
     private void case_7_1() throws Exception {
         log.info("[Case 7.1] Create diagnosis task (Task-T, fromData track)");
         SendMessageResult result =
-                client.sendMessageFromData(
-                                AGENT_NAME,
-                                SpnCasePrompts.TASK_TEXT,
-                                SpnCasePrompts.privateLineComplaintData(),
-                                SpnCasePrompts.privateLineComplaintSchema(),
-                                net.openan.a2at.sdk.core.model.StandardTemplates
-                                        .PRIVATE_LINE_COMPLAINT)
+                sendDiagnosis(dev.openan.workflow.engine.client.A2atMessages.from(
+                        contentClient.generateTaskPromptFromDataWithSchema(SpnCasePrompts.privateLineComplaintData(), SpnCasePrompts.privateLineComplaintSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .PRIVATE_LINE_COMPLAINT.uri()),
+                        List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
                         .join();
         log.info("[Case 7.1] state={}, textLen={}", result.getTaskState(), result.getText() != null ? result.getText().length() : 0);
         if (result.getTask() != null) { lastTaskId.set(result.getTask().id()); log.info("[Case 7.1] taskId={}", result.getTask().id()); }
+    }
+
+    private CompletableFuture<SendMessageResult> sendDiagnosis(dev.openan.workflow.engine.model.MessageContent content) {
+        // Fault-injection cases omit/mutate the transmitted field; the host keeps authoritative input
+        // to demonstrate a legitimate correction, never a hardcoded engine negotiation fallback.
+        var request = dev.openan.workflow.engine.model.TaskRequest.builder().agentName(AGENT_NAME)
+                .executionId(java.util.UUID.randomUUID().toString()).taskId(java.util.UUID.randomUUID().toString())
+                .stepName("diagnosis_city1").instruction(SpnCasePrompts.TASK_TEXT)
+                .input(dev.openan.workflow.engine.model.BusinessInput.data(SpnCasePrompts.privateLineComplaintData())).build();
+        var callbacks = new dev.openan.workflow.engine.control.DefaultControlPoint(
+                new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(EnvResolver.resolveEnvPath()));
+        return client.dispatch(request, content, callbacks);
     }
 
     private void case_7_2() throws Exception {
@@ -189,12 +201,11 @@ public class A2ATProtocolCases {
     private void case_7_3() {
         log.info("[Case 7.3] Negotiation - missing required parameter");
         int before = negotiationRequests.get();
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(
-                A2ATExtension.TASK_T.uri(),
+        Map<String, Object> metadata = SpnCasePrompts.taskTMetadata(
                 SpnCasePrompts.privateLineComplaintPromptBlankObject());
-        metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
-        SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(参数缺失)", null, metadata).join();
+        SendMessageResult result = sendDiagnosis(new dev.openan.workflow.engine.model.MessageContent(
+                List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT + "(参数缺失)")), metadata,
+                java.util.Set.of(A2ATExtension.TASK_T.uri()))).join();
         requireCompletedNegotiation("7.3", result, before);
         log.info("[Case 7.3] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
@@ -203,13 +214,12 @@ public class A2ATProtocolCases {
         log.info("[Case 7.4] Negotiation - semantic error (Task-T fromData + Negotiation-T)");
         int before = negotiationRequests.get();
         Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put(A2ATExtension.TASK_DATA_META_KEY, SpnCasePrompts.privateLineComplaintDataUnknownPort());
-        metadata.put(A2ATExtension.TASK_SCHEMA_META_KEY, SpnCasePrompts.privateLineComplaintSchema());
-        metadata.put(
-                A2ATExtension.TASK_TEMPLATE_META_KEY,
-                net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
-        metadata.put(NEGOTIATION_T_URI, ""); // activate Negotiation-T extension
-        SendMessageResult result = client.sendMessage(AGENT_NAME, SpnCasePrompts.TASK_TEXT + "(语义错误)", null, metadata).join();
+        metadata.putAll(contentClient.generateTaskPromptFromDataWithSchema(
+                SpnCasePrompts.privateLineComplaintDataUnknownPort(), SpnCasePrompts.privateLineComplaintSchema(),
+                net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri()).buildMetadataContent());
+        SendMessageResult result = sendDiagnosis(new dev.openan.workflow.engine.model.MessageContent(
+                List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT + "(语义错误)")), metadata,
+                java.util.Set.of(A2ATExtension.TASK_T.uri()))).join();
         requireCompletedNegotiation("7.4", result, before);
         log.info("[Case 7.4] state={}, metaKeys={}", result.getTaskState(), result.getMetadata() != null ? result.getMetadata().keySet() : "none");
     }
@@ -233,14 +243,11 @@ public class A2ATProtocolCases {
     private void case_7_5() {
         log.info("[Case 7.5] Add authorization (Authorization-T)");
         SendMessageResult result =
-                authorizationSender.sendExtensionMessageFromData(
-                                AGENT_NAME,
-                                "新增动网操作授权",
-                                SpnCasePrompts.addAuthorizationData(),
-                                SpnCasePrompts.authorizationSchema(),
-                                net.openan.a2at.sdk.core.model.StandardTemplates
-                                        .AUTHORIZATION_POLICY_MANAGEMENT,
-                                A2ATExtension.AUTHORIZATION_T)
+                authorizationSender.sendAuthorization(AGENT_NAME,
+                        dev.openan.workflow.engine.client.A2atMessages.from(
+                                contentClient.generateAuthPromptFromDataWithSchema(SpnCasePrompts.addAuthorizationData(), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
+                                List.of(new org.a2aproject.sdk.spec.TextPart("新增动网操作授权"))))
                         .join();
         requireExtensionResponse(
                 result,
@@ -253,18 +260,15 @@ public class A2ATProtocolCases {
     private void case_7_6() {
         log.info("[Case 7.6] Delete authorization (Authorization-T)");
         SendMessageResult result =
-                authorizationSender.sendExtensionMessageFromData(
-                                AGENT_NAME,
-                                "删除动网操作的授权",
-                                Map.of(
+                authorizationSender.sendAuthorization(AGENT_NAME,
+                        dev.openan.workflow.engine.client.A2atMessages.from(
+                                contentClient.generateAuthPromptFromDataWithSchema(Map.of(
                                         "授权策略的操作类型",
                                         "删除授权策略",
                                         "动网操作的授权策略列表",
-                                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"),
-                                SpnCasePrompts.authorizationSchema(),
-                                net.openan.a2at.sdk.core.model.StandardTemplates
-                                        .AUTHORIZATION_POLICY_MANAGEMENT,
-                                A2ATExtension.AUTHORIZATION_T)
+                                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
+                                List.of(new org.a2aproject.sdk.spec.TextPart("删除动网操作的授权"))))
                         .join();
         requireExtensionResponse(
                 result,
@@ -276,18 +280,15 @@ public class A2ATProtocolCases {
     private void case_7_7() {
         log.info("[Case 7.7] Query authorization (Authorization-T)");
         SendMessageResult result =
-                authorizationSender.sendExtensionMessageFromData(
-                                AGENT_NAME,
-                                "查询业务抢通操作授权信息",
-                                Map.of(
+                authorizationSender.sendAuthorization(AGENT_NAME,
+                        dev.openan.workflow.engine.client.A2atMessages.from(
+                                contentClient.generateAuthPromptFromDataWithSchema(Map.of(
                                         "授权策略的操作类型",
                                         "查询授权策略",
                                         "动网操作的授权策略列表",
-                                        "业务场景：业务投诉诊断，处置类型：业务抢通，操作名称：隧道调优"),
-                                SpnCasePrompts.authorizationSchema(),
-                                net.openan.a2at.sdk.core.model.StandardTemplates
-                                        .AUTHORIZATION_POLICY_MANAGEMENT,
-                                A2ATExtension.AUTHORIZATION_T)
+                                        "业务场景：业务投诉诊断，处置类型：业务抢通，操作名称：隧道调优"), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                        .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
+                                List.of(new org.a2aproject.sdk.spec.TextPart("查询业务抢通操作授权信息"))))
                         .join();
         requireExtensionResponse(
                 result,
@@ -302,22 +303,16 @@ public class A2ATProtocolCases {
         recoveryPlanReceived.set(false);
         recoveryNotificationReceived.set(false);
         notificationSubscription =
-                notificationSender.openNotificationFromData(
-                                AGENT_NAME,
-                                "订阅业务抢通事件",
-                                SpnCasePrompts.subscribeServiceRecoveryData(),
-                                SpnCasePrompts.serviceRecoverySchema(),
-                                net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
-                                data -> {
-                                    log.info("[Case 7.8] callback: keys={}", data.keySet());
-                                    if ("recovery-plan".equals(data.get("artifact_name"))) {
-                                        recoveryPlanReceived.set(true);
-                                    }
-                                    if ("recovery-result".equals(data.get("artifact_name"))) {
-                                        recoveryNotificationReceived.set(true);
-                                    }
-                                })
-                        .join();
+                notificationSender.openNotification(AGENT_NAME,
+                        dev.openan.workflow.engine.client.A2atMessages.from(
+                                contentClient.generateNotificationPromptFromDataWithSchema(SpnCasePrompts.subscribeServiceRecoveryData(), SpnCasePrompts.serviceRecoverySchema(), net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY.uri()),
+                                List.of(new org.a2aproject.sdk.spec.TextPart("订阅业务抢通事件"))),
+                        (handle, received) -> {
+                            if (received.artifacts().stream().anyMatch(artifact -> "recovery-plan".equals(artifact.name())))
+                                recoveryPlanReceived.set(true);
+                            if (received.artifacts().stream().anyMatch(artifact -> "recovery-result".equals(artifact.name())))
+                                recoveryNotificationReceived.set(true);
+                        });
         SendMessageResult result = notificationSubscription.acknowledgement().join();
         requireExtensionResponse(
                 result,

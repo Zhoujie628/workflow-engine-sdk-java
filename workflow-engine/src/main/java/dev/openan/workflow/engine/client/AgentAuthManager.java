@@ -170,9 +170,4 @@ class AgentAuthManager {
     }
   }
 
-  /** Build the extension-header contributor for an AgentCard, if it declares extensions. */
-  public ExtensionInterceptor buildExtensionInterceptor(AgentCard agentCard) {
-    List<String> extUris = extractExtensionUris(agentCard);
-    return extUris.isEmpty() ? null : new ExtensionInterceptor(extUris);
-  }
 }

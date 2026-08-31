@@ -43,7 +43,13 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
     private EventCallback eventCallback = new EventCallback();
     private ControlPoint controlPoint;
     private String defaultResponse = "stub-response";
-    private String defaultTaskState = "COMPLETED";
+    private String defaultTaskState = "TASK_STATE_COMPLETED";
+    private List<Object> defaultOutputs = List.of();
+
+    public StubWorkflowEngineClient withDefaultOutputs(List<Object> outputs) {
+        defaultOutputs = outputs;
+        return this;
+    }
 
     public StubWorkflowEngineClient(String... agentNames) {
         this.agentNames.addAll(List.of(agentNames));
@@ -65,8 +71,20 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
     }
 
     @Override
+    public CompletableFuture<SendMessageResult> dispatch(
+            dev.openan.workflow.engine.model.TaskRequest request,
+            dev.openan.workflow.engine.model.MessageContent content, ControlPoint callbacks) {
+        return sendMessage(request.getAgentName(), content);
+    }
+
+    @Override
     public CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message, String contextId, Map<String, Object> metadata) {
+            String agentName, dev.openan.workflow.engine.model.MessageContent content) {
+        String message = content.parts().stream().filter(org.a2aproject.sdk.spec.TextPart.class::isInstance)
+                .map(org.a2aproject.sdk.spec.TextPart.class::cast).map(org.a2aproject.sdk.spec.TextPart::text)
+                .collect(java.util.stream.Collectors.joining());
+        String contextId = null;
+        Map<String, Object> metadata = content.metadata();
         sent.add(new SentMessage(agentName, message, contextId, metadata));
         String text = cannedResponses.getOrDefault(agentName, defaultResponse);
         if (eventCallback != null) {
@@ -82,6 +100,11 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
         }
         SendMessageResult result =
                 SendMessageResult.builder()
+                        .receivedMessages(List.of(new dev.openan.workflow.engine.model.ReceivedMessage(
+                                dev.openan.workflow.engine.model.MessageContent.parts(defaultOutputs.isEmpty()
+                                        ? text.isEmpty() ? List.of() : List.of(new org.a2aproject.sdk.spec.TextPart(text))
+                                        : defaultOutputs.stream().<org.a2aproject.sdk.spec.Part<?>>map(value ->
+                                                new org.a2aproject.sdk.spec.DataPart(value)).toList()), Map.of(), List.of())))
                         .text(text)
                         .taskState(defaultTaskState)
                         .metadata(new HashMap<>())

@@ -21,7 +21,8 @@ package dev.openan.workflow.engine.client;
 
 import dev.openan.workflow.engine.model.SendMessageResult;
 
-import net.openan.a2at.sdk.client.A2ATClient;
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.ReceivedMessage;
 
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.MessageEvent;
@@ -37,6 +38,7 @@ import org.a2aproject.sdk.spec.Task;
 import org.a2aproject.sdk.spec.TaskArtifactUpdateEvent;
 import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
 import org.a2aproject.sdk.spec.TextPart;
+import org.a2aproject.sdk.spec.DataPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,12 +82,11 @@ public class A2ATransport implements AutoCloseable {
     private final A2AJavaClientRuntime a2aClientRuntime;
     private final AgentAuthManager authManager;
     private final AuthProvider authProvider;
-    private final A2ATClient a2atClient;
     private final String contextId;
-    private volatile A2ATContentFacade contentFacade;
     private final ClientCallContextFactory clientCallContextFactory;
     private final ExecutorService asyncExecutor;
     private final long notificationAckTimeoutSeconds;
+    private final long sendTimeoutSeconds;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final java.util.Set<NotificationSubscription> notificationSubscriptions =
             ConcurrentHashMap.newKeySet();
@@ -113,6 +114,7 @@ public class A2ATransport implements AutoCloseable {
                                 config.getSendExecutorQueueCapacity());
         this.contextId = UUID.randomUUID().toString();
         this.notificationAckTimeoutSeconds = config.getNotificationAckTimeoutSeconds();
+        this.sendTimeoutSeconds = config.getSendTimeoutSeconds();
         this.asyncExecutor =
                 new ThreadPoolExecutor(
                         config.getSendExecutorCoreSize(),
@@ -126,16 +128,8 @@ public class A2ATransport implements AutoCloseable {
                             return t;
                         },
                         new ThreadPoolExecutor.CallerRunsPolicy());
-        // Do not copy SDK .env values into global JVM properties. Each transport constructs its
-        // own SDK client from the explicit path, which keeps Task/Authorization/Notification
-        // channels independently configurable and prevents cross-instance credential leakage.
         CredentialHttpTransport credentialHttpTransport = null;
-        String credentialEncryptionKey = null;
-        if (config.getA2atEnvPath() != null) {
-            credentialEncryptionKey =
-                    EnvFileLoader.read(java.nio.file.Path.of(config.getA2atEnvPath()))
-                            .get("A2AT_CRED_KEY");
-        }
+        String credentialEncryptionKey = config.getCredentialEncryptionKey();
         if (config.getCredentialsConfigPath() != null
                 || config.getCredentialsConfig() != null) {
             credentialHttpTransport =
@@ -163,18 +157,13 @@ public class A2ATransport implements AutoCloseable {
         } else {
             this.authManager = new AgentAuthManager();
         }
-        this.a2atClient = initA2atClient(config.getA2atEnvPath());
         this.authProvider = config.getAuthProvider();
         this.clientCallContextFactory =
                 new ClientCallContextFactory(
                         new AuthProviderHeaderContributor(authProvider),
-                        new CredentialHeaderContributor(authManager, authProvider),
-                        new ExtensionHeaderContributor(authManager));
+                        new CredentialHeaderContributor(authManager, authProvider));
         cardMap = java.util.Collections.unmodifiableMap(validatedCards);
-        log.info(
-                "[Transport] Initialized with {} agent(s), a2at={}",
-                cardMap.size(),
-                a2atClient != null);
+        log.info("[Transport] Initialized with {} agent(s)", cardMap.size());
     }
 
     public static String extractResponseText(Iterable<ClientEvent> events) {
@@ -354,22 +343,6 @@ public class A2ATransport implements AutoCloseable {
         return uris;
     }
 
-    private A2ATClient initA2atClient(String a2atEnvPath) {
-        if (a2atEnvPath == null || a2atEnvPath.isEmpty()) {
-            return null;
-        }
-        try {
-            return new A2ATClient(java.nio.file.Path.of(a2atEnvPath));
-        } catch (Exception e) {
-            throw new IllegalArgumentException(
-                    "Failed to initialize A2A-T client from " + a2atEnvPath, e);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // ClientEvent extraction (static helpers, shared by facades)
-    // ------------------------------------------------------------------
-
     public AgentCard getCard(String agentName) {
         return cardMap.get(agentName);
     }
@@ -378,32 +351,8 @@ public class A2ATransport implements AutoCloseable {
         return new ArrayList<>(cardMap.keySet());
     }
 
-    public A2ATClient getA2atClient() {
-        return a2atClient;
-    }
-
-    /**
-     * Content-layer facade over the SDK client: negotiation message generation (propose / accept /
-     * reject / abort, from data or text), validate-and-fill, and template queries. Returns null
-     * when no A2A-T env path was configured.
-     */
-    public A2ATContentFacade getContentFacade() {
-        A2ATClient local = a2atClient;
-        if (local == null) {
-            return null;
-        }
-        A2ATContentFacade facade = contentFacade;
-        if (facade == null) {
-            synchronized (this) {
-                facade = contentFacade;
-                if (facade == null) {
-                    facade = new A2ATContentFacade(local);
-                    contentFacade = facade;
-                }
-            }
-        }
-        return facade;
-    }
+    /** Time budget shared by sending and business interaction callbacks. */
+    public long sendTimeoutSeconds() { return sendTimeoutSeconds; }
 
     public String getContextId() {
         return contextId;
@@ -444,39 +393,31 @@ public class A2ATransport implements AutoCloseable {
      * wires it to its event callback, the one-shot sender passes {@code null}.
      */
     public CompletableFuture<SendMessageResult> send(
-            AgentCard agentCard,
-            String agentName,
-            String message,
-            String contextId,
-            Map<String, Object> metadata,
-            Consumer<ClientEvent> eventSink) {
-        if (closed.get()) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("A2A transport is closed"));
-        }
-        return send(agentCard, agentName, message, contextId, null, metadata, eventSink);
+            AgentCard agentCard, String agentName, MessageContent content, String contextId,
+            String taskId, Consumer<ClientEvent> eventSink) {
+        return send(agentCard, agentName, content, contextId, taskId, eventSink, () -> true);
     }
 
-    /** Send a continuation message for an existing A2A task. */
-    public CompletableFuture<SendMessageResult> send(
-            AgentCard agentCard,
-            String agentName,
-            String message,
-            String contextId,
-            String taskId,
-            Map<String, Object> metadata,
-            Consumer<ClientEvent> eventSink) {
+    CompletableFuture<SendMessageResult> send(
+            AgentCard agentCard, String agentName, MessageContent content, String contextId,
+            String taskId, Consumer<ClientEvent> eventSink, java.util.function.BooleanSupplier active) {
         if (closed.get()) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("A2A transport is closed"));
         }
+        Map<String, String> trace = new HashMap<>(WireLog.context());
+        trace.put("agent", agentName);
+        trace.put("contextId", contextId);
+        if (taskId != null) trace.put("remoteTaskId", taskId);
+        trace.put("channel", content.extensions().contains(A2ATExtension.AUTHORIZATION_T.uri())
+                ? "authorization" : "task");
         return CompletableFuture.supplyAsync(
-                () -> {
+                () -> WireLog.call(trace, () -> {
                     try {
-                        MessageSendParams params =
-                                buildMessageSendParams(message, contextId, taskId, metadata);
-                        ClientCallContext callContext =
-                                buildClientCallContext(agentCard, agentName, metadata);
+                        if (!active.getAsBoolean()) throw new java.util.concurrent.CancellationException("Late send ignored");
+                        MessageSendParams params = buildMessageSendParams(content, contextId, taskId);
+                        ClientCallContext callContext = buildContentCallContext(agentCard, agentName, content);
+                        if (!active.getAsBoolean()) throw new java.util.concurrent.CancellationException("Late authenticated send ignored");
                         String endpoint =
                                 agentCard.supportedInterfaces().isEmpty()
                                         ? "?"
@@ -505,6 +446,7 @@ public class A2ATransport implements AutoCloseable {
                                 .task(task)
                                 .metadata(respMetadata)
                                 .taskState(taskState)
+                                .receivedMessages(ProtocolResponses.assemble(events))
                                 .build();
                     } catch (Exception e) {
                         log.error(
@@ -517,7 +459,7 @@ public class A2ATransport implements AutoCloseable {
                         }
                         throw new RuntimeException("Agent call failed: " + e.getMessage(), e);
                     }
-                },
+                }),
                 asyncExecutor);
     }
 
@@ -543,30 +485,13 @@ public class A2ATransport implements AutoCloseable {
      * ack + later recovery results). The returned future completes on the first event carrying a
      * concrete task state; an artifact alone is application data, not a protocol acknowledgement.
      */
-    public CompletableFuture<SendMessageResult> sendNotificationStream(
-            AgentCard agentCard,
-            String agentName,
-            String message,
-            String contextId,
-            Map<String, Object> metadata,
-            Consumer<ClientEvent> eventSink) {
-        try {
-            return openNotificationStream(
-                            agentCard, agentName, message, contextId, metadata, eventSink)
-                    .acknowledgement();
-        } catch (RuntimeException e) {
-            return CompletableFuture.failedFuture(e);
-        }
-    }
-
     /** Opens a long-lived Notification-T stream and returns its explicit lifecycle handle. */
     public NotificationSubscription openNotificationStream(
             AgentCard agentCard,
             String agentName,
-            String message,
+            MessageContent content,
             String contextId,
-            Map<String, Object> metadata,
-            Consumer<ClientEvent> eventSink) {
+            java.util.function.BiConsumer<NotificationSubscription, ReceivedMessage> eventSink) {
         if (closed.get()) {
             throw new IllegalStateException("A2A transport is closed");
         }
@@ -583,14 +508,19 @@ public class A2ATransport implements AutoCloseable {
                             }
                         });
         notificationSubscriptions.add(subscription);
+        Map<String, String> trace = new HashMap<>(WireLog.context());
+        trace.put("agent", agentName);
+        trace.put("contextId", contextId);
+        trace.put("channel", "notification");
+        ProtocolResponses.Accumulator responses = new ProtocolResponses.Accumulator();
         Thread streamThread =
                 new Thread(
-                        () -> {
+                        () -> WireLog.inContext(trace, () -> {
                             try {
                                 MessageSendParams params =
-                                        buildMessageSendParams(message, contextId, metadata);
+                                        buildMessageSendParams(content, contextId, null);
                                 ClientCallContext callContext =
-                                        buildClientCallContext(agentCard, agentName, metadata);
+                                        buildContentCallContext(agentCard, agentName, content);
                                 String endpoint =
                                         agentCard.supportedInterfaces().isEmpty()
                                                 ? "?"
@@ -611,7 +541,10 @@ public class A2ATransport implements AutoCloseable {
                                                     event.getClass().getSimpleName());
                                             subscription.recordEvent();
                                             if (eventSink != null) {
-                                                eventSink.accept(event);
+                                                responses.accept(event);
+                                                for (ReceivedMessage received : responses.snapshots()) {
+                                                    eventSink.accept(subscription, received);
+                                                }
                                             }
                                             SendMessageResult acknowledgement =
                                                     eventResult(event);
@@ -635,11 +568,8 @@ public class A2ATransport implements AutoCloseable {
                                         "[Transport] Notification-T stream closed for {}",
                                         agentName);
                                 if (!subscription.acknowledgement().isDone()) {
-                                    subscription.acknowledge(
-                                            SendMessageResult.builder()
-                                                    .text("Stream closed before acknowledgement")
-                                                    .taskState("TASK_STATE_COMPLETED")
-                                                    .build());
+                                    subscription.failAcknowledgement(
+                                            new IllegalStateException("Stream closed before acknowledgement"));
                                 }
                                 subscription.completeStream();
                             } catch (Exception e) {
@@ -673,7 +603,7 @@ public class A2ATransport implements AutoCloseable {
                                 notificationSubscriptions.remove(subscription);
                                 subscription.markStreamTerminated();
                             }
-                        },
+                        }),
                         "notif-t-" + agentName);
         streamThread.setDaemon(true);
         streamThreadRef.set(streamThread);
@@ -683,13 +613,11 @@ public class A2ATransport implements AutoCloseable {
                     if (subscription.isActive()
                             && !subscription.acknowledgement().isDone()) {
                         log.warn(
-                                "[Transport] Notification-T subscription: no event in {}s, assuming active (stream stays open)",
+                                "[Transport] Notification-T subscription: no acknowledgement in {}s; closing unconfirmed stream",
                                 notificationAckTimeoutSeconds);
-                        subscription.acknowledge(
-                                SendMessageResult.builder()
-                                        .text("Subscribed (no-ack)")
-                                        .taskState("TASK_STATE_WORKING")
-                                        .build());
+                        subscription.failAcknowledgement(
+                                new java.util.concurrent.TimeoutException("No subscription acknowledgement received"));
+                        subscription.close();
                     }
                 },
                 CompletableFuture.delayedExecutor(
@@ -704,6 +632,7 @@ public class A2ATransport implements AutoCloseable {
                 .task(extractResponseTask(eventList))
                 .metadata(extractResponseMetadata(eventList))
                 .taskState(extractResponseTaskState(eventList))
+                .receivedMessages(ProtocolResponses.assemble(eventList))
                 .build();
     }
 
@@ -731,22 +660,36 @@ public class A2ATransport implements AutoCloseable {
     }
 
     private MessageSendParams buildMessageSendParams(
-            String message, String contextId, Map<String, Object> metadata) {
-        return buildMessageSendParams(message, contextId, null, metadata);
+            MessageContent content, String contextId, String taskId) {
+        Message msg = Message.builder()
+                .messageId(UUID.randomUUID().toString())
+                .contextId(contextId).taskId(taskId).role(Message.Role.ROLE_USER)
+                .parts(content.parts()).metadata(content.metadata())
+                .extensions(new ArrayList<>(content.extensions())).build();
+        return MessageSendParams.builder().message(msg).build();
     }
 
-    private MessageSendParams buildMessageSendParams(
-            String message, String contextId, String taskId, Map<String, Object> metadata) {
-        Message msg =
-                Message.builder()
-                        .messageId(UUID.randomUUID().toString())
-                        .contextId(contextId)
-                        .taskId(taskId)
-                        .role(Message.Role.ROLE_USER)
-                        .parts(new TextPart(message))
-                        .metadata(metadata != null ? metadata : Map.of())
-                        .build();
-        return MessageSendParams.builder().message(msg).build();
+    private ClientCallContext buildContentCallContext(
+            AgentCard card, String agentName, MessageContent content) {
+        ClientCallContext context = buildClientCallContext(card, agentName, content.metadata());
+        Map<String, String> headers = new HashMap<>(context.getHeaders());
+        Set<String> extensions = new LinkedHashSet<>(content.extensions());
+        String existingKey = headers.keySet().stream()
+                .filter(key -> key.equalsIgnoreCase("A2A-Extensions")).findFirst().orElse(null);
+        if (existingKey != null) {
+            for (String value : headers.remove(existingKey).split(",")) {
+                if (!value.isBlank()) extensions.add(value.trim());
+            }
+        }
+        if (card.capabilities() != null && card.capabilities().extensions() != null) {
+            for (var extension : card.capabilities().extensions()) {
+                if (Boolean.TRUE.equals(extension.required()) && !extensions.contains(extension.uri())) {
+                    throw new IllegalArgumentException("Required extension not activated: " + extension.uri());
+                }
+            }
+        }
+        if (!extensions.isEmpty()) headers.put("A2A-Extensions", String.join(",", extensions));
+        return new ClientCallContext(new HashMap<>(), headers);
     }
 
     private ClientCallContext buildClientCallContext(
@@ -763,7 +706,8 @@ public class A2ATransport implements AutoCloseable {
         if (closed.get()) {
             return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
         }
-        return CompletableFuture.supplyAsync(() -> {
+        Map<String, String> trace = taskTrace(agentName, taskId);
+        return CompletableFuture.supplyAsync(() -> WireLog.call(trace, () -> {
             try {
                 ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
                 Task task = a2aClientRuntime.getTask(agentCard, taskId, ctx);
@@ -776,11 +720,12 @@ public class A2ATransport implements AutoCloseable {
                         .task(task)
                         .metadata(metadata)
                         .taskState(taskState(task))
-                        .build();
+                        .receivedMessages(ProtocolResponses.assemble(List.of(new TaskEvent(task))))
+                                .build();
             } catch (Exception e) {
                 throw new RuntimeException("getTask failed for " + agentName + ": " + e.getMessage(), e);
             }
-        }, asyncExecutor);
+        }), asyncExecutor);
     }
 
     public CompletableFuture<SendMessageResult> cancelTask(
@@ -788,7 +733,8 @@ public class A2ATransport implements AutoCloseable {
         if (closed.get()) {
             return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
         }
-        return CompletableFuture.supplyAsync(() -> {
+        Map<String, String> trace = taskTrace(agentName, taskId);
+        return CompletableFuture.supplyAsync(() -> WireLog.call(trace, () -> {
             try {
                 ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
                 Task task = a2aClientRuntime.cancelTask(agentCard, taskId, ctx);
@@ -801,11 +747,12 @@ public class A2ATransport implements AutoCloseable {
                         .task(task)
                         .metadata(metadata)
                         .taskState(taskState(task))
+                                .receivedMessages(ProtocolResponses.assemble(List.of(new TaskEvent(task))))
                         .build();
             } catch (Exception e) {
                 throw new RuntimeException("cancelTask failed for " + agentName + ": " + e.getMessage(), e);
             }
-        }, asyncExecutor);
+        }), asyncExecutor);
     }
 
     public CompletableFuture<SendMessageResult> subscribeToTask(
@@ -815,7 +762,7 @@ public class A2ATransport implements AutoCloseable {
             return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
         }
         ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
-        return a2aClientRuntime.subscribeToTask(agentCard, taskId, ctx,
+        return WireLog.call(taskTrace(agentName, taskId), () -> a2aClientRuntime.subscribeToTask(agentCard, taskId, ctx,
                 event -> {
                     if (eventSink != null) {
                         try {
@@ -828,7 +775,15 @@ public class A2ATransport implements AutoCloseable {
                                     callbackError);
                         }
                     }
-                });
+                }));
+    }
+
+    private static Map<String, String> taskTrace(String agentName, String taskId) {
+        Map<String, String> trace = new HashMap<>(WireLog.context());
+        trace.put("agent", agentName);
+        trace.put("remoteTaskId", taskId);
+        trace.putIfAbsent("channel", "task");
+        return trace;
     }
 
     private static String taskState(Task task) {

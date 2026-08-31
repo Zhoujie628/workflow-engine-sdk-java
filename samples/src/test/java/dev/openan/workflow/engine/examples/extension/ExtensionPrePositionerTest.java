@@ -25,6 +25,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ExtensionPrePositionerTest {
+  @org.junit.jupiter.api.BeforeEach
+  void configureOfflineContentSdk() throws Exception {
+    dev.openan.workflow.engine.examples.testsupport.OfflineA2ATLlmClient.install();
+    System.setProperty("a2at.env.path", java.nio.file.Path.of(getClass().getResource("/a2at-e2e.env").toURI()).toString());
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearOfflineConfiguration() {
+    System.clearProperty("a2at.env.path");
+  }
 
   @Test
   void notificationFailureDoesNotBecomeAWorkflowStartupCondition() {
@@ -32,7 +42,7 @@ class ExtensionPrePositionerTest {
     ExtensionSender authorizationSender =
         sender(
             (method, args) -> {
-              if ("sendExtensionMessageFromData".equals(method.getName())) {
+              if ("sendAuthorization".equals(method.getName())) {
                 authorizationAttempted.set(true);
                 return CompletableFuture.completedFuture(
                     SendMessageResult.builder()
@@ -45,9 +55,8 @@ class ExtensionPrePositionerTest {
     ExtensionSender notificationSender =
         sender(
             (method, args) -> {
-              if ("openNotificationFromData".equals(method.getName())) {
-                return CompletableFuture.failedFuture(
-                    new IllegalStateException("subscription rejected"));
+              if ("openNotification".equals(method.getName())) {
+                throw new IllegalStateException("subscription rejected");
               }
               throw new UnsupportedOperationException(method.getName());
             });
@@ -58,7 +67,7 @@ class ExtensionPrePositionerTest {
                 authorizationSender,
                 notificationSender,
                 List.of(city1Card()),
-                ignored -> {});
+                (handle, received) -> {});
 
     assertTrue(authorizationAttempted.get());
     assertTrue(subscriptions.isEmpty());
@@ -71,7 +80,7 @@ class ExtensionPrePositionerTest {
     ExtensionSender authorizationSender =
         sender(
             (method, args) -> {
-              if ("sendExtensionMessageFromData".equals(method.getName())) {
+              if ("sendAuthorization".equals(method.getName())) {
                 return CompletableFuture.failedFuture(
                     new IllegalStateException("authorization rejected"));
               }
@@ -80,9 +89,9 @@ class ExtensionPrePositionerTest {
     ExtensionSender notificationSender =
         sender(
             (method, args) -> {
-              if ("openNotificationFromData".equals(method.getName())) {
+              if ("openNotification".equals(method.getName())) {
                 notificationAttempted.set(true);
-                return CompletableFuture.completedFuture(subscription);
+                return subscription;
               }
               throw new UnsupportedOperationException(method.getName());
             });
@@ -97,7 +106,7 @@ class ExtensionPrePositionerTest {
                         authorizationSender,
                         notificationSender,
                         List.of(city1Card()),
-                        ignored -> {},
+                        (handle, received) -> {},
                         opened -> {
                           registeredSubscription.set(opened);
                           registered.countDown();
