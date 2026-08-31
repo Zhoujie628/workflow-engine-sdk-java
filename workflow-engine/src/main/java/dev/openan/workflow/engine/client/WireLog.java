@@ -36,6 +36,7 @@ public final class WireLog {
   private static final Pattern SECRET_FORM =
       Pattern.compile(
           "(?i)((?:password|passwd|pwd|[\\w-]*token|[\\w-]*secret|accessSession|api[-_]?key)=)[^&\\s]*");
+
   private WireLog() {}
 
   public static Map<String, String> context() {
@@ -315,9 +316,7 @@ public final class WireLog {
       String content =
           dropped
               ? "(body/frame dropped: capacity exceeded)"
-              : !textual
-                  ? "(binary body omitted)"
-                  : new String(bytes.toByteArray(), StandardCharsets.UTF_8);
+              : !textual ? "(binary body omitted)" : bytes.toString(StandardCharsets.UTF_8);
       // Decode only complete frames/body, keeping UTF-8 code points intact across chunks.
       String visible =
           "observedBytes="

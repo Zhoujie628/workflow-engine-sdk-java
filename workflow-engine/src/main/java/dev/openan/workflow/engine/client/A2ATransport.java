@@ -409,7 +409,6 @@ public class A2ATransport implements AutoCloseable {
    * later recovery results). The returned future completes on the first event carrying a concrete
    * task state; an artifact alone is application data, not a protocol acknowledgement.
    */
-
   public AgentCard getCard(String agentName) {
     return cardMap.get(agentName);
   }
@@ -702,7 +701,7 @@ public class A2ATransport implements AutoCloseable {
     }
     if (card.capabilities() != null && card.capabilities().extensions() != null) {
       for (var extension : card.capabilities().extensions()) {
-        if (Boolean.TRUE.equals(extension.required()) && !extensions.contains(extension.uri())) {
+        if (extension.required() && !extensions.contains(extension.uri())) {
           throw new IllegalArgumentException(
               "Required extension not activated: " + extension.uri());
         }

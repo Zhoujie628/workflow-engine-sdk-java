@@ -7,9 +7,7 @@
 
 package dev.openan.workflow.engine.client;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
@@ -200,7 +198,7 @@ class A2ATransportHeaderTest {
                   transport
                       .send(card, card.name(), content("diagnose", null), "context-1", null, null)
                       .join());
-      assertTrue(error.getCause() instanceof SecurityException);
+      assertInstanceOf(SecurityException.class, error.getCause());
       assertTrue(error.getCause().getMessage().contains("none are configured"));
     }
   }
@@ -333,7 +331,7 @@ class A2ATransportHeaderTest {
       new DefaultWorkflowEngineClient(transport).sendMessage("Test Agent", content).join();
       assertEquals(content.parts(), captured.get().message().parts());
       assertEquals(content.metadata(), captured.get().message().metadata());
-      assertTrue(!"business-only".equals(captured.get().message().contextId()));
+      assertFalse("business-only".equals(captured.get().message().contextId()));
     }
   }
 

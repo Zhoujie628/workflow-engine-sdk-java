@@ -105,8 +105,7 @@ class ExecutePsopTest {
                 null,
                 null,
                 cb,
-                (BiFunction<ExecutionResult, List<Map<String, Object>>, CompletableFuture<Void>>)
-                    null,
+                null,
                 null)
             .join();
     assertTrue(result.isSuccess());
