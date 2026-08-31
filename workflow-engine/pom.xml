@@ -41,6 +41,13 @@
             <artifactId>a2a-java-sdk-client-transport-grpc</artifactId>
             <version>${a2a.java.sdk.version}</version>
         </dependency>
+        <!-- Match the gRPC API version used by A2A Java 1.2.0.Final; it supplies no channel provider. -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>1.81.0</version>
+            <scope>runtime</scope>
+        </dependency>
         <!-- A2A-T extension SDK (Java) -->
         <dependency>
             <groupId>net.openan.a2a-t.sdk</groupId>

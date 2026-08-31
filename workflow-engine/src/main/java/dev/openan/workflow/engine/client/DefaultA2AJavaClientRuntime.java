@@ -645,7 +645,7 @@ public class DefaultA2AJavaClientRuntime
                 throw new IllegalArgumentException(
                         "sslVerify=false uses plaintext gRPC and cannot check a CRL");
             }
-            return ManagedChannelBuilder.forTarget(url).usePlaintext().build();
+            return ManagedChannelBuilder.forTarget(url).usePlaintext().intercept(new WireGrpcInterceptor()).build();
         }
         if (crlPath != null && !crlPath.isBlank()) {
             throw new IllegalArgumentException(
@@ -673,7 +673,7 @@ public class DefaultA2AJavaClientRuntime
                             clientKeyPassword);
                 }
             }
-            return io.grpc.Grpc.newChannelBuilder(url, credentials.build()).build();
+            return io.grpc.Grpc.newChannelBuilder(url, credentials.build()).intercept(new WireGrpcInterceptor()).build();
         } catch (java.io.IOException e) {
             throw new IllegalStateException("Failed to configure gRPC TLS", e);
         }
@@ -690,7 +690,7 @@ public class DefaultA2AJavaClientRuntime
                         crlPath,
                         Duration.ofSeconds(60),
                         httpClientExecutor);
-        return new JdkA2AHttpClient(httpClient);
+        return new JdkA2AHttpClient(new ObservedHttpClient(httpClient));
     }
 
     private record ClientCacheKey(

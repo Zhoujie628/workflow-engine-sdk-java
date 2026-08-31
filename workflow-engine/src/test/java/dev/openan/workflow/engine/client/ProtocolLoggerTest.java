@@ -35,10 +35,11 @@ class ProtocolLoggerTest {
     }
 
     @Test
-    void sensitiveHeadersCanBeExplicitlyEnabledForControlledDiagnostics() {
+    void obsoleteSettingCannotDisableMandatoryRedaction() {
         System.setProperty(SETTING, "true");
         String formatted =
                 ProtocolLogger.formatHeaders(Map.of("Authorization", "Bearer visible"));
-        assertTrue(formatted.contains("Bearer visible"));
+        assertFalse(formatted.contains("Bearer visible"));
+        assertTrue(formatted.contains("Authorization: ***"));
     }
 }
