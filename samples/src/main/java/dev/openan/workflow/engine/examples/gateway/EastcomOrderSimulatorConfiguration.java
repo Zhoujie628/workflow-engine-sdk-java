@@ -19,23 +19,6 @@ import org.springframework.context.annotation.Configuration;
         + " && '${a2a.order.simulator-enabled:false}'.equalsIgnoreCase('true')")
 public class EastcomOrderSimulatorConfiguration {
 
-  @Bean(destroyMethod = "close")
-  EastcomOrderSimulatorServer eastcomOrderSimulatorServer(OrderGatewayProperties properties) {
-    EastcomOrderSimulatorServer server =
-        new EastcomOrderSimulatorServer(
-            properties.getHost(),
-            properties.getPort(),
-            properties.getUsername(),
-            properties.getPassword(),
-            properties.getClientId(),
-            properties.getClientSecret(),
-            simulatorTargets(properties),
-            Math.multiplyExact(properties.getSimulatorConnectTimeoutSeconds(), 1_000),
-            Math.multiplyExact(properties.getSimulatorReadTimeoutSeconds(), 1_000));
-    server.start();
-    return server;
-  }
-
   static Map<String, String> simulatorTargets(OrderGatewayProperties properties) {
     Map<String, String> targets = new LinkedHashMap<>();
     putTarget(targets, properties.getCity1Ne(), properties.getSimulatorCity1TargetUrl(), "city1");
@@ -74,5 +57,22 @@ public class EastcomOrderSimulatorConfiguration {
     }
     String normalized = uri.toString();
     return normalized.endsWith("/") ? normalized.substring(0, normalized.length() - 1) : normalized;
+  }
+
+  @Bean(destroyMethod = "close")
+  EastcomOrderSimulatorServer eastcomOrderSimulatorServer(OrderGatewayProperties properties) {
+    EastcomOrderSimulatorServer server =
+        new EastcomOrderSimulatorServer(
+            properties.getHost(),
+            properties.getPort(),
+            properties.getUsername(),
+            properties.getPassword(),
+            properties.getClientId(),
+            properties.getClientSecret(),
+            simulatorTargets(properties),
+            Math.multiplyExact(properties.getSimulatorConnectTimeoutSeconds(), 1_000),
+            Math.multiplyExact(properties.getSimulatorReadTimeoutSeconds(), 1_000));
+    server.start();
+    return server;
   }
 }

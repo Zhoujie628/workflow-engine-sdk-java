@@ -17,7 +17,6 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpClientConfig;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.HttpRequestConfig;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.internal.ReactorNettyBridgeHandler;
-
 import java.lang.reflect.Field;
 import java.util.function.BiConsumer;
 
@@ -31,78 +30,78 @@ import java.util.function.BiConsumer;
  * direct memory.
  *
  * <p>The handler installed here sits immediately after the vendor bridge in outbound traversal. It
- * delegates synchronously to the bridge and releases only after the bridge has copied the bytes.
- * No vendor class or jar is replaced. Remove this class after upgrading to a vendor release whose
+ * delegates synchronously to the bridge and releases only after the bridge has copied the bytes. No
+ * vendor class or jar is replaced. Remove this class after upgrading to a vendor release whose
  * bridge releases the consumed message itself.
  */
 final class EastcomOrder118ByteBufWorkaround {
-    private static final String RELEASE_HANDLER_NAME =
-            EastcomOrder118ByteBufWorkaround.class.getName() + ".releaseAfterBridge";
-    private static final Field HTTP_CLIENT_CONFIGURATION = configurationField();
-    private static final ChannelHandler RELEASE_HANDLER = new ReleaseAfterVendorBridge();
+  private static final String RELEASE_HANDLER_NAME =
+      EastcomOrder118ByteBufWorkaround.class.getName() + ".releaseAfterBridge";
+  private static final Field HTTP_CLIENT_CONFIGURATION = configurationField();
+  private static final ChannelHandler RELEASE_HANDLER = new ReleaseAfterVendorBridge();
 
-    private EastcomOrder118ByteBufWorkaround() {}
+  private EastcomOrder118ByteBufWorkaround() {}
 
-    /** Creates the public vendor client and installs the narrowly scoped 1.1.18 ownership fix. */
-    static HttpClient createClient(ServerInfo serverInfo, HttpRequestConfig requestConfig) {
-        HttpClient client = HttpClient.create(serverInfo, requestConfig);
-        ReleasingHttpClientConfig configuration = new ReleasingHttpClientConfig();
-        configuration.setServerInfo(serverInfo);
-        configuration.setRequestConfig(requestConfig);
-        try {
-            HTTP_CLIENT_CONFIGURATION.set(client, configuration);
-        } catch (IllegalAccessException e) {
-            throw new IllegalStateException(
-                    "Cannot install Eastcom 1.1.18 ByteBuf ownership workaround", e);
-        }
-        return client;
+  /** Creates the public vendor client and installs the narrowly scoped 1.1.18 ownership fix. */
+  static HttpClient createClient(ServerInfo serverInfo, HttpRequestConfig requestConfig) {
+    HttpClient client = HttpClient.create(serverInfo, requestConfig);
+    ReleasingHttpClientConfig configuration = new ReleasingHttpClientConfig();
+    configuration.setServerInfo(serverInfo);
+    configuration.setRequestConfig(requestConfig);
+    try {
+      HTTP_CLIENT_CONFIGURATION.set(client, configuration);
+    } catch (IllegalAccessException e) {
+      throw new IllegalStateException(
+          "Cannot install Eastcom 1.1.18 ByteBuf ownership workaround", e);
     }
+    return client;
+  }
 
-    private static Field configurationField() {
-        try {
-            Field field = HttpClient.class.getDeclaredField("configuration");
-            field.setAccessible(true);
-            return field;
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            throw new ExceptionInInitializerError(e);
-        }
+  private static Field configurationField() {
+    try {
+      Field field = HttpClient.class.getDeclaredField("configuration");
+      field.setAccessible(true);
+      return field;
+    } catch (ReflectiveOperationException | RuntimeException e) {
+      throw new ExceptionInInitializerError(e);
     }
+  }
 
-    private static void installReleaseHandler(Connection connection) {
-        ChannelPipeline pipeline = connection.channel().pipeline();
-        if (pipeline.context(RELEASE_HANDLER_NAME) != null) {
-            return;
-        }
-        ChannelHandlerContext bridge = pipeline.context(ReactorNettyBridgeHandler.class);
-        if (bridge == null) {
-            throw new IllegalStateException(
-                    "Eastcom 1.1.18 ReactorNettyBridgeHandler is absent; review or remove its ByteBuf workaround");
-        }
-        pipeline.addAfter(bridge.name(), RELEASE_HANDLER_NAME, RELEASE_HANDLER);
+  private static void installReleaseHandler(Connection connection) {
+    ChannelPipeline pipeline = connection.channel().pipeline();
+    if (pipeline.context(RELEASE_HANDLER_NAME) != null) {
+      return;
     }
+    ChannelHandlerContext bridge = pipeline.context(ReactorNettyBridgeHandler.class);
+    if (bridge == null) {
+      throw new IllegalStateException(
+          "Eastcom 1.1.18 ReactorNettyBridgeHandler is absent; review or remove its ByteBuf workaround");
+    }
+    pipeline.addAfter(bridge.name(), RELEASE_HANDLER_NAME, RELEASE_HANDLER);
+  }
 
-    private static final class ReleasingHttpClientConfig extends HttpClientConfig {
-        @Override
-        public BiConsumer<HttpClientRequest, Connection> httpClientRequest() {
-            BiConsumer<HttpClientRequest, Connection> vendorCallback = super.httpClientRequest();
-            return (request, connection) -> {
-                vendorCallback.accept(request, connection);
-                installReleaseHandler(connection);
-            };
-        }
+  private static final class ReleasingHttpClientConfig extends HttpClientConfig {
+    @Override
+    public BiConsumer<HttpClientRequest, Connection> httpClientRequest() {
+      BiConsumer<HttpClientRequest, Connection> vendorCallback = super.httpClientRequest();
+      return (request, connection) -> {
+        vendorCallback.accept(request, connection);
+        installReleaseHandler(connection);
+      };
     }
+  }
 
-    @ChannelHandler.Sharable
-    private static final class ReleaseAfterVendorBridge extends ChannelOutboundHandlerAdapter {
-        @Override
-        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
-                throws Exception {
-            try {
-                // The immediately following vendor bridge copies and consumes msg synchronously.
-                ctx.write(msg, promise);
-            } finally {
-                ReferenceCountUtil.safeRelease(msg);
-            }
-        }
+  @ChannelHandler.Sharable
+  private static final class ReleaseAfterVendorBridge extends ChannelOutboundHandlerAdapter {
+    @Override
+    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
+        throws Exception {
+      try {
+        // The immediately following vendor bridge copies and consumes msg synchronously.
+        ctx.write(msg, promise);
+      } finally {
+        ReferenceCountUtil.safeRelease(msg);
+      }
     }
+  }
 }

@@ -25,30 +25,32 @@ import dev.openan.workflow.engine.examples.testsupport.OfflineA2ATLlmClient;
  * Same complete Spring demo through the real vendor SDK and local instruction-platform simulator.
  */
 class SpringSpnDemoOrderE2ETest extends SpringSpnDemoE2ETest {
-    @Override
-    protected String negotiationWireBoundary() { return "ORDER_FORWARD_REQUEST"; }
+  @Override
+  protected String negotiationWireBoundary() {
+    return "ORDER_FORWARD_REQUEST";
+  }
 
-    @Override
-    protected String[] arguments() {
-        return new String[] {
-            "--a2a.transport-mode=order",
-            "--a2a.embedded-omc-enabled=true",
-            "--a2a.orch-url=http://127.0.0.1:1",
-            "--a2a.a2at-env-path=" + OfflineA2ATLlmClient.envPath(),
-            "--a2a.order.simulator-enabled=true",
-            "--a2a.order.host=127.0.0.1",
-            "--a2a.order.port=26401",
-            "--a2a.order.username=sim-user",
-            "--a2a.order.password=sim-password",
-            "--a2a.order.client-id=sim-client",
-            "--a2a.order.client-secret=sim-secret",
-            "--a2a.order.city1-ne=sim-city1",
-            "--a2a.order.city2-ne=sim-city2",
-            "--a2a.order.simulator-city1-target-url=https://127.0.0.1:26335",
-            "--a2a.order.simulator-city2-target-url=https://127.0.0.1:26336",
-            "--a2a.order.omc-auth-enabled=true",
-            "--a2a.order.omc-credentials-path=classpath:spn_agent_credentials.json",
-            "--a2a.order.timeout-seconds=30"
-        };
-    }
+  @Override
+  protected String[] arguments() {
+    return new String[] {
+      "--a2a.transport-mode=order",
+      "--a2a.embedded-omc-enabled=true",
+      "--a2a.orch-url=http://127.0.0.1:1",
+      "--a2a.a2at-env-path=" + OfflineA2ATLlmClient.envPath(),
+      "--a2a.order.simulator-enabled=true",
+      "--a2a.order.host=127.0.0.1",
+      "--a2a.order.port=26401",
+      "--a2a.order.username=sim-user",
+      "--a2a.order.password=sim-password",
+      "--a2a.order.client-id=sim-client",
+      "--a2a.order.client-secret=sim-secret",
+      "--a2a.order.city1-ne=sim-city1",
+      "--a2a.order.city2-ne=sim-city2",
+      "--a2a.order.simulator-city1-target-url=https://127.0.0.1:26335",
+      "--a2a.order.simulator-city2-target-url=https://127.0.0.1:26336",
+      "--a2a.order.omc-auth-enabled=true",
+      "--a2a.order.omc-credentials-path=classpath:spn_agent_credentials.json",
+      "--a2a.order.timeout-seconds=30"
+    };
+  }
 }

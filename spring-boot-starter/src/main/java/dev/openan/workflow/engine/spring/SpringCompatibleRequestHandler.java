@@ -4,6 +4,8 @@
  */
 package dev.openan.workflow.engine.spring;
 
+import java.util.Objects;
+import java.util.concurrent.Flow;
 import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.server.ServerCallContext;
 import org.a2aproject.sdk.server.auth.TaskOperation;
@@ -23,9 +25,6 @@ import org.a2aproject.sdk.spec.TaskIdParams;
 import org.a2aproject.sdk.spec.TaskPushNotificationConfig;
 import org.a2aproject.sdk.spec.TaskQueryParams;
 
-import java.util.Objects;
-import java.util.concurrent.Flow;
-
 /**
  * Keeps the A2A request handler's CDI-only injection points outside Spring bean processing.
  *
@@ -36,75 +35,73 @@ import java.util.concurrent.Flow;
  * the builder-created delegate remains framework-neutral.
  */
 final class SpringCompatibleRequestHandler implements RequestHandler {
-    private final RequestHandler delegate;
+  private final RequestHandler delegate;
 
-    SpringCompatibleRequestHandler(RequestHandler delegate) {
-        this.delegate = Objects.requireNonNull(delegate, "delegate");
-    }
+  SpringCompatibleRequestHandler(RequestHandler delegate) {
+    this.delegate = Objects.requireNonNull(delegate, "delegate");
+  }
 
-    @Override
-    public Task onGetTask(TaskQueryParams params, ServerCallContext context) throws A2AError {
-        return delegate.onGetTask(params, context);
-    }
+  @Override
+  public Task onGetTask(TaskQueryParams params, ServerCallContext context) throws A2AError {
+    return delegate.onGetTask(params, context);
+  }
 
-    @Override
-    public ListTasksResult onListTasks(ListTasksParams params, ServerCallContext context)
-            throws A2AError {
-        return delegate.onListTasks(params, context);
-    }
+  @Override
+  public ListTasksResult onListTasks(ListTasksParams params, ServerCallContext context)
+      throws A2AError {
+    return delegate.onListTasks(params, context);
+  }
 
-    @Override
-    public Task onCancelTask(CancelTaskParams params, ServerCallContext context) throws A2AError {
-        return delegate.onCancelTask(params, context);
-    }
+  @Override
+  public Task onCancelTask(CancelTaskParams params, ServerCallContext context) throws A2AError {
+    return delegate.onCancelTask(params, context);
+  }
 
-    @Override
-    public EventKind onMessageSend(MessageSendParams params, ServerCallContext context)
-            throws A2AError {
-        return delegate.onMessageSend(params, context);
-    }
+  @Override
+  public EventKind onMessageSend(MessageSendParams params, ServerCallContext context)
+      throws A2AError {
+    return delegate.onMessageSend(params, context);
+  }
 
-    @Override
-    public Flow.Publisher<StreamingEventKind> onMessageSendStream(
-            MessageSendParams params, ServerCallContext context) throws A2AError {
-        return delegate.onMessageSendStream(params, context);
-    }
+  @Override
+  public Flow.Publisher<StreamingEventKind> onMessageSendStream(
+      MessageSendParams params, ServerCallContext context) throws A2AError {
+    return delegate.onMessageSendStream(params, context);
+  }
 
-    @Override
-    public TaskPushNotificationConfig onCreateTaskPushNotificationConfig(
-            TaskPushNotificationConfig config, ServerCallContext context) throws A2AError {
-        return delegate.onCreateTaskPushNotificationConfig(config, context);
-    }
+  @Override
+  public TaskPushNotificationConfig onCreateTaskPushNotificationConfig(
+      TaskPushNotificationConfig config, ServerCallContext context) throws A2AError {
+    return delegate.onCreateTaskPushNotificationConfig(config, context);
+  }
 
-    @Override
-    public TaskPushNotificationConfig onGetTaskPushNotificationConfig(
-            GetTaskPushNotificationConfigParams params, ServerCallContext context) throws A2AError {
-        return delegate.onGetTaskPushNotificationConfig(params, context);
-    }
+  @Override
+  public TaskPushNotificationConfig onGetTaskPushNotificationConfig(
+      GetTaskPushNotificationConfigParams params, ServerCallContext context) throws A2AError {
+    return delegate.onGetTaskPushNotificationConfig(params, context);
+  }
 
-    @Override
-    public Flow.Publisher<StreamingEventKind> onSubscribeToTask(
-            TaskIdParams params, ServerCallContext context) throws A2AError {
-        return delegate.onSubscribeToTask(params, context);
-    }
+  @Override
+  public Flow.Publisher<StreamingEventKind> onSubscribeToTask(
+      TaskIdParams params, ServerCallContext context) throws A2AError {
+    return delegate.onSubscribeToTask(params, context);
+  }
 
-    @Override
-    public ListTaskPushNotificationConfigsResult onListTaskPushNotificationConfigs(
-            ListTaskPushNotificationConfigsParams params, ServerCallContext context)
-            throws A2AError {
-        return delegate.onListTaskPushNotificationConfigs(params, context);
-    }
+  @Override
+  public ListTaskPushNotificationConfigsResult onListTaskPushNotificationConfigs(
+      ListTaskPushNotificationConfigsParams params, ServerCallContext context) throws A2AError {
+    return delegate.onListTaskPushNotificationConfigs(params, context);
+  }
 
-    @Override
-    public void onDeleteTaskPushNotificationConfig(
-            DeleteTaskPushNotificationConfigParams params, ServerCallContext context)
-            throws A2AError {
-        delegate.onDeleteTaskPushNotificationConfig(params, context);
-    }
+  @Override
+  public void onDeleteTaskPushNotificationConfig(
+      DeleteTaskPushNotificationConfigParams params, ServerCallContext context) throws A2AError {
+    delegate.onDeleteTaskPushNotificationConfig(params, context);
+  }
 
-    @Override
-    public void authorizeTaskAccess(
-            String taskId, ServerCallContext context, TaskOperation operation) throws A2AError {
-        delegate.authorizeTaskAccess(taskId, context, operation);
-    }
+  @Override
+  public void authorizeTaskAccess(String taskId, ServerCallContext context, TaskOperation operation)
+      throws A2AError {
+    delegate.authorizeTaskAccess(taskId, context, operation);
+  }
 }

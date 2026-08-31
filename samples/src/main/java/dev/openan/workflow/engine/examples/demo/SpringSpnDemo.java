@@ -76,16 +76,96 @@ public class SpringSpnDemo {
     new SpringSpnDemo().run(args);
   }
 
+  static void requireCompleted(SendMessageResult result) {
+    if (result == null
+        || result.getTaskState() == null
+        || !result.getTaskState().contains("TASK_STATE_COMPLETED")) {
+      throw new IllegalStateException(
+          "Workbench task failed: state="
+              + (result != null ? result.getTaskState() : "null")
+              + ", response="
+              + (result != null ? result.getText() : "null"));
+    }
+  }
+
+  private static String resolveTransportMode(String[] args) {
+    for (String arg : args) {
+      if (arg.startsWith("--a2a.transport-mode=")) {
+        return arg.substring("--a2a.transport-mode=".length());
+      }
+    }
+    String configuredMode = System.getProperty("A2A_TRANSPORT_MODE");
+    if (configuredMode == null || configuredMode.isBlank()) {
+      configuredMode = System.getenv("A2A_TRANSPORT_MODE");
+    }
+    return configuredMode == null || configuredMode.isBlank() ? "order" : configuredMode;
+  }
+
+  static boolean resolveEmbeddedOmcEnabled(String[] args, String transportMode) {
+    String configured = argumentValue(args, "--a2a.embedded-omc-enabled=");
+    if (configured == null) {
+      configured = configuredValue("A2A_EMBEDDED_OMC_ENABLED");
+    }
+    boolean simulator = resolveOrderSimulatorEnabled(args);
+    boolean enabled =
+        configured == null
+            ? (!"order".equalsIgnoreCase(transportMode) || simulator)
+            : parseBoolean(configured, "A2A_EMBEDDED_OMC_ENABLED");
+    return enabled;
+  }
+
+  private static boolean resolveOrderSimulatorEnabled(String[] args) {
+    String configured = argumentValue(args, "--a2a.order.simulator-enabled=");
+    if (configured == null) {
+      configured = configuredValue("EASTCOM_ORDER_SIMULATOR_ENABLED");
+    }
+    return configured != null && parseBoolean(configured, "EASTCOM_ORDER_SIMULATOR_ENABLED");
+  }
+
+  private static String argumentValue(String[] args, String prefix) {
+    for (String arg : args) {
+      if (arg.startsWith(prefix)) {
+        return arg.substring(prefix.length());
+      }
+    }
+    return null;
+  }
+
+  private static String configuredValue(String name) {
+    String value = System.getProperty(name);
+    if (value == null || value.isBlank()) {
+      value = System.getenv(name);
+    }
+    return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private static boolean parseBoolean(String value, String name) {
+    if ("true".equalsIgnoreCase(value)) {
+      return true;
+    }
+    if ("false".equalsIgnoreCase(value)) {
+      return false;
+    }
+    throw new IllegalArgumentException(name + " must be true or false");
+  }
+
+  private static long elapsedMillis(long startedNanos) {
+    return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+  }
+
   public void run(String... applicationArgs) throws Exception {
     long demoStarted = System.nanoTime();
     ConfigurableApplicationContext ctx = null;
-   boolean success = false;
+    boolean success = false;
     String transportMode = resolveTransportMode(applicationArgs);
     boolean embeddedOmc = resolveEmbeddedOmcEnabled(applicationArgs, transportMode);
     boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(embeddedOmc);
-    log.info("[Demo] NEGOTIATION_DEMO enabled={}, city={}, embeddedOmc={} (local default: City1 negotiates, "
-            + "City2 diagnoses directly; disable with -Da2at.samples.negotiation=false)", demoNegotiation,
-            System.getProperty("a2at.samples.negotiation.city", "city1"), embeddedOmc);
+    log.info(
+        "[Demo] NEGOTIATION_DEMO enabled={}, city={}, embeddedOmc={} (local default: City1 negotiates, "
+            + "City2 diagnoses directly; disable with -Da2at.samples.negotiation=false)",
+        demoNegotiation,
+        System.getProperty("a2at.samples.negotiation.city", "city1"),
+        embeddedOmc);
     // The HTTP mock gateway only serves the adapter-level mock mode. The order mode
     // talks to the real instruction platform (or the bundled protocol simulator on
     // 26401 when EASTCOM_ORDER_SIMULATOR_ENABLED=true) and never routes via 26400.
@@ -130,9 +210,15 @@ public class SpringSpnDemo {
       stageStarted = System.nanoTime();
       log.info("[Demo] STAGE_START stage=start-spring-workbench");
       SpringApplication application = new SpringApplication(SpringWorkbenchApplication.class);
-      application.addInitializers(context -> context.getEnvironment().getPropertySources().addFirst(
-          new org.springframework.core.env.MapPropertySource("spnDemoNegotiation",
-              java.util.Map.of("a2a.demo-negotiation-enabled", demoNegotiation))));
+      application.addInitializers(
+          context ->
+              context
+                  .getEnvironment()
+                  .getPropertySources()
+                  .addFirst(
+                      new org.springframework.core.env.MapPropertySource(
+                          "spnDemoNegotiation",
+                          java.util.Map.of("a2a.demo-negotiation-enabled", demoNegotiation))));
       ctx = application.run(applicationArgs);
       log.info(
           "[Demo] STAGE_DONE stage=start-spring-workbench, elapsedMs={}",
@@ -253,14 +339,22 @@ public class SpringSpnDemo {
           transport.getContextId(),
           wbCard.supportedInterfaces().isEmpty() ? "?" : wbCard.supportedInterfaces().get(0).url(),
           SpnCasePrompts.TASK_TEXT.length());
-      var contentClient = dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
-          () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(envPath)));
-      var generated = contentClient.generateTaskPromptFromDataWithSchema(
-          SpnCasePrompts.privateLineComplaintData(), SpnCasePrompts.privateLineComplaintSchema(),
-          net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
-      SendMessageResult result = client.sendMessage(WB_AGENT_NAME,
-          dev.openan.workflow.engine.client.A2atMessages.from(generated,
-              List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT)))).join();
+      var contentClient =
+          dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+              () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(envPath)));
+      var generated =
+          contentClient.generateTaskPromptFromDataWithSchema(
+              SpnCasePrompts.privateLineComplaintData(),
+              SpnCasePrompts.privateLineComplaintSchema(),
+              net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+      SendMessageResult result =
+          client
+              .sendMessage(
+                  WB_AGENT_NAME,
+                  dev.openan.workflow.engine.client.A2atMessages.from(
+                      generated,
+                      List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
+              .join();
       log.info(
           "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={},"
               + " elapsedMs={}",
@@ -274,82 +368,5 @@ public class SpringSpnDemo {
       client.close();
       transport.close();
     }
-  }
-
-  static void requireCompleted(SendMessageResult result) {
-    if (result == null
-        || result.getTaskState() == null
-        || !result.getTaskState().contains("TASK_STATE_COMPLETED")) {
-      throw new IllegalStateException(
-          "Workbench task failed: state="
-              + (result != null ? result.getTaskState() : "null")
-              + ", response="
-              + (result != null ? result.getText() : "null"));
-    }
-  }
-
-  private static String resolveTransportMode(String[] args) {
-    for (String arg : args) {
-      if (arg.startsWith("--a2a.transport-mode=")) {
-        return arg.substring("--a2a.transport-mode=".length());
-      }
-    }
-    String configuredMode = System.getProperty("A2A_TRANSPORT_MODE");
-    if (configuredMode == null || configuredMode.isBlank()) {
-      configuredMode = System.getenv("A2A_TRANSPORT_MODE");
-    }
-    return configuredMode == null || configuredMode.isBlank() ? "order" : configuredMode;
-  }
-
-  static boolean resolveEmbeddedOmcEnabled(String[] args, String transportMode) {
-    String configured = argumentValue(args, "--a2a.embedded-omc-enabled=");
-    if (configured == null) {
-      configured = configuredValue("A2A_EMBEDDED_OMC_ENABLED");
-    }
-    boolean simulator = resolveOrderSimulatorEnabled(args);
-    boolean enabled =
-        configured == null
-            ? (!"order".equalsIgnoreCase(transportMode) || simulator)
-            : parseBoolean(configured, "A2A_EMBEDDED_OMC_ENABLED");
-    return enabled;
-  }
-
-  private static boolean resolveOrderSimulatorEnabled(String[] args) {
-    String configured = argumentValue(args, "--a2a.order.simulator-enabled=");
-    if (configured == null) {
-      configured = configuredValue("EASTCOM_ORDER_SIMULATOR_ENABLED");
-    }
-    return configured != null && parseBoolean(configured, "EASTCOM_ORDER_SIMULATOR_ENABLED");
-  }
-
-  private static String argumentValue(String[] args, String prefix) {
-    for (String arg : args) {
-      if (arg.startsWith(prefix)) {
-        return arg.substring(prefix.length());
-      }
-    }
-    return null;
-  }
-
-  private static String configuredValue(String name) {
-    String value = System.getProperty(name);
-    if (value == null || value.isBlank()) {
-      value = System.getenv(name);
-    }
-    return value == null || value.isBlank() ? null : value.trim();
-  }
-
-  private static boolean parseBoolean(String value, String name) {
-    if ("true".equalsIgnoreCase(value)) {
-      return true;
-    }
-    if ("false".equalsIgnoreCase(value)) {
-      return false;
-    }
-    throw new IllegalArgumentException(name + " must be true or false");
-  }
-
-  private static long elapsedMillis(long startedNanos) {
-    return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
   }
 }

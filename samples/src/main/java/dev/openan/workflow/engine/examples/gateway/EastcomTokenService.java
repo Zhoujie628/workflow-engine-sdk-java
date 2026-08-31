@@ -32,12 +32,6 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
   private static final String BEARER_AUTH = "bearerAuth";
   private static final String NE_USERNAME = "${ne:username}";
   private static final String NE_PASSWORD = "${ne:password}";
-
-  @FunctionalInterface
-  interface TokenFetcher {
-    String fetch(String agentName, String ne);
-  }
-
   private final Map<String, String> agentNeRoutes;
   private final String defaultNe;
   private final Duration defaultTokenTtl;
@@ -46,7 +40,6 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
   private final TokenFetcher tokenFetcher;
   private final Map<String, CachedToken> cache = new ConcurrentHashMap<>();
   private final Map<String, Object> refreshLocks = new ConcurrentHashMap<>();
-
   EastcomTokenService(OrderGatewayProperties properties, String credentialsPath) {
     this(properties, EastcomCredentialConfigLoader.load(credentialsPath));
   }
@@ -90,55 +83,9 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
     this.tokenFetcher = Objects.requireNonNull(tokenFetcher, "tokenFetcher");
   }
 
-  @Override
-  public String getOrRefresh(String agentName) {
-    String key = requireText(agentName, "agentName");
-    Instant now = clock.instant();
-    Duration ttl = agentTokenTtls.getOrDefault(key, defaultTokenTtl);
-    CachedToken current = cache.get(key);
-    if (current != null && current.isUsableAt(now, refreshSkew(ttl))) {
-      return current.value();
-    }
-    Object lock = refreshLocks.computeIfAbsent(key, ignored -> new Object());
-    synchronized (lock) {
-      now = clock.instant();
-      current = cache.get(key);
-      if (current != null && current.isUsableAt(now, refreshSkew(ttl))) {
-        return current.value();
-      }
-      String ne = resolveNe(key);
-      log.info("[EastcomAuth] TOKEN_REFRESH_START agent={}, ne={}", key, ne);
-      String token = requireText(tokenFetcher.fetch(key, ne), "OMC bearer token");
-      cache.put(key, new CachedToken(token, now.plus(ttl)));
-      log.info(
-          "[EastcomAuth] TOKEN_REFRESH_DONE agent={}, ne={}, ttlSeconds={}",
-          key,
-          ne,
-          ttl.toSeconds());
-      return token;
-    }
-  }
-
-  void invalidate(String agentName) {
-    if (agentName != null) {
-      cache.remove(agentName);
-    }
-  }
-
   private static Duration refreshSkew(Duration ttl) {
     long seconds = Math.min(30, Math.max(1, ttl.toSeconds() / 10));
     return Duration.ofSeconds(seconds);
-  }
-
-  private String resolveNe(String agentName) {
-    String ne = agentNeRoutes.get(agentName);
-    if (ne == null || ne.isBlank()) {
-      ne = defaultNe;
-    }
-    if (ne == null || ne.isBlank()) {
-      throw new IllegalArgumentException("No Eastcom NE route configured for agent " + agentName);
-    }
-    return ne;
   }
 
   private static TokenFetcher sdkFetcher(
@@ -345,6 +292,57 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  @Override
+  public String getOrRefresh(String agentName) {
+    String key = requireText(agentName, "agentName");
+    Instant now = clock.instant();
+    Duration ttl = agentTokenTtls.getOrDefault(key, defaultTokenTtl);
+    CachedToken current = cache.get(key);
+    if (current != null && current.isUsableAt(now, refreshSkew(ttl))) {
+      return current.value();
+    }
+    Object lock = refreshLocks.computeIfAbsent(key, ignored -> new Object());
+    synchronized (lock) {
+      now = clock.instant();
+      current = cache.get(key);
+      if (current != null && current.isUsableAt(now, refreshSkew(ttl))) {
+        return current.value();
+      }
+      String ne = resolveNe(key);
+      log.info("[EastcomAuth] TOKEN_REFRESH_START agent={}, ne={}", key, ne);
+      String token = requireText(tokenFetcher.fetch(key, ne), "OMC bearer token");
+      cache.put(key, new CachedToken(token, now.plus(ttl)));
+      log.info(
+          "[EastcomAuth] TOKEN_REFRESH_DONE agent={}, ne={}, ttlSeconds={}",
+          key,
+          ne,
+          ttl.toSeconds());
+      return token;
+    }
+  }
+
+  void invalidate(String agentName) {
+    if (agentName != null) {
+      cache.remove(agentName);
+    }
+  }
+
+  private String resolveNe(String agentName) {
+    String ne = agentNeRoutes.get(agentName);
+    if (ne == null || ne.isBlank()) {
+      ne = defaultNe;
+    }
+    if (ne == null || ne.isBlank()) {
+      throw new IllegalArgumentException("No Eastcom NE route configured for agent " + agentName);
+    }
+    return ne;
+  }
+
+  @FunctionalInterface
+  interface TokenFetcher {
+    String fetch(String agentName, String ne);
   }
 
   private record CachedToken(String value, Instant expiresAt) {

@@ -19,9 +19,8 @@
 
 package dev.openan.workflow.engine.client;
 
-import org.a2aproject.sdk.spec.AgentCard;
-
 import java.util.Map;
+import org.a2aproject.sdk.spec.AgentCard;
 
 /**
  * Custom authentication provider for injecting auth headers into outgoing A2A messages.
@@ -54,12 +53,12 @@ import java.util.Map;
  */
 public interface AuthProvider {
 
-    /**
-     * Apply authentication headers for sending a message to the given agent.
-     *
-     * @param agentName the target agent name (matches AgentCard.name)
-     * @param agentCard the agent's card (securitySchemes may be null or empty)
-     * @param headers mutable header map to add auth headers to
-     */
-    void applyAuth(String agentName, AgentCard agentCard, Map<String, String> headers);
+  /**
+   * Apply authentication headers for sending a message to the given agent.
+   *
+   * @param agentName the target agent name (matches AgentCard.name)
+   * @param agentCard the agent's card (securitySchemes may be null or empty)
+   * @param headers mutable header map to add auth headers to
+   */
+  void applyAuth(String agentName, AgentCard agentCard, Map<String, String> headers);
 }

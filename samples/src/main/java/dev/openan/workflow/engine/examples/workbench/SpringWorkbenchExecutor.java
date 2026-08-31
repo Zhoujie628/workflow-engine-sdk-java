@@ -19,12 +19,16 @@
 
 package dev.openan.workflow.engine.examples.workbench;
 
-import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
+import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
+import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
-
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.a2aproject.sdk.server.agentexecution.RequestContext;
 import org.a2aproject.sdk.server.tasks.AgentEmitter;
 import org.a2aproject.sdk.spec.A2AError;
@@ -33,13 +37,6 @@ import org.a2aproject.sdk.spec.TextPart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
-import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 
 /**
  * Spring-managed Workbench AgentExecutor.
@@ -50,135 +47,129 @@ import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
  */
 @Component
 public class SpringWorkbenchExecutor extends BaseAgentExecutor {
-    private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
+  private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
 
-    private final ClientRuntimeFactory runtimeFactory;
-    private final WorkbenchClientProperties properties;
-    private volatile WorkbenchTaskInputParser taskInputParser;
+  private final ClientRuntimeFactory runtimeFactory;
+  private final WorkbenchClientProperties properties;
+  private volatile WorkbenchTaskInputParser taskInputParser;
 
-    public SpringWorkbenchExecutor(
-            ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
-        this.runtimeFactory = runtimeFactory;
-        this.properties = properties;
+  public SpringWorkbenchExecutor(
+      ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
+    this.runtimeFactory = runtimeFactory;
+    this.properties = properties;
+  }
+
+  private static long elapsedMillis(long startedNanos) {
+    return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+  }
+
+  private String resolveEnvPath() {
+    if (properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()) {
+      return properties.getA2atEnvPath();
     }
+    return EnvResolver.resolveEnvPath();
+  }
 
-    private String resolveEnvPath() {
-        if (properties.getA2atEnvPath() != null && !properties.getA2atEnvPath().isBlank()) {
-            return properties.getA2atEnvPath();
-        }
-        return EnvResolver.resolveEnvPath();
+  private String resolveCredentialsPath() {
+    if (properties.getCredentialsPath() != null && !properties.getCredentialsPath().isBlank()) {
+      return properties.getCredentialsPath();
     }
+    return getClass().getClassLoader().getResource("spn_agent_credentials.json") != null
+        ? "classpath:spn_agent_credentials.json"
+        : null;
+  }
 
-    private String resolveCredentialsPath() {
-        if (properties.getCredentialsPath() != null
-                && !properties.getCredentialsPath().isBlank()) {
-            return properties.getCredentialsPath();
-        }
-        return getClass().getClassLoader().getResource("spn_agent_credentials.json") != null
-                ? "classpath:spn_agent_credentials.json"
-                : null;
+  private A2AJavaClientRuntime createClientRuntime() {
+    A2AJavaClientRuntime runtime = runtimeFactory.create();
+    log.info(
+        "[SpringWorkbench] TRANSPORT_MODE mode={}, runtime={}",
+        runtimeFactory.mode(),
+        runtime != null ? runtime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime");
+    return runtime;
+  }
+
+  @Override
+  public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
+    String taskId = ctx.getTaskId();
+    String contextId = ctx.getContextId();
+    String userText = extractText(ctx.getMessage());
+    long started = System.nanoTime();
+
+    emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
+    emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
+
+    try {
+      WorkbenchTaskInputParser.ParsedTask taskInput =
+          taskInputParser()
+              .parse(userText, ctx.getMessage() != null ? ctx.getMessage().metadata() : Map.of());
+      String input = taskInput.runtimeIntent();
+      log.info(
+          "[SpringWorkbench] TASK_START taskId={}, contextId={}, inputChars={}, "
+              + "taskTemplate={}, taskParams={}, orchUrl={}, transportMode={}, "
+              + "sslVerify={}",
+          taskId,
+          contextId,
+          input.length(),
+          taskInput.templateUri().uri(),
+          taskInput.parameters().keySet(),
+          properties.getOrchUrl(),
+          runtimeFactory.mode(),
+          properties.isSslVerify());
+      String result =
+          new WorkbenchOrchestrator(
+                  properties.getOrchUrl(),
+                  runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
+                      ? null
+                      : resolveCredentialsPath(),
+                  properties.isSslVerify(),
+                  resolveEnvPath(),
+                  createClientRuntime(),
+                  runtimeFactory.authProvider())
+              .run(input, properties.isDemoNegotiationEnabled());
+      Map<String, Object> metadata = new LinkedHashMap<>();
+      metadata.put(A2ATExtension.TASK_T.uri(), result);
+      List<Part<?>> parts = List.of(new TextPart(result));
+      emitter.addArtifact(parts, "result", "cross-city-diagnosis-summary", metadata, false, true);
+      emitter.complete(buildStatusMessage(contextId, taskId, "Completed"));
+      log.info(
+          "[SpringWorkbench] TASK_DONE taskId={}, contextId={}, resultChars={}, elapsedMs={}",
+          taskId,
+          contextId,
+          result.length(),
+          elapsedMillis(started));
+    } catch (Exception e) {
+      log.error(
+          "[SpringWorkbench] TASK_FAILED taskId={}, contextId={}, elapsedMs={}, "
+              + "errorType={}, message={}",
+          taskId,
+          contextId,
+          elapsedMillis(started),
+          e.getClass().getSimpleName(),
+          e.getMessage(),
+          e);
+      emitter.fail(buildStatusMessage(contextId, taskId, "Failed: " + e.getMessage()));
     }
+  }
 
-    private A2AJavaClientRuntime createClientRuntime() {
-        A2AJavaClientRuntime runtime = runtimeFactory.create();
-        log.info(
-                "[SpringWorkbench] TRANSPORT_MODE mode={}, runtime={}",
-                runtimeFactory.mode(),
-                runtime != null ? runtime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime");
-        return runtime;
+  private WorkbenchTaskInputParser taskInputParser() {
+    WorkbenchTaskInputParser current = taskInputParser;
+    if (current != null) {
+      return current;
     }
-
-    @Override
-    public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
-        String taskId = ctx.getTaskId();
-        String contextId = ctx.getContextId();
-        String userText = extractText(ctx.getMessage());
-        long started = System.nanoTime();
-
-        emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
-        emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
-
-        try {
-            WorkbenchTaskInputParser.ParsedTask taskInput =
-                    taskInputParser()
-                            .parse(
-                                    userText,
-                                    ctx.getMessage() != null
-                                            ? ctx.getMessage().metadata()
-                                            : Map.of());
-            String input = taskInput.runtimeIntent();
-            log.info(
-                    "[SpringWorkbench] TASK_START taskId={}, contextId={}, inputChars={}, "
-                            + "taskTemplate={}, taskParams={}, orchUrl={}, transportMode={}, "
-                            + "sslVerify={}",
-                    taskId,
-                    contextId,
-                    input.length(),
-                    taskInput.templateUri().uri(),
-                    taskInput.parameters().keySet(),
-                    properties.getOrchUrl(),
-                    runtimeFactory.mode(),
-                    properties.isSslVerify());
-            String result =
-                    new WorkbenchOrchestrator(
-                            properties.getOrchUrl(),
-                            runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
-                                    ? null
-                                    : resolveCredentialsPath(),
-                            properties.isSslVerify(),
-                            resolveEnvPath(),
-                            createClientRuntime(),
-                            runtimeFactory.authProvider())
-                            .run(input, properties.isDemoNegotiationEnabled());
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            metadata.put(A2ATExtension.TASK_T.uri(), result);
-            List<Part<?>> parts = List.of(new TextPart(result));
-            emitter.addArtifact(
-                    parts, "result", "cross-city-diagnosis-summary", metadata, false, true);
-            emitter.complete(buildStatusMessage(contextId, taskId, "Completed"));
-            log.info(
-                    "[SpringWorkbench] TASK_DONE taskId={}, contextId={}, resultChars={}, elapsedMs={}",
-                    taskId,
-                    contextId,
-                    result.length(),
-                    elapsedMillis(started));
-        } catch (Exception e) {
-            log.error(
-                    "[SpringWorkbench] TASK_FAILED taskId={}, contextId={}, elapsedMs={}, "
-                            + "errorType={}, message={}",
-                    taskId,
-                    contextId,
-                    elapsedMillis(started),
-                    e.getClass().getSimpleName(),
-                    e.getMessage(),
-                    e);
-            emitter.fail(buildStatusMessage(contextId, taskId, "Failed: " + e.getMessage()));
-        }
+    synchronized (this) {
+      if (taskInputParser == null) {
+        taskInputParser = WorkbenchTaskInputParser.fromEnv(resolveEnvPath());
+      }
+      return taskInputParser;
     }
+  }
 
-    private WorkbenchTaskInputParser taskInputParser() {
-        WorkbenchTaskInputParser current = taskInputParser;
-        if (current != null) {
-            return current;
-        }
-        synchronized (this) {
-            if (taskInputParser == null) {
-                taskInputParser = WorkbenchTaskInputParser.fromEnv(resolveEnvPath());
-            }
-            return taskInputParser;
-        }
-    }
-
-    @Override
-    public void cancel(RequestContext ctx, AgentEmitter emitter) throws A2AError {
-        log.warn(
-                "[SpringWorkbench] TASK_CANCEL taskId={}, contextId={}",
-                ctx.getTaskId(),
-                ctx.getContextId());
-        emitter.cancel();
-    }
-
-    private static long elapsedMillis(long startedNanos) {
-        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
-    }
+  @Override
+  public void cancel(RequestContext ctx, AgentEmitter emitter) throws A2AError {
+    log.warn(
+        "[SpringWorkbench] TASK_CANCEL taskId={}, contextId={}",
+        ctx.getTaskId(),
+        ctx.getContextId());
+    emitter.cancel();
+  }
 }

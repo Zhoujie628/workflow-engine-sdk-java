@@ -4,9 +4,7 @@
  */
 package dev.openan.workflow.engine.examples.gateway;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.eastcom.apollo.orders.internal.shaded.com.google.protobuf.ByteString;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
@@ -20,6 +18,23 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class EastcomOrderSimulatorServerTest {
+
+  private static EastcomOrderSimulatorServer simulator(int port) {
+    return new EastcomOrderSimulatorServer(
+        "127.0.0.1",
+        port,
+        "sim-user",
+        "sim-password",
+        "sim-client",
+        "sim-secret",
+        Map.of("sim-city1", "https://127.0.0.1:26335"));
+  }
+
+  private static int availablePort() throws Exception {
+    try (ServerSocket socket = new ServerSocket(0)) {
+      return socket.getLocalPort();
+    }
+  }
 
   @Test
   void requestDecoderSupportsUtf8AndTheVendorWindowsLegacyEncoding() {
@@ -59,7 +74,7 @@ class EastcomOrderSimulatorServerTest {
       HttpRequestConfig config = HttpRequestConfig.builder().deviceName("sim-city1").build();
       // v1.8 documents create(serverInfo, config) for the HTTP forwarding path.
       HttpClient client = HttpClient.create(serverInfo, config);
-      assertTrue(client != null, "HttpClient.create should return a client");
+      assertNotNull(client, "HttpClient.create should return a client");
     }
   }
 
@@ -167,23 +182,6 @@ class EastcomOrderSimulatorServerTest {
               .getOrRefresh("SPN Domain Agent City1"));
     } finally {
       omc.stop(0);
-    }
-  }
-
-  private static EastcomOrderSimulatorServer simulator(int port) {
-    return new EastcomOrderSimulatorServer(
-        "127.0.0.1",
-        port,
-        "sim-user",
-        "sim-password",
-        "sim-client",
-        "sim-secret",
-        Map.of("sim-city1", "https://127.0.0.1:26335"));
-  }
-
-  private static int availablePort() throws Exception {
-    try (ServerSocket socket = new ServerSocket(0)) {
-      return socket.getLocalPort();
     }
   }
 }

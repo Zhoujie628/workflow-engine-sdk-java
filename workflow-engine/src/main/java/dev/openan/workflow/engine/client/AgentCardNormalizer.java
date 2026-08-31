@@ -20,14 +20,12 @@
 package dev.openan.workflow.engine.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * AgentCard normalization -- converts OpenAPI-style security scheme notation to a format compatible
@@ -44,122 +42,122 @@ import java.util.Map;
  */
 public final class AgentCardNormalizer {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentCardNormalizer.class);
-    private static final ObjectMapper mapper = new ObjectMapper();
+  private static final Logger log = LoggerFactory.getLogger(AgentCardNormalizer.class);
+  private static final ObjectMapper mapper = new ObjectMapper();
 
-    private static final List<String> PROTO_ONEOF_KEYS =
-            List.of(
-                    "httpAuthSecurityScheme",
-                    "apiKeySecurityScheme",
-                    "oauth2SecurityScheme",
-                    "openIdConnectSecurityScheme",
-                    "mtlsSecurityScheme");
+  private static final List<String> PROTO_ONEOF_KEYS =
+      List.of(
+          "httpAuthSecurityScheme",
+          "apiKeySecurityScheme",
+          "oauth2SecurityScheme",
+          "openIdConnectSecurityScheme",
+          "mtlsSecurityScheme");
 
-    private AgentCardNormalizer() {}
+  private AgentCardNormalizer() {}
 
-    /**
-     * Normalize an AgentCard map to a compatible format.
-     *
-     * @param agentDict raw agent card as a map
-     * @return normalized map
-     */
-    @SuppressWarnings("unchecked")
-    public static Map<String, Object> normalize(Map<String, Object> agentDict) {
-        if (agentDict == null) {
-            return agentDict;
-        }
-        Map<String, Object> result = new LinkedHashMap<>(agentDict);
-
-        if (result.containsKey("securitySchemes")) {
-            result.put("securitySchemes", normalizeSecuritySchemes(result.get("securitySchemes")));
-        }
-        if (result.containsKey("securityRequirements")) {
-            result.put(
-                    "securityRequirements",
-                    normalizeSecurityRequirements(result.get("securityRequirements")));
-        }
-        return result;
+  /**
+   * Normalize an AgentCard map to a compatible format.
+   *
+   * @param agentDict raw agent card as a map
+   * @return normalized map
+   */
+  @SuppressWarnings("unchecked")
+  public static Map<String, Object> normalize(Map<String, Object> agentDict) {
+    if (agentDict == null) {
+      return agentDict;
     }
+    Map<String, Object> result = new LinkedHashMap<>(agentDict);
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> normalizeSecuritySchemes(Object secSchemes) {
-        if (!(secSchemes instanceof Map)) {
-            return secSchemes != null ? (Map<String, Object>) secSchemes : Map.of();
-        }
-        Map<String, Object> input = (Map<String, Object>) secSchemes;
-        Map<String, Object> result = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> entry : input.entrySet()) {
-            String name = entry.getKey();
-            Object schemeObj = entry.getValue();
-            if (!(schemeObj instanceof Map)) {
-                result.put(name, schemeObj);
-                continue;
-            }
-            Map<String, Object> scheme = (Map<String, Object>) schemeObj;
-            // Already in structured format
-            boolean alreadyStructured = PROTO_ONEOF_KEYS.stream().anyMatch(scheme::containsKey);
-            if (alreadyStructured) {
-                result.put(name, scheme);
-                continue;
-            }
-            // OpenAPI-style: flat "scheme": "bearer"
-            Object schemeField = scheme.get("scheme");
-            if (schemeField instanceof String) {
-                Map<String, Object> httpAuth = new LinkedHashMap<>();
-                httpAuth.put("scheme", schemeField);
-                copyIfPresent(scheme, httpAuth, "description");
-                copyIfPresent(scheme, httpAuth, "bearerFormat");
-                result.put(name, Map.of("httpAuthSecurityScheme", httpAuth));
-                continue;
-            }
-            // OpenAPI-style: apiKey
-            if ("apiKey".equals(scheme.get("type"))) {
-                Map<String, Object> apiKey = new LinkedHashMap<>();
-                copyIfPresent(scheme, apiKey, "in", "location");
-                copyIfPresent(scheme, apiKey, "name");
-                copyIfPresent(scheme, apiKey, "description");
-                result.put(name, Map.of("apiKeySecurityScheme", apiKey));
-                continue;
-            }
-            result.put(name, scheme);
-        }
-        return result;
+    if (result.containsKey("securitySchemes")) {
+      result.put("securitySchemes", normalizeSecuritySchemes(result.get("securitySchemes")));
     }
+    if (result.containsKey("securityRequirements")) {
+      result.put(
+          "securityRequirements",
+          normalizeSecurityRequirements(result.get("securityRequirements")));
+    }
+    return result;
+  }
 
-    @SuppressWarnings("unchecked")
-    private static List<Map<String, Object>> normalizeSecurityRequirements(Object secReqs) {
-        if (!(secReqs instanceof List)) {
-            return List.of();
-        }
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Object item : (List<?>) secReqs) {
-            if (!(item instanceof Map)) {
-                continue;
-            }
-            Map<String, Object> req = (Map<String, Object>) item;
-            Object schemes = req.get("schemes");
-            if (schemes instanceof List) {
-                Map<String, Object> schemesMap = new LinkedHashMap<>();
-                for (Object s : (List<?>) schemes) {
-                    schemesMap.put(s.toString(), Map.of());
-                }
-                result.add(Map.of("schemes", schemesMap));
-            } else if (schemes instanceof Map) {
-                result.add(req);
-            } else {
-                result.add(req);
-            }
-        }
-        return result;
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> normalizeSecuritySchemes(Object secSchemes) {
+    if (!(secSchemes instanceof Map)) {
+      return secSchemes != null ? (Map<String, Object>) secSchemes : Map.of();
     }
+    Map<String, Object> input = (Map<String, Object>) secSchemes;
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (Map.Entry<String, Object> entry : input.entrySet()) {
+      String name = entry.getKey();
+      Object schemeObj = entry.getValue();
+      if (!(schemeObj instanceof Map)) {
+        result.put(name, schemeObj);
+        continue;
+      }
+      Map<String, Object> scheme = (Map<String, Object>) schemeObj;
+      // Already in structured format
+      boolean alreadyStructured = PROTO_ONEOF_KEYS.stream().anyMatch(scheme::containsKey);
+      if (alreadyStructured) {
+        result.put(name, scheme);
+        continue;
+      }
+      // OpenAPI-style: flat "scheme": "bearer"
+      Object schemeField = scheme.get("scheme");
+      if (schemeField instanceof String) {
+        Map<String, Object> httpAuth = new LinkedHashMap<>();
+        httpAuth.put("scheme", schemeField);
+        copyIfPresent(scheme, httpAuth, "description");
+        copyIfPresent(scheme, httpAuth, "bearerFormat");
+        result.put(name, Map.of("httpAuthSecurityScheme", httpAuth));
+        continue;
+      }
+      // OpenAPI-style: apiKey
+      if ("apiKey".equals(scheme.get("type"))) {
+        Map<String, Object> apiKey = new LinkedHashMap<>();
+        copyIfPresent(scheme, apiKey, "in", "location");
+        copyIfPresent(scheme, apiKey, "name");
+        copyIfPresent(scheme, apiKey, "description");
+        result.put(name, Map.of("apiKeySecurityScheme", apiKey));
+        continue;
+      }
+      result.put(name, scheme);
+    }
+    return result;
+  }
 
-    private static void copyIfPresent(
-            Map<String, Object> src, Map<String, Object> dst, String... keys) {
-        for (String key : keys) {
-            if (src.containsKey(key)) {
-                String dstKey = keys.length > 1 ? keys[1] : key;
-                dst.put(dstKey, src.get(key));
-            }
-        }
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> normalizeSecurityRequirements(Object secReqs) {
+    if (!(secReqs instanceof List)) {
+      return List.of();
     }
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Object item : (List<?>) secReqs) {
+      if (!(item instanceof Map)) {
+        continue;
+      }
+      Map<String, Object> req = (Map<String, Object>) item;
+      Object schemes = req.get("schemes");
+      if (schemes instanceof List) {
+        Map<String, Object> schemesMap = new LinkedHashMap<>();
+        for (Object s : (List<?>) schemes) {
+          schemesMap.put(s.toString(), Map.of());
+        }
+        result.add(Map.of("schemes", schemesMap));
+      } else if (schemes instanceof Map) {
+        result.add(req);
+      } else {
+        result.add(req);
+      }
+    }
+    return result;
+  }
+
+  private static void copyIfPresent(
+      Map<String, Object> src, Map<String, Object> dst, String... keys) {
+    for (String key : keys) {
+      if (src.containsKey(key)) {
+        String dstKey = keys.length > 1 ? keys[1] : key;
+        dst.put(dstKey, src.get(key));
+      }
+    }
+  }
 }

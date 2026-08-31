@@ -29,6 +29,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class JumpCondition {
-    private String step;
-    @Builder.Default private String condition = "";
+  private String step;
+  @Builder.Default private String condition = "";
 }

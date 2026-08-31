@@ -17,21 +17,25 @@
  *    under the License.
  */
 
-
 package dev.openan.workflow.engine.examples.gateway;
 
 import java.util.*;
 
-/** SDK-visible response. A multi-value header is not collapsed into the vendor protobuf's string map. */
-record OrderResponse(int status, String body, Map<String, List<String>> headers, String representation) {
-    OrderResponse {
-        body = body == null ? "" : body;
-        Map<String, List<String>> copy = new LinkedHashMap<>();
-        if (headers != null) headers.forEach((key, values) -> {
+/**
+ * SDK-visible response. A multi-value header is not collapsed into the vendor protobuf's string
+ * map.
+ */
+record OrderResponse(
+    int status, String body, Map<String, List<String>> headers, String representation) {
+  OrderResponse {
+    body = body == null ? "" : body;
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    if (headers != null)
+      headers.forEach(
+          (key, values) -> {
             if (key != null) copy.put(key, List.copyOf(values));
-        });
-        headers = Collections.unmodifiableMap(copy);
-        Objects.requireNonNull(representation, "representation");
-    }
+          });
+    headers = Collections.unmodifiableMap(copy);
+    Objects.requireNonNull(representation, "representation");
+  }
 }
-

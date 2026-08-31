@@ -24,10 +24,10 @@ import java.util.List;
 /** Immutable, step-scoped group of upstream task results selected by {@code contextFrom}. */
 public record UpstreamStepResult(String stepName, List<TaskExecutionResult> taskResults) {
 
-    public UpstreamStepResult {
-        if (stepName == null || stepName.isBlank()) {
-            throw new IllegalArgumentException("Upstream stepName must not be blank");
-        }
-        taskResults = taskResults == null ? List.of() : List.copyOf(taskResults);
+  public UpstreamStepResult {
+    if (stepName == null || stepName.isBlank()) {
+      throw new IllegalArgumentException("Upstream stepName must not be blank");
     }
+    taskResults = taskResults == null ? List.of() : List.copyOf(taskResults);
+  }
 }

@@ -29,6 +29,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class RouteDecision {
-    private String nextStep;
-    @Builder.Default private String reason = "";
+  private String nextStep;
+  @Builder.Default private String reason = "";
 }

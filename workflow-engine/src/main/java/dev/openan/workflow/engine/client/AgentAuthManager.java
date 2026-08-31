@@ -22,10 +22,8 @@ package dev.openan.workflow.engine.client;
 import java.net.http.HttpClient;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,6 +118,17 @@ class AgentAuthManager {
     return loaded;
   }
 
+  private static void validateEncryptedCredentials(
+      Map<?, ?> values, String credentialEncryptionKey) {
+    for (Object value : values.values()) {
+      if (value instanceof Map<?, ?> nested) {
+        validateEncryptedCredentials(nested, credentialEncryptionKey);
+      } else if (value instanceof String text && text.startsWith("enc:")) {
+        CredentialCrypto.decryptIfNeeded(text, credentialEncryptionKey);
+      }
+    }
+  }
+
   /** Get or create a credential service for the given agent. */
   public AgentCredentialService getService(String agentName) {
     return services.computeIfAbsent(
@@ -143,16 +152,4 @@ class AgentAuthManager {
   public Map<String, Map<String, Object>> getConfig(String agentName) {
     return config.get(agentName);
   }
-
-  private static void validateEncryptedCredentials(
-      Map<?, ?> values, String credentialEncryptionKey) {
-    for (Object value : values.values()) {
-      if (value instanceof Map<?, ?> nested) {
-        validateEncryptedCredentials(nested, credentialEncryptionKey);
-      } else if (value instanceof String text && text.startsWith("enc:")) {
-        CredentialCrypto.decryptIfNeeded(text, credentialEncryptionKey);
-      }
-    }
-  }
-
 }

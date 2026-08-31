@@ -14,7 +14,6 @@ import dev.openan.workflow.engine.examples.extension.ExtensionPrePositioner;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
@@ -34,7 +33,9 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
   private final boolean sslVerify;
   private final String a2atEnvPath;
   private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
-  private final java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback;
+  private final java.util.function.BiConsumer<
+          NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
+      notificationCallback;
   private final AuthProvider authProvider;
 
   private final Map<String, NotificationSubscription> subscriptions = new ConcurrentHashMap<>();
@@ -45,7 +46,9 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       boolean sslVerify,
       String a2atEnvPath,
       Supplier<A2AJavaClientRuntime> runtimeSupplier,
-      java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback,
+      java.util.function.BiConsumer<
+              NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
+          notificationCallback,
       AuthProvider authProvider) {
     this.credentialsPath = credentialsPath;
     this.sslVerify = sslVerify;
@@ -53,6 +56,10 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     this.runtimeSupplier = runtimeSupplier;
     this.notificationCallback = notificationCallback;
     this.authProvider = authProvider;
+  }
+
+  private static long elapsedMillis(long startedNanos) {
+    return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
   }
 
   public synchronized void start() {
@@ -149,21 +156,23 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         active.getContextId());
   }
 
-  private void handleNotification(NotificationSubscription handle,
-      dev.openan.workflow.engine.model.ReceivedMessage received) {
-    if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(received)) {
+  private void handleNotification(
+      NotificationSubscription handle, dev.openan.workflow.engine.model.ReceivedMessage received) {
+    if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(
+        received)) {
       subscriptions.remove(handle.agentName(), handle);
-      log.info("[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, action=close-stream",
-          handle.agentName(), handle.contextId());
+      log.info(
+          "[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, action=close-stream",
+          handle.agentName(),
+          handle.contextId());
       handle.close();
     }
     if (notificationCallback != null) {
-      try { notificationCallback.accept(handle, received); }
-      catch (RuntimeException error) { log.warn("Notification observer failed", error); }
+      try {
+        notificationCallback.accept(handle, received);
+      } catch (RuntimeException error) {
+        log.warn("Notification observer failed", error);
+      }
     }
-  }
-
-  private static long elapsedMillis(long startedNanos) {
-    return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
   }
 }

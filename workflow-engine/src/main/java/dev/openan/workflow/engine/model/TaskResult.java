@@ -19,49 +19,53 @@
 
 package dev.openan.workflow.engine.model;
 
+import java.util.List;
 import lombok.Builder;
 import lombok.Value;
-
-import java.util.List;
 
 @Value
 @Builder
 public class TaskResult {
-    private boolean success;
+  private boolean success;
 
-    /** Ordered business outputs; values may be text or JSON-serializable structured data. */
-    @Builder.Default private List<Object> outputs = List.of();
-    /** Remote evidence; local onSelfTask outputs leave this empty. */
-    @Builder.Default private List<ReceivedMessage> receivedMessages = List.of();
+  /** Ordered business outputs; values may be text or JSON-serializable structured data. */
+  @Builder.Default private List<Object> outputs = List.of();
 
-    private String error;
-    private String errorCode;
-    @Builder.Default private java.util.Map<String, Object> errorDetails = java.util.Map.of();
+  /** Remote evidence; local onSelfTask outputs leave this empty. */
+  @Builder.Default private List<ReceivedMessage> receivedMessages = List.of();
 
-    /** Successful local business output, including an intentionally empty output list. */
-    public static TaskResult success(List<Object> outputs) {
-        return builder().success(true).outputs(outputs).build();
-    }
+  private String error;
+  private String errorCode;
+  @Builder.Default private java.util.Map<String, Object> errorDetails = java.util.Map.of();
 
-    /** Business failure; never mixes the error message into the output list. */
-    public static TaskResult failure(String code, String message) {
-        return builder().success(false).errorCode(code).error(message).build();
-    }
+  public TaskResult(
+      boolean success,
+      List<Object> outputs,
+      List<ReceivedMessage> receivedMessages,
+      String error,
+      String errorCode,
+      java.util.Map<String, Object> errorDetails) {
+    this.success = success;
+    this.receivedMessages = receivedMessages == null ? List.of() : List.copyOf(receivedMessages);
+    this.outputs =
+        this.receivedMessages.isEmpty()
+            ? BusinessValues.list(outputs)
+            : this.receivedMessages.stream()
+                .flatMap(message -> message.outputs(success).stream())
+                .toList();
+    this.error = error;
+    this.errorCode = errorCode;
+    this.errorDetails =
+        BusinessValues.map(errorDetails == null ? java.util.Map.of() : errorDetails);
+  }
 
-    public TaskResult(
-            boolean success,
-            List<Object> outputs,
-            List<ReceivedMessage> receivedMessages,
-            String error,
-            String errorCode,
-            java.util.Map<String, Object> errorDetails) {
-        this.success = success;
-        this.receivedMessages = receivedMessages == null ? List.of() : List.copyOf(receivedMessages);
-        this.outputs = this.receivedMessages.isEmpty() ? BusinessValues.list(outputs)
-                : this.receivedMessages.stream().flatMap(message -> message.outputs(success).stream()).toList();
-        this.error = error;
-        this.errorCode = errorCode;
-        this.errorDetails =
-                BusinessValues.map(errorDetails == null ? java.util.Map.of() : errorDetails);
-    }
+  /** Successful local business output, including an intentionally empty output list. */
+  public static TaskResult success(List<Object> outputs) {
+    return builder().success(true).outputs(outputs).build();
+  }
+
+  /** Business failure; never mixes the error message into the output list. */
+  public static TaskResult failure(String code, String message) {
+    return builder().success(false).errorCode(code).error(message).build();
+  }
 }

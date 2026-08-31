@@ -24,24 +24,24 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 
 class A2ATInitializationTest {
-    @Test
-    void restoresContextClassLoaderAfterSuccessAndFailure() {
-        var original = Thread.currentThread().getContextClassLoader();
-        assertEquals(
-                "created",
-                A2ATInitialization.create(
-                        () -> {
-                            assertNotSame(original, Thread.currentThread().getContextClassLoader());
-                            return "created";
-                        }));
-        assertSame(original, Thread.currentThread().getContextClassLoader());
-        assertThrows(
-                IllegalStateException.class,
-                () ->
-                        A2ATInitialization.create(
-                                () -> {
-                                    throw new IllegalStateException("failure");
-                                }));
-        assertSame(original, Thread.currentThread().getContextClassLoader());
-    }
+  @Test
+  void restoresContextClassLoaderAfterSuccessAndFailure() {
+    var original = Thread.currentThread().getContextClassLoader();
+    assertEquals(
+        "created",
+        A2ATInitialization.create(
+            () -> {
+              assertNotSame(original, Thread.currentThread().getContextClassLoader());
+              return "created";
+            }));
+    assertSame(original, Thread.currentThread().getContextClassLoader());
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            A2ATInitialization.create(
+                () -> {
+                  throw new IllegalStateException("failure");
+                }));
+    assertSame(original, Thread.currentThread().getContextClassLoader());
+  }
 }

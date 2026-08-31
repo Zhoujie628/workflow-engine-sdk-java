@@ -20,16 +20,13 @@
 package dev.openan.workflow.engine.examples.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
-
-import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
-import org.a2aproject.sdk.spec.AgentCard;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
+import org.a2aproject.sdk.spec.AgentCard;
 
 /**
  * Starts and tracks {@link JdkHttpA2AServer} instances from agentcard resources. Centralizes the
@@ -37,61 +34,61 @@ import java.util.Map;
  */
 public final class OmcAgentLauncher implements AutoCloseable {
 
-    private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(new AgentCardJacksonModule());
+  private static final ObjectMapper MAPPER =
+      new ObjectMapper().registerModule(new AgentCardJacksonModule());
 
-    private final List<JdkHttpA2AServer> servers = new ArrayList<>();
+  private final List<JdkHttpA2AServer> servers = new ArrayList<>();
 
-    /** Load an agentcard resource, bind to the address declared in its first interface, and start. */
-    public JdkHttpA2AServer startFromResource(String resourcePath, AgentExecutor executor)
-            throws Exception {
-        String path = OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> card = MAPPER.readValue(new File(path), Map.class);
-        return startFromCard(card, executor);
+  /** The {@link AgentCard} view of an agentcard resource, for building engine clients. */
+  public static AgentCard cardFromResource(String resourcePath) throws Exception {
+    String path = OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
+    return MAPPER.readValue(new File(path), AgentCard.class);
+  }
+
+  /** Path of a classpath resource as an absolute file path (demo credentials lookup). */
+  public static String resourcePath(String resourcePath) {
+    return OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
+  }
+
+  /** Load an agentcard resource, bind to the address declared in its first interface, and start. */
+  public JdkHttpA2AServer startFromResource(String resourcePath, AgentExecutor executor)
+      throws Exception {
+    String path = OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
+    @SuppressWarnings("unchecked")
+    Map<String, Object> card = MAPPER.readValue(new File(path), Map.class);
+    return startFromCard(card, executor);
+  }
+
+  /** Bind to the address declared in the card's first supportedInterface and start. */
+  public JdkHttpA2AServer startFromCard(Map<String, Object> card, AgentExecutor executor)
+      throws Exception {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> ifaces =
+        (List<Map<String, Object>>) card.getOrDefault("supportedInterfaces", List.of());
+    String url =
+        ifaces.isEmpty() ? "https://127.0.0.1:0" : String.valueOf(ifaces.get(0).get("url"));
+    java.net.URI uri = java.net.URI.create(url);
+    String host = uri.getHost() != null ? uri.getHost() : "127.0.0.1";
+    int port = Math.max(uri.getPort(), 0);
+    JdkHttpA2AServer server = new JdkHttpA2AServer(host, port, card, executor);
+    server.start();
+    servers.add(server);
+    return server;
+  }
+
+  public List<JdkHttpA2AServer> servers() {
+    return servers;
+  }
+
+  @Override
+  public void close() {
+    for (JdkHttpA2AServer server : servers) {
+      try {
+        server.close();
+      } catch (Exception ignored) {
+        // shutdown is best-effort
+      }
     }
-
-    /** Bind to the address declared in the card's first supportedInterface and start. */
-    public JdkHttpA2AServer startFromCard(Map<String, Object> card, AgentExecutor executor)
-            throws Exception {
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> ifaces =
-                (List<Map<String, Object>>) card.getOrDefault("supportedInterfaces", List.of());
-        String url =
-                ifaces.isEmpty() ? "https://127.0.0.1:0" : String.valueOf(ifaces.get(0).get("url"));
-        java.net.URI uri = java.net.URI.create(url);
-        String host = uri.getHost() != null ? uri.getHost() : "127.0.0.1";
-        int port = Math.max(uri.getPort(), 0);
-        JdkHttpA2AServer server = new JdkHttpA2AServer(host, port, card, executor);
-        server.start();
-        servers.add(server);
-        return server;
-    }
-
-    /** The {@link AgentCard} view of an agentcard resource, for building engine clients. */
-    public static AgentCard cardFromResource(String resourcePath) throws Exception {
-        String path = OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
-        return MAPPER.readValue(new File(path), AgentCard.class);
-    }
-
-    /** Path of a classpath resource as an absolute file path (demo credentials lookup). */
-    public static String resourcePath(String resourcePath) {
-        return OmcAgentLauncher.class.getClassLoader().getResource(resourcePath).getPath();
-    }
-
-    public List<JdkHttpA2AServer> servers() {
-        return servers;
-    }
-
-    @Override
-    public void close() {
-        for (JdkHttpA2AServer server : servers) {
-            try {
-                server.close();
-            } catch (Exception ignored) {
-                // shutdown is best-effort
-            }
-        }
-        servers.clear();
-    }
+    servers.clear();
+  }
 }

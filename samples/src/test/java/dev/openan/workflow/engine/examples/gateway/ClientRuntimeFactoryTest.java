@@ -21,6 +21,16 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 
 class ClientRuntimeFactoryTest {
 
+  private static OrderGatewayProperties configuredOrder() {
+    OrderGatewayProperties order = new OrderGatewayProperties();
+    order.setHost("instruction-platform.example");
+    order.setPort(18080);
+    order.setUsername("workbench");
+    order.setPassword("secret");
+    order.setClientId("workbench-app");
+    return order;
+  }
+
   @Test
   void directModeDelegatesToTheGenericA2aRuntime() {
     WorkbenchClientProperties workbench = new WorkbenchClientProperties();
@@ -152,15 +162,5 @@ class ClientRuntimeFactoryTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> new ClientRuntimeFactory(workbench, new OrderGatewayProperties()));
-  }
-
-  private static OrderGatewayProperties configuredOrder() {
-    OrderGatewayProperties order = new OrderGatewayProperties();
-    order.setHost("instruction-platform.example");
-    order.setPort(18080);
-    order.setUsername("workbench");
-    order.setPassword("secret");
-    order.setClientId("workbench-app");
-    return order;
   }
 }

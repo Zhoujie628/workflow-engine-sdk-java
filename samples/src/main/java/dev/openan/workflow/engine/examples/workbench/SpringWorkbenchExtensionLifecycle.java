@@ -23,7 +23,6 @@ import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import jakarta.annotation.PreDestroy;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -103,8 +102,7 @@ public final class SpringWorkbenchExtensionLifecycle {
    * Only the first recovery is expected: a healthy city may never publish a recovery result.
    */
   public boolean awaitFirstRecovery(java.time.Duration timeout) {
-    if (timeout.isNegative())
-      throw new IllegalArgumentException("timeout must not be negative");
+    if (timeout.isNegative()) throw new IllegalArgumentException("timeout must not be negative");
     java.util.concurrent.CompletableFuture<Void> observed;
     synchronized (this) {
       if (lifecycle == null) return false;
@@ -116,18 +114,20 @@ public final class SpringWorkbenchExtensionLifecycle {
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return false;
-    } catch (java.util.concurrent.ExecutionException
-        | java.util.concurrent.TimeoutException e) {
+    } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
       return false;
     }
   }
 
-  private void onNotification(dev.openan.workflow.engine.client.NotificationSubscription handle,
+  private void onNotification(
+      dev.openan.workflow.engine.client.NotificationSubscription handle,
       dev.openan.workflow.engine.model.ReceivedMessage received) {
-    if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(received))
-      firstRecovery.complete(null);
-    log.info("[Notification] EVENT scope=workbench, agent={}, artifacts={}",
-        handle.agentName(), received.artifacts().size());
+    if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(
+        received)) firstRecovery.complete(null);
+    log.info(
+        "[Notification] EVENT scope=workbench, agent={}, artifacts={}",
+        handle.agentName(),
+        received.artifacts().size());
     log.debug("[Notification] Content from {}: {}", handle.agentName(), received);
   }
 

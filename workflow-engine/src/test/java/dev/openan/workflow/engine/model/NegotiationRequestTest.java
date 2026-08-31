@@ -18,25 +18,32 @@
  */
 
 package dev.openan.workflow.engine.model;
-import org.junit.jupiter.api.Test;
-import java.util.*;
-import java.time.Duration;
+
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Duration;
+import java.util.*;
+import org.junit.jupiter.api.Test;
+
 class NegotiationRequestTest {
-    @Test void preservesTaskContentAndHistorySnapshot() {
-        var task = TaskRequest.builder().agentName("omc").taskId("local-task").build();
-        var content = MessageContent.text("opaque");
-        var received = new ReceivedMessage(content, Map.of("task-only", true), List.of());
-        List<NegotiationRequest.Exchange> history = new ArrayList<>(List.of(
-                new NegotiationRequest.Exchange(received, new NegotiationReply.Stop("code", "reason"))));
-        var request = new NegotiationRequest(task, content, received, history, Duration.ofSeconds(3));
-        history.clear();
-        assertEquals("omc", request.agentName());
-        assertEquals("local-task", request.task().getTaskId());
-        assertEquals(1, request.previousExchanges().size());
-        assertSame(received, request.received());
-        assertThrows(IllegalArgumentException.class, () ->
-                new NegotiationRequest(task, content, received, List.of(), Duration.ofSeconds(-1)));
-    }
+  @Test
+  void preservesTaskContentAndHistorySnapshot() {
+    var task = TaskRequest.builder().agentName("omc").taskId("local-task").build();
+    var content = MessageContent.text("opaque");
+    var received = new ReceivedMessage(content, Map.of("task-only", true), List.of());
+    List<NegotiationRequest.Exchange> history =
+        new ArrayList<>(
+            List.of(
+                new NegotiationRequest.Exchange(
+                    received, new NegotiationReply.Stop("code", "reason"))));
+    var request = new NegotiationRequest(task, content, received, history, Duration.ofSeconds(3));
+    history.clear();
+    assertEquals("omc", request.agentName());
+    assertEquals("local-task", request.task().getTaskId());
+    assertEquals(1, request.previousExchanges().size());
+    assertSame(received, request.received());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new NegotiationRequest(task, content, received, List.of(), Duration.ofSeconds(-1)));
+  }
 }

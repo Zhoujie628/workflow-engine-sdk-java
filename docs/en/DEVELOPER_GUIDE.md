@@ -15,7 +15,8 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
-The engine pulls in A2A protocol transports and a2a-t-core only. Hosts generating A2A-T content explicitly add a2a-t-client; receiving hosts may also add a2a-t-server.
+The engine pulls in A2A protocol transports and a2a-t-core only. Hosts generating A2A-T content explicitly add
+a2a-t-client; receiving hosts may also add a2a-t-server.
 
 ## 2. Core Concepts
 
@@ -84,26 +85,26 @@ and a sync `BiConsumer` overload.
 Events come from three layers: the runner (lifecycle bracket), the executor (step/task/routing), and the engine client
 (agent traffic, negotiation).
 
-| Event                   | Layer              | When                                             | Key Data                                                |
-|-------------------------|--------------------|--------------------------------------------------|---------------------------------------------------------|
-| `start`                 | runner             | Workflow begins                                  | `workflow`, `steps`                                     |
-| `step_start`            | executor           | Step begins                                      | `step`                                                  |
-| `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask` | `step`, `agent`, `task`                                 |
+| Event                   | Layer              | When                                                     | Key Data                                                |
+|-------------------------|--------------------|----------------------------------------------------------|---------------------------------------------------------|
+| `start`                 | runner             | Workflow begins                                          | `workflow`, `steps`                                     |
+| `step_start`            | executor           | Step begins                                              | `step`                                                  |
+| `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask`         | `step`, `agent`, `task`                                 |
 | `task_response`         | executor           | Remote task completed or onSelfTask returned TaskResult  | `step`, `agent`, `task`, `outputs`                      |
-| `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                |
-| `route_decision`        | executor           | Branch chosen                                    | `step`, `next`, `reason`                                |
-| `step_complete`         | executor           | Step finished                                    | `step`, `results`                                       |
-| `workflow_complete`     | executor           | All steps finished                               | `history`, `step_outputs`                               |
-| `agent_request` | engine client | Dispatch intent, not a wire observation | `agent`, `content` |
-| `agent_response` | engine client | Remote response assembled | `agent`, `response`, `receivedMessages` |
-| `agent_status_update`   | engine client      | Agent SSE status update                          | `agent`, `state`, `is_final`                            |
-| `agent_artifact_update` | engine client      | Agent SSE artifact update                        | `agent`, `artifact_name`, `text`                        |
-| `negotiation_request` | engine client | Valid Propose enters host callback | `agent`, `request`, `exchange` |
-| `negotiation_resolved` | engine client | Host Send passed association checks, not task success | `agent`, `reply`, `exchange` |
-| `negotiation_failed` | engine client | Local negotiation interaction failed | `agent`, `exchange`, `errorType` |
-| `complete`              | runner             | Workflow succeeded                               | `history`, `step_outputs`                               |
-| `error`                 | runner or executor | Workflow failed                                  | runner: `error`, `history`; executor: `step`, `results` |
-| `close`                 | runner             | Cleanup done                                     | (empty)                                                 |
+| `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                       |
+| `route_decision`        | executor           | Branch chosen                                            | `step`, `next`, `reason`                                |
+| `step_complete`         | executor           | Step finished                                            | `step`, `results`                                       |
+| `workflow_complete`     | executor           | All steps finished                                       | `history`, `step_outputs`                               |
+| `agent_request`         | engine client      | Dispatch intent, not a wire observation                  | `agent`, `content`                                      |
+| `agent_response`        | engine client      | Remote response assembled                                | `agent`, `response`, `receivedMessages`                 |
+| `agent_status_update`   | engine client      | Agent SSE status update                                  | `agent`, `state`, `is_final`                            |
+| `agent_artifact_update` | engine client      | Agent SSE artifact update                                | `agent`, `artifact_name`, `text`                        |
+| `negotiation_request`   | engine client      | Valid Propose enters host callback                       | `agent`, `request`, `exchange`                          |
+| `negotiation_resolved`  | engine client      | Host Send passed association checks, not task success    | `agent`, `reply`, `exchange`                            |
+| `negotiation_failed`    | engine client      | Local negotiation interaction failed                     | `agent`, `exchange`, `errorType`                        |
+| `complete`              | runner             | Workflow succeeded                                       | `history`, `step_outputs`                               |
+| `error`                 | runner or executor | Workflow failed                                          | runner: `error`, `history`; executor: `step`, `results` |
+| `close`                 | runner             | Cleanup done                                             | (empty)                                                 |
 
 ## 6. Mid-Level (Layer 1: WorkflowExecutor)
 
@@ -127,20 +128,19 @@ ExecutionResult result = executor.run().join();
 
 ### 6.1 Negotiation Auto-Loop
 
-Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
-Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
-The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
-Use `A2atMessages.contextOf(request.received())` to obtain the received context;
-reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
+restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
+generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to
+obtain the received context; reply with the same id, round and maxRounds. The last allowed round can still be answered.
 Do not call nextRound for an ending reply or return a new Propose.
 
-Return `new NegotiationReply.Send(content)` to send that exact content.
-Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
-Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
-`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
-Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
-Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
-A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
+Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
+to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
+exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
+SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
+diagnosis success, even if the remote acknowledges it with COMPLETED.
 
 ### 6.2 Workflow Model Fields
 
@@ -150,7 +150,7 @@ A business-sent Abort is never diagnosis success, even if the remote acknowledge
 | `steps[].subtasks[]`  | `Task`                | Each has `agent`, `skill`, `description`. One `onTask` (or `onSelfTask` for SelfLoop) call per subtask.                                                                                                         |
 | `steps[].next[]`      | `List<JumpCondition>` | Branch targets. `step` = next step name; `condition` = rule text.                                                                                                                                               |
 | `steps[].layer`       | `WorkflowStep`        | Orchestration-level hint; actual readiness is derived from DAG predecessors.                                                                                                                                    |
-| `steps[].contextFrom` | `WorkflowStep`        | Selects steps exposed through `workflowInput.upstreamResults`; omitted = direct predecessors, `[]` = none, `"*"` = all ancestors, or explicit ancestor names.                                                    |
+| `steps[].contextFrom` | `WorkflowStep`        | Selects steps exposed through `workflowInput.upstreamResults`; omitted = direct predecessors, `[]` = none, `"*"` = all ancestors, or explicit ancestor names.                                                   |
 
 ### 6.3 AgentCard Type
 
@@ -196,13 +196,22 @@ Passwords can be AES-GCM encrypted with `enc:<iv>:<ciphertext>` prefix. The decr
 ### 7.2 Custom AuthProvider
 
 For non-standard auth (SSO, API keys, custom headers):
+
 ```java
 WorkflowEngineClientConfig.builder()
-    .authProvider((agentName, agentCard, headers) -> {
-        headers.put("Authorization", "Bearer " + mySsoToken);
-        headers.put("X-Custom", "value");
+    .
+
+authProvider((agentName, agentCard, headers) ->{
+        headers.
+
+put("Authorization","Bearer "+mySsoToken);
+        headers.
+
+put("X-Custom","value");
     })
-    .build();
+            .
+
+build();
 ```
 
 ### 7.3 Credential File Fields
@@ -232,13 +241,13 @@ Set `sslVerify=false` only for dev with self-signed certs.
 
 ## 9. A2A-T Environment (.env)
 
-The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T,
-initialize A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL
-and A2AT_LANGUAGE. The sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option.
-Do not put OMC credential decryption ownership in LLM configuration: pass the secret explicitly through
-WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) when using encrypted built-in credentials,
-then pass that configured engineClient to ExecutePsop. Custom AuthProvider owns its own token/configuration.
-Tests use the current SDK SPI with an offline provider, not template overrides or production fallbacks.
+The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T, initialize
+A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. The
+sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option. Do not put OMC credential
+decryption ownership in LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder ()
+.credentialEncryptionKey (key) when using encrypted built-in credentials, then pass that configured engineClient to
+ExecutePsop. Custom AuthProvider owns its own token/configuration. Tests use the current SDK SPI with an offline
+provider, not template overrides or production fallbacks.
 
 ## 10. Integration Patterns
 
@@ -272,15 +281,15 @@ public Flux<String> execute(@PathVariable String psopId) {
 
 ### Cancellation
 
-ExecutePsop.builder().execute() returns a CompletableFuture. Cancellation prevents late callback results
-from being sent and requests conversation cleanup. Hosts must separately cancel their own LLM/business work.
-A remote task already submitted may require an explicit cancelTask operation; local cancellation is not protocol Abort.
-
+ExecutePsop.builder ().execute () returns a CompletableFuture. Cancellation prevents late callback results from being
+sent and requests conversation cleanup. Hosts must separately cancel their own LLM/business work. A remote task already
+submitted may require an explicit cancelTask operation; local cancellation is not protocol Abort.
 
 ## 11. Checklist
 
 1. Add Maven dependencies
-2. Implement `ControlPoint` (implement final onTask content plus local tasks, conditional routes and negotiation when required)
+2. Implement `ControlPoint` (implement final onTask content plus local tasks, conditional routes and negotiation when
+   required)
 3. Get AgentCards (from registry or JSON files)
 4. Load Workflow (via `LoadPsop` or build your own)
 5. Configure `.env` and credentials file
@@ -289,15 +298,14 @@ A remote task already submitted may require an explicit cancelTask operation; lo
 
 ### Pretty protocol log display
 
-Protocol logs default to pretty display: one header value per line and indented JSON bodies.
-SSE keeps event controls (id/event/comments); JSON appears between `=== SSE data (JSON display; not wire text) ===`
-and `=== End SSE data ===`, without repeating `data:` on every JSON line. Event boundaries remain separate.
-Set the environment variable or JVM property `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` to retain redacted raw body text.
-Formatting changes presentation only (JSON whitespace and SSE display labels), never transmitted bytes, metadata, number tokens or extension headers.
-The raw observer content remains unchanged.
-SSE pretty output is a display, not a replayable packet capture. Escaped newlines inside JSON strings stay escaped;
-invalid/incomplete or non-JSON content stays raw. Redaction and capacity limits still apply.
-The demo logs `NEGOTIATION_DEMO enabled=..., city=...` at startup. Locally City1 negotiates by default while City2 diagnoses directly;
-`-Da2at.samples.negotiation=false` disables the missing-input scenario.
-Look for `A2A-Extensions: .../Negotiation-T/v1`, the matching metadata key and `negotiationContext`;
-there is no dedicated Negotiation-T HTTP header.
+Protocol logs default to pretty display: one header value per line and indented JSON bodies. SSE keeps event controls
+(id/event/comments); JSON appears between `=== SSE data (JSON display; not wire text) ===`
+and `=== End SSE data ===`, without repeating `data:` on every JSON line. Event boundaries remain separate. Set the
+environment variable or JVM property `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` to retain redacted raw body text.
+Formatting changes presentation only (JSON whitespace and SSE display labels), never transmitted bytes, metadata, number
+tokens or extension headers. The raw observer content remains unchanged. SSE pretty output is a display, not a
+replayable packet capture. Escaped newlines inside JSON strings stay escaped; invalid/incomplete or non-JSON content
+stays raw. Redaction and capacity limits still apply. The demo logs `NEGOTIATION_DEMO enabled=..., city=...` at startup.
+Locally City1 negotiates by default while City2 diagnoses directly;
+`-Da2at.samples.negotiation=false` disables the missing-input scenario. Look for `A2A-Extensions: .../Negotiation-T/v1`,
+the matching metadata key and `negotiationContext`; there is no dedicated Negotiation-T HTTP header.

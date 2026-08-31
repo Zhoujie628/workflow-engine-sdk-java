@@ -35,27 +35,10 @@ import org.springframework.stereotype.Component;
 public final class ClientRuntimeFactory {
   /** Bean name used by a host application to supply its own OMC authentication provider. */
   public static final String OMC_AUTH_PROVIDER_BEAN_NAME = "workflowOmcAuthProvider";
-
-  public enum Mode {
-    DIRECT,
-    MOCK,
-    ORDER;
-
-    static Mode parse(String value) {
-      try {
-        return valueOf(value == null ? "ORDER" : value.trim().toUpperCase());
-      } catch (IllegalArgumentException e) {
-        throw new IllegalArgumentException(
-            "Unsupported a2a.transport-mode '" + value + "'; use direct, mock or order", e);
-      }
-    }
-  }
-
   private final Mode mode;
   private final String mockGatewayUrl;
   private final OrderGatewayClientRuntime.OrderConfig orderConfig;
   private final AuthProvider authProvider;
-
   @Autowired
   public ClientRuntimeFactory(
       WorkbenchClientProperties workbench,
@@ -92,23 +75,6 @@ public final class ClientRuntimeFactory {
 
   ClientRuntimeFactory(WorkbenchClientProperties workbench, OrderGatewayProperties order) {
     this(workbench, order, Optional.empty());
-  }
-
-  public Mode mode() {
-    return mode;
-  }
-
-  public A2AJavaClientRuntime create() {
-    return switch (mode) {
-      case DIRECT -> null;
-      case MOCK -> new MockGatewayClientRuntime(mockGatewayUrl);
-      case ORDER -> new OrderGatewayClientRuntime(orderConfig);
-    };
-  }
-
-  /** Shared, thread-safe authentication provider for all independently scoped transports. */
-  public AuthProvider authProvider() {
-    return authProvider;
   }
 
   private static AuthProvider resolveAuthProvider(
@@ -190,5 +156,37 @@ public final class ClientRuntimeFactory {
 
   private static boolean isBundledSimulatorAddress(String host, int port) {
     return port == 26401 && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host));
+  }
+
+  public Mode mode() {
+    return mode;
+  }
+
+  public A2AJavaClientRuntime create() {
+    return switch (mode) {
+      case DIRECT -> null;
+      case MOCK -> new MockGatewayClientRuntime(mockGatewayUrl);
+      case ORDER -> new OrderGatewayClientRuntime(orderConfig);
+    };
+  }
+
+  /** Shared, thread-safe authentication provider for all independently scoped transports. */
+  public AuthProvider authProvider() {
+    return authProvider;
+  }
+
+  public enum Mode {
+    DIRECT,
+    MOCK,
+    ORDER;
+
+    static Mode parse(String value) {
+      try {
+        return valueOf(value == null ? "ORDER" : value.trim().toUpperCase());
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException(
+            "Unsupported a2a.transport-mode '" + value + "'; use direct, mock or order", e);
+      }
+    }
   }
 }

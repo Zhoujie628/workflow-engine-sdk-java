@@ -24,35 +24,37 @@ import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.model.MessageContent;
 import dev.openan.workflow.engine.model.SendMessageResult;
 import dev.openan.workflow.engine.model.TaskRequest;
-
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /** Sends final content and coordinates task interaction. Content generation belongs to the host. */
 public interface WorkflowEngineClient {
-    /** Dispatches a prepared workflow activation; target and protocol association remain internal. */
-    CompletableFuture<SendMessageResult> dispatch(
-            TaskRequest request, MessageContent content, ControlPoint callbacks);
+  /** Dispatches a prepared workflow activation; target and protocol association remain internal. */
+  CompletableFuture<SendMessageResult> dispatch(
+      TaskRequest request, MessageContent content, ControlPoint callbacks);
 
-    /** Sends final content outside the DAG using explicitly configured interaction callbacks. */
-    CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+  /** Sends final content outside the DAG using explicitly configured interaction callbacks. */
+  CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 
-    /** Maximum wait for each business callback, including initial content preparation. */
-    default long callbackTimeoutSeconds() { return 600; }
+  /** Maximum wait for each business callback, including initial content preparation. */
+  default long callbackTimeoutSeconds() {
+    return 600;
+  }
 
-    void setControlPoint(ControlPoint controlPoint);
-    void setEventCallback(EventCallback callback);
+  void setControlPoint(ControlPoint controlPoint);
 
-    /** Queries an existing remote task. */
-    CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+  void setEventCallback(EventCallback callback);
 
-    /** Cancels an existing remote task; this is not a Negotiation-T Abort. */
-    CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+  /** Queries an existing remote task. */
+  CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 
-    /** Subscribes to an existing task, preserving its identity. */
-    CompletableFuture<SendMessageResult> subscribeToTask(
-            String agentName, String taskId, Consumer<Map<String, Object>> eventCallback);
+  /** Cancels an existing remote task; this is not a Negotiation-T Abort. */
+  CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
 
-    void close();
+  /** Subscribes to an existing task, preserving its identity. */
+  CompletableFuture<SendMessageResult> subscribeToTask(
+      String agentName, String taskId, Consumer<Map<String, Object>> eventCallback);
+
+  void close();
 }

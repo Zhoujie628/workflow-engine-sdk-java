@@ -30,45 +30,44 @@ import java.util.function.Supplier;
  * closing another facade's shared handle. No global URL cache setting is changed.
  */
 public final class A2ATInitialization {
-    private A2ATInitialization() {}
+  private A2ATInitialization() {}
 
-    /**
-     * Temporarily isolates catalog URLs on the current thread and always restores its classloader.
-     */
-    public static <T> T create(Supplier<T> factory) {
-        Thread thread = Thread.currentThread();
-        ClassLoader original = thread.getContextClassLoader();
-        ClassLoader parent =
-                original == null ? A2ATInitialization.class.getClassLoader() : original;
-        thread.setContextClassLoader(
-                new ClassLoader(parent) {
-                    @Override
-                    public Enumeration<URL> getResources(String name) throws IOException {
-                        List<URL> urls = Collections.list(parent.getResources(name));
-                        List<URL> owned = new ArrayList<>();
-                        for (URL url : urls) owned.add(uncachedJar(url));
-                        return Collections.enumeration(owned);
-                    }
-                });
-        try {
-            return factory.get();
-        } finally {
-            thread.setContextClassLoader(original);
-        }
+  /**
+   * Temporarily isolates catalog URLs on the current thread and always restores its classloader.
+   */
+  public static <T> T create(Supplier<T> factory) {
+    Thread thread = Thread.currentThread();
+    ClassLoader original = thread.getContextClassLoader();
+    ClassLoader parent = original == null ? A2ATInitialization.class.getClassLoader() : original;
+    thread.setContextClassLoader(
+        new ClassLoader(parent) {
+          @Override
+          public Enumeration<URL> getResources(String name) throws IOException {
+            List<URL> urls = Collections.list(parent.getResources(name));
+            List<URL> owned = new ArrayList<>();
+            for (URL url : urls) owned.add(uncachedJar(url));
+            return Collections.enumeration(owned);
+          }
+        });
+    try {
+      return factory.get();
+    } finally {
+      thread.setContextClassLoader(original);
     }
+  }
 
-    private static URL uncachedJar(URL original) throws MalformedURLException {
-        if (!"jar".equals(original.getProtocol())) return original;
-        return new URL(
-                null,
-                original.toExternalForm(),
-                new URLStreamHandler() {
-                    @Override
-                    protected URLConnection openConnection(URL ignored) throws IOException {
-                        URLConnection connection = original.openConnection();
-                        connection.setUseCaches(false);
-                        return connection;
-                    }
-                });
-    }
+  private static URL uncachedJar(URL original) throws MalformedURLException {
+    if (!"jar".equals(original.getProtocol())) return original;
+    return new URL(
+        null,
+        original.toExternalForm(),
+        new URLStreamHandler() {
+          @Override
+          protected URLConnection openConnection(URL ignored) throws IOException {
+            URLConnection connection = original.openConnection();
+            connection.setUseCaches(false);
+            return connection;
+          }
+        });
+  }
 }
