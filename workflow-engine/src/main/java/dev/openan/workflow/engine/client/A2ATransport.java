@@ -502,11 +502,21 @@ public class A2ATransport implements AutoCloseable {
                         .receivedMessages(ProtocolResponses.assemble(events))
                         .build();
                   } catch (Exception e) {
-                    log.error(
-                        "[Transport] Failed to send message to {}: {}",
-                        agentName,
-                        e.getMessage(),
-                        e);
+                    RemoteProblemException problem = RemoteProblemException.findIn(e);
+                    if (problem != null) {
+                      log.warn(
+                          "[Transport] REMOTE_PROBLEM agent={}, contextId={}, status={}, reason={}",
+                          agentName,
+                          contextId,
+                          problem.getStatus(),
+                          problem.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
+                    } else {
+                      log.error(
+                          "[Transport] Failed to send message to {}: {}",
+                          agentName,
+                          e.getMessage(),
+                          e);
+                    }
                     if (e instanceof SecurityException securityException) {
                       throw securityException;
                     }

@@ -1,0 +1,121 @@
+/*
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package dev.openan.workflow.engine.client;
+
+import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import org.a2aproject.sdk.client.http.A2AHttpClient;
+import org.a2aproject.sdk.client.http.A2AHttpResponse;
+import org.a2aproject.sdk.client.http.ServerSentEvent;
+
+/** Checks problem responses before the SDK's A2A parser; wire logging remains observational. */
+final class ProblemDetectingHttpClient implements A2AHttpClient {
+  private final A2AHttpClient delegate;
+
+  ProblemDetectingHttpClient(A2AHttpClient delegate) {
+    this.delegate = delegate;
+  }
+
+  @Override public GetBuilder createGet() { return new Get(delegate.createGet()); }
+  @Override public PostBuilder createPost() { return new Post(delegate.createPost()); }
+  @Override public DeleteBuilder createDelete() { return new Delete(delegate.createDelete()); }
+
+  private static A2AHttpResponse check(A2AHttpResponse response) {
+    var error = RemoteProblemException.fromPayload(response.body());
+    if (error != null) throw error;
+    return response;
+  }
+
+  private abstract static class Wrapped<T extends Builder<T>> implements Builder<T> {
+    final T target;
+    Wrapped(T target) { this.target = target; }
+    abstract T self();
+    @Override public T url(String url) { target.url(url); return self(); }
+    @Override public T addHeader(String name, String value) { target.addHeader(name, value); return self(); }
+    @Override public T addHeaders(Map<String, String> headers) { target.addHeaders(headers); return self(); }
+  }
+
+  private static final class Get extends Wrapped<GetBuilder> implements GetBuilder {
+    Get(GetBuilder target) { super(target); }
+    @Override GetBuilder self() { return this; }
+    @Override public A2AHttpResponse get() throws IOException, InterruptedException { return check(target.get()); }
+    @Override public CompletableFuture<Void> getAsyncSSE(
+        Consumer<ServerSentEvent> messages, Consumer<Throwable> errors, Runnable complete)
+        throws IOException, InterruptedException {
+      return stream(target::getAsyncSSE, messages, errors, complete);
+    }
+  }
+
+  private static final class Post extends Wrapped<PostBuilder> implements PostBuilder {
+    Post(PostBuilder target) { super(target); }
+    @Override PostBuilder self() { return this; }
+    @Override public PostBuilder body(String body) { target.body(body); return this; }
+    @Override public A2AHttpResponse post() throws IOException, InterruptedException { return check(target.post()); }
+    @Override public CompletableFuture<Void> postAsyncSSE(
+        Consumer<ServerSentEvent> messages, Consumer<Throwable> errors, Runnable complete)
+        throws IOException, InterruptedException {
+      return stream(target::postAsyncSSE, messages, errors, complete);
+    }
+  }
+
+  private static final class Delete extends Wrapped<DeleteBuilder> implements DeleteBuilder {
+    Delete(DeleteBuilder target) { super(target); }
+    @Override DeleteBuilder self() { return this; }
+    @Override public A2AHttpResponse delete() throws IOException, InterruptedException { return check(target.delete()); }
+  }
+
+  private static CompletableFuture<Void> stream(
+      StreamStarter starter, Consumer<ServerSentEvent> messages,
+      Consumer<Throwable> errors, Runnable complete) throws IOException, InterruptedException {
+    var result = new CompletableFuture<Void>();
+    var upstream = new AtomicReference<CompletableFuture<Void>>();
+    var ended = new AtomicBoolean();
+    Consumer<Throwable> fail = error -> {
+      if (!ended.compareAndSet(false, true)) return;
+      try { errors.accept(error); }
+      catch (RuntimeException observerError) {
+        if (observerError != error) error.addSuppressed(observerError);
+      }
+      finally { result.completeExceptionally(error); }
+    };
+    result.whenComplete((ignored, error) -> {
+      if (error != null) {
+        ended.set(true);
+        var active = upstream.get();
+        if (active != null) active.cancel(true);
+      }
+    });
+    var active = starter.start(event -> {
+      if (ended.get()) return;
+      var problem = RemoteProblemException.fromPayload(event.data());
+      if (problem != null) fail.accept(problem);
+      else {
+        try { messages.accept(event); }
+        catch (RuntimeException callbackError) { fail.accept(callbackError); }
+      }
+    }, fail, () -> {
+      if (ended.compareAndSet(false, true)) {
+        try { complete.run(); result.complete(null); }
+        catch (RuntimeException error) { result.completeExceptionally(error); }
+      }
+    });
+    upstream.set(active);
+    if (result.isCompletedExceptionally()) active.cancel(true);
+    active.whenComplete((ignored, error) -> {
+      if (error != null) fail.accept(error);
+    });
+    return result;
+  }
+
+  @FunctionalInterface
+  private interface StreamStarter {
+    CompletableFuture<Void> start(Consumer<ServerSentEvent> messages, Consumer<Throwable> errors,
+        Runnable complete) throws IOException, InterruptedException;
+  }
+}

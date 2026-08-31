@@ -115,7 +115,7 @@ class WireLogFormatterTest {
     // body frames are continuations: the envelope (headers/correlation) was logged by the preceding
     // entry
     assertTrue(pretty.startsWith("[DIRECT_HTTP] REQUEST_BODY requestId=req-1\n"));
-    assertTrue(pretty.contains("(envelope logged in the preceding entry"));
+    assertTrue(pretty.contains("(envelope logged separately; correlate"));
     assertFalse(pretty.contains("=== Headers ==="));
     assertFalse(pretty.contains("hidden"));
     assertTrue(pretty.contains("\n    \"performative\": \"ACCEPT\""));

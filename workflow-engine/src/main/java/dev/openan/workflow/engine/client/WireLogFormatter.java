@@ -78,7 +78,7 @@ final class WireLogFormatter {
         .append(" requestId=")
         .append(entry.requestId())
         .append(
-            "\n(envelope logged in the preceding entry; target/status/headers/correlation not repeated)")
+            "\n(envelope logged separately; correlate target/status/headers using the same requestId)")
         .append("\nVisibility: ")
         .append(entry.visibility())
         .append("\n=== Body ===\n")
