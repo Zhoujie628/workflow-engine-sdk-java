@@ -131,6 +131,9 @@ public final class WireLog {
 
     static boolean sensitive(String name) {
         String key = name.toLowerCase(Locale.ROOT);
+        // URI-shaped keys are protocol identifiers (e.g. the Authorization-T extension URI in message
+        // metadata), not credential fields; their values are business content and must stay visible.
+        if (key.contains("://")) return false;
         return key.contains("authorization") || key.contains("cookie") || key.contains("token")
                 || key.contains("secret") || key.contains("password") || key.equals("pwd")
                 || key.equals("passwd") || key.equals("accesssession")

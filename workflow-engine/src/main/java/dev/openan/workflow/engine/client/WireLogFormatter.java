@@ -27,6 +27,7 @@ final class WireLogFormatter {
     private WireLogFormatter() {}
 
     static String format(WireLog.Entry entry, boolean pretty) {
+        if (entry.direction().endsWith("_BODY")) return formatFrame(entry, pretty);
         StringBuilder out = new StringBuilder()
                 .append("[").append(entry.boundary()).append("] ").append(entry.direction())
                 .append(" requestId=").append(entry.requestId())
@@ -42,6 +43,21 @@ final class WireLogFormatter {
         entry.headers().forEach((key, values) ->
                 values.forEach(value -> out.append(key).append(": ").append(value).append('\n')));
         return out.append("=== Body ===\n")
+                .append(pretty ? prettyBody(entry.body(), entry.representation()) : entry.body()).toString();
+    }
+
+    /**
+     * Compact format for body-frame continuations of an already-logged envelope entry: the envelope's
+     * target/status/headers/correlation are not repeated. The first line still ends at the requestId so
+     * that tooling parsing {@code requestId=<id>} keeps working.
+     */
+    private static String formatFrame(WireLog.Entry entry, boolean pretty) {
+        return new StringBuilder()
+                .append("[").append(entry.boundary()).append("] ").append(entry.direction())
+                .append(" requestId=").append(entry.requestId())
+                .append("\n(envelope logged in the preceding entry; target/status/headers/correlation not repeated)")
+                .append("\nVisibility: ").append(entry.visibility())
+                .append("\n=== Body ===\n")
                 .append(pretty ? prettyBody(entry.body(), entry.representation()) : entry.body()).toString();
     }
 
@@ -99,8 +115,17 @@ final class WireLogFormatter {
     }
 
     /** Insert whitespace only; preserve duplicate keys, numbers and escaped string tokens exactly. */
-    private static String prettyJson(String text) {
-        String trimmed = text.strip();
+    /** Parses the four hex digits of a unicode escape whose backslash-u sits before index {@code i}; -1 when malformed. */
+    private static int decodeUnicodeEscape(String text, int i) {
+        if (i + 4 >= text.length()) return -1;
+        try {
+            return Integer.parseInt(text.substring(i + 1, i + 5), 16);
+        } catch (NumberFormatException malformed) {
+            return -1;
+        }
+    }
+
+    private static String prettyJson(String text) {        String trimmed = text.strip();
         if (!isJsonContainer(trimmed)) return text;
         StringBuilder out = new StringBuilder();
         boolean quoted = false;
@@ -110,10 +135,34 @@ final class WireLogFormatter {
         for (int i = 0; i < trimmed.length(); i++) {
             char c = trimmed.charAt(i);
             if (quoted) {
-                out.append(c);
-                if (escaped) escaped = false;
-                else if (c == '\\') escaped = true;
-                else if (c == '"') quoted = false;
+                if (escaped) {
+                    if (c == 'u') {
+                        int cp = decodeUnicodeEscape(trimmed, i);
+                        if (cp >= 0x80) {
+                            // display-only decoding of non-ASCII escapes; structural escapes stay verbatim
+                            int advance = 4;
+                            if (Character.isHighSurrogate((char) cp) && trimmed.length() > i + 10
+                                    && trimmed.charAt(i + 5) == '\\' && trimmed.charAt(i + 6) == 'u') {
+                                int low = decodeUnicodeEscape(trimmed, i + 6);
+                                if (Character.isLowSurrogate((char) low)) {
+                                    cp = Character.toCodePoint((char) cp, (char) low);
+                                    advance = 10;
+                                }
+                            }
+                            out.appendCodePoint(cp);
+                            i += advance;
+                            escaped = false;
+                            continue;
+                        }
+                    }
+                    out.append('\\').append(c);
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else {
+                    out.append(c);
+                    if (c == '"') quoted = false;
+                }
             } else if (c == '"') {
                 quoted = true;
                 out.append(c);

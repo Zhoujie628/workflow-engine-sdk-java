@@ -75,13 +75,44 @@ class WireLogFormatterTest {
         WireLog.Entry entry = entries.get(0);
         assertEquals(raw.replace("hidden", "***"), entry.body());
         String pretty = WireLogFormatter.format(entry, true);
-        assertTrue(pretty.contains("=== Headers ===\n"));
-        assertTrue(pretty.contains("A2A-Extensions: Negotiation-T/v1\n"));
-        assertTrue(pretty.contains("X-Trace: one\nX-Trace: two\n"));
-        assertTrue(pretty.contains("\n    \"performative\": \"ACCEPT\""));
+        // body frames are continuations: the envelope (headers/correlation) was logged by the preceding entry
+        assertTrue(pretty.startsWith("[DIRECT_HTTP] REQUEST_BODY requestId=req-1\n"));
+        assertTrue(pretty.contains("(envelope logged in the preceding entry"));
+        assertFalse(pretty.contains("=== Headers ==="));
         assertFalse(pretty.contains("hidden"));
+        assertTrue(pretty.contains("\n    \"performative\": \"ACCEPT\""));
         assertTrue(WireLogFormatter.format(entry, false).endsWith(entry.body()));
         assertEquals(raw.replace("hidden", "***"), entry.body());
+    }
+
+    @Test void envelopeEntriesKeepFullLayoutWhileBodyFramesStayCompact() {
+        WireLog.Entry envelope = new WireLog.Entry("DIRECT_HTTP", "RESPONSE_HEADERS", "req-1",
+                "/message:stream", "POST", 200, Map.of("Content-type", List.of("text/event-stream")),
+                "sdk-headers", "", "observed", Map.of("agent", "SPN Domain Agent City1"));
+        String full = WireLogFormatter.format(envelope, true);
+        assertTrue(full.contains("Target: POST /message:stream"));
+        assertTrue(full.contains("Status: 200"));
+        assertTrue(full.contains("=== Headers ===\nContent-type: text/event-stream"));
+        assertTrue(full.contains("=== Correlation ===\nagent: SPN Domain Agent City1"));
+
+        WireLog.Entry frame = new WireLog.Entry("DIRECT_HTTP", "RESPONSE_BODY", "req-1",
+                "/message:stream", "POST", 200, Map.of(), "sdk-sse-text",
+                "id:1\ndata: {\"ok\":true}", "observed", Map.of("agent", "SPN Domain Agent City1"));
+        String compact = WireLogFormatter.format(frame, true);
+        assertTrue(compact.startsWith("[DIRECT_HTTP] RESPONSE_BODY requestId=req-1"));
+        assertFalse(compact.contains("=== Headers ==="));
+        assertFalse(compact.contains("=== Correlation ==="));
+        assertTrue(compact.contains("=== Body ==="));
+    }
+
+    @Test void prettyDisplayDecodesNonAsciiUnicodeEscapesButKeepsStructuralEscapes() {
+        String raw = "{\"授权策略\":\"\\u65b0\\u589e\\u52a8\\u7f51\\u64cd\\u4f5c\","
+                + "\"note\":\"line\\u000anext\",\"emoji\":\"\\ud83d\\ude00\"}";
+        String pretty = WireLogFormatter.prettyBody(raw, "serialized-utf8");
+        assertTrue(pretty.contains("\"授权策略\": \"新增动网操作\""));
+        assertTrue(pretty.contains("\"emoji\": \"😀\""));
+        // structural escapes (\n) stay verbatim; raw observation is untouched
+        assertTrue(pretty.contains("\\u000a"));
     }
 
     @Test void displayExpansionIsBoundedAndDoesNotRecurseOnDeepJson() {
