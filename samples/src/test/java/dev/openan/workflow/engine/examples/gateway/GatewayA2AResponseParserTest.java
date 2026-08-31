@@ -21,6 +21,28 @@ import org.junit.jupiter.api.Test;
 class GatewayA2AResponseParserTest {
   private final GatewayA2AResponseParser parser = new GatewayA2AResponseParser();
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {400, 429})
+  void rejectsProblemFramesImmediatelyAndPreservesBusinessDetail(int status) {
+    String problem = "{\"status\":" + status + ",\"detail\":\"OMC业务错误\",\"type\":\"\"}";
+    var events = new ArrayList<org.a2aproject.sdk.client.ClientEvent>();
+    var session = parser.newStreamingSession(events::add);
+    session.accept("data: " + problem.substring(0, 15));
+    var error =
+        assertThrows(
+            dev.openan.workflow.engine.client.RemoteProblemException.class,
+            () -> session.accept(problem.substring(15) + "\n\n"));
+    assertEquals(status, error.getStatus());
+    assertEquals("OMC业务错误", error.getDetail());
+    assertEquals(0, events.size());
+    var bare = parser.newStreamingSession(events::add);
+    assertThrows(
+        dev.openan.workflow.engine.client.RemoteProblemException.class, () -> bare.accept(problem));
+    assertThrows(
+        dev.openan.workflow.engine.client.RemoteProblemException.class,
+        () -> parser.parseNonStreaming(problem, events::add));
+  }
+
   static String taskJson(String taskId, String contextId) throws Exception {
     return taskJson(taskId, contextId, TaskState.TASK_STATE_COMPLETED);
   }

@@ -213,6 +213,48 @@ class OrderGatewayClientRuntimeTest {
   }
 
   @Test
+  void nonStreamingHttpErrorPreservesProblemBeforeGenericStatusValidation() {
+    var runtime =
+        runtime(
+            route ->
+                new OrderGatewayClientRuntime.OrderSession() {
+                  @Override
+                  public OrderResponse execute(
+                      OrderHttpSessionStrRequest request, int timeoutMillis) {
+                    return new OrderResponse(
+                        429,
+                        "{\"status\":429,\"detail\":\"Active task limit reached\",\"type\":\"\"}",
+                        Map.of(),
+                        "test");
+                  }
+
+                  @Override
+                  public void executeStreaming(
+                      OrderHttpSessionStrRequest request,
+                      int timeoutMillis,
+                      Predicate<OrderResponse> responseSink) {
+                    throw new AssertionError("Expected message:send");
+                  }
+
+                  @Override
+                  public void close() {}
+                });
+    try {
+      var wrapped =
+          assertThrows(
+              IllegalStateException.class,
+              () -> runtime.sendMessage(card("city1", 26335, false), params(), null, null, null));
+      var error =
+          org.junit.jupiter.api.Assertions.assertInstanceOf(
+              dev.openan.workflow.engine.client.RemoteProblemException.class, wrapped.getCause());
+      assertEquals(429, error.getStatus());
+      assertEquals("Active task limit reached", error.getDetail());
+    } finally {
+      runtime.close();
+    }
+  }
+
+  @Test
   void streamingSendEmitsIntermediateEventsBeforeStreamReturns() throws Exception {
     var emitted = new CopyOnWriteArrayList<ClientEvent>();
     var closeCount = new AtomicInteger();

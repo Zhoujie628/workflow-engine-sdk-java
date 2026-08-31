@@ -313,6 +313,9 @@ public final class OrderGatewayClientRuntime
 
   private static void validateResponse(OrderResponse response) {
     Objects.requireNonNull(response, "Gateway returned a null response");
+    var problem =
+        dev.openan.workflow.engine.client.RemoteProblemException.fromPayload(response.body());
+    if (problem != null) throw problem;
     int status = response.status();
     if (status != 0 && (status < 200 || status >= 300)) {
       throw new IllegalStateException(
@@ -451,6 +454,16 @@ public final class OrderGatewayClientRuntime
             route.ne(),
             channel,
             elapsedMillis(started));
+      } else if (dev.openan.workflow.engine.client.RemoteProblemException.findIn(e) != null) {
+        var problem = dev.openan.workflow.engine.client.RemoteProblemException.findIn(e);
+        log.warn(
+            "[OrderGateway] REMOTE_PROBLEM requestId={}, agent={}, ne={}, status={}, elapsedMs={}, reason={}",
+            requestId,
+            agentCard.name(),
+            route.ne(),
+            problem.getStatus(),
+            elapsedMillis(started),
+            problem.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
       } else {
         log.error(
             "[OrderGateway] SEND_FAILED requestId={}, agent={}, ne={}, elapsedMs={}, "

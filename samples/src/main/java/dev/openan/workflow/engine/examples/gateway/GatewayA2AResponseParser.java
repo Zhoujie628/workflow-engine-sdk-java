@@ -103,6 +103,8 @@ public final class GatewayA2AResponseParser {
   }
 
   private static ClientEvent parsePayload(String json, ParseContext context) {
+    var problem = dev.openan.workflow.engine.client.RemoteProblemException.fromPayload(json);
+    if (problem != null) throw problem;
     try {
       StreamResponse.Builder builder = StreamResponse.newBuilder();
       JsonFormat.parser().merge(json, builder);
@@ -150,6 +152,9 @@ public final class GatewayA2AResponseParser {
     if (responseBody == null || responseBody.isBlank()) {
       return List.of();
     }
+    var problem =
+        dev.openan.workflow.engine.client.RemoteProblemException.fromPayload(responseBody);
+    if (problem != null) throw problem;
     try {
       SendMessageResponse.Builder builder = SendMessageResponse.newBuilder();
       JsonFormat.parser().merge(responseBody, builder);

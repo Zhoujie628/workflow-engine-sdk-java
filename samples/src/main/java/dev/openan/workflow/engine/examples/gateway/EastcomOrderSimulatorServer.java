@@ -755,9 +755,15 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                       // Request Flux completed - if not forwarded yet, this is an error
                       if (!forwarded.get()) {
                         sink.error(new IllegalStateException("request completed without body"));
+                      } else {
+                        // The pinned SDK keeps its request Flux open while reading the response;
+                        // ReactorNettyBridgeHandler.channelInactive completes it on local close.
+                        // Treat that vendor lifecycle signal as cancellation of this forward only.
+                        log.info(
+                            "[EastcomSimulator] FORWARD_CANCEL_REQUESTED ne={}, reason=request_stream_closed",
+                            requestNe[0]);
+                        sink.complete();
                       }
-                      // If already forwarded, the forwardParsed completion will call
-                      // sink.complete()
                     });
             requestSubscription.set(requestDisposable);
             if (sink.isCancelled()) {
