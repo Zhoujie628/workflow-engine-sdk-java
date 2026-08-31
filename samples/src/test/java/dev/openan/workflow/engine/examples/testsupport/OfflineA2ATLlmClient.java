@@ -75,22 +75,6 @@ public final class OfflineA2ATLlmClient implements LLMClient {
             response.put("params", params);
             return response(response);
         }
-        if (propertiesValue instanceof Map<?, ?> properties
-                && properties.containsKey("conclusion")
-                && properties.containsKey("items")) {
-            return response(
-                    Map.of(
-                            "conclusion",
-                            "Accept",
-                            "items",
-                            List.of(
-                                    Map.of(
-                                            "name",
-                                            "接入端口名称",
-                                            "value",
-                                            portValue(validationInput(prompt))),
-                                    Map.of("name", "投诉分类", "value", label(validationInput(prompt), "投诉分类")))));
-        }
 
         Object slotNames = jsonSchema.get("slotNames");
         if (slotNames instanceof List<?> names) {
@@ -139,6 +123,11 @@ public final class OfflineA2ATLlmClient implements LLMClient {
         if (outputProperties.containsKey("negotiation_type")) {
             boolean formal = source.contains("## 信息协商") || source.contains("## 协商结果");
             if (!formal) return false; // A parts summary is NOT a negotiation prompt.
+        }
+        if (source.contains("## 订阅条件")) {
+            // Mirrors the real provider: a rendered section whose value is blank reads as an
+            // unfilled parameter and must be rejected, not silently accepted.
+            if (section(source, "订阅条件").isBlank()) return false;
         }
         if (outputProperties.get("params") instanceof Map<?, ?> schema && schema.get("required") instanceof List<?> required) {
             for (Object key : required) {
