@@ -104,28 +104,57 @@ public class ExecutePsop {
                 credentialsConfigPath,
                 collectingCallback);
     boolean closeClientOnFinish = engineClient == null;
-    WorkflowExecutor executor =
-        new WorkflowExecutor(
-            psop,
-            controlPoint,
-            client,
-            collectingCallback,
-            runtimeIntent != null ? runtimeIntent : "",
-            lang != null ? lang : "zh");
-    log.info(
-        "[execute_psop] Starting: workflow={}, {} steps, intent={}",
-        psop.getName(),
-        psop.getSteps().size(),
-        runtimeIntent);
-    collectingCallback.onEvent(
-        EventType.START, Map.of("workflow", psop.getName(), "steps", psop.getSteps().size()));
-    return executor
-        .run()
-        .exceptionally(ExecutePsop::handleExecutionError)
-        .thenCompose(
-            result ->
-                finalizeResult(
-                    result, client, closeClientOnFinish, collectingCallback, collected, onFinish));
+    CompletableFuture<ExecutionResult> execution;
+    try {
+      WorkflowExecutor executor =
+          new WorkflowExecutor(
+              psop,
+              controlPoint,
+              client,
+              collectingCallback,
+              runtimeIntent != null ? runtimeIntent : "",
+              lang != null ? lang : "zh");
+      log.info(
+          "[execute_psop] Starting: workflow={}, {} steps, intent={}",
+          psop.getName(),
+          psop.getSteps().size(),
+          runtimeIntent);
+      collectingCallback.onEvent(
+          EventType.START, Map.of("workflow", psop.getName(), "steps", psop.getSteps().size()));
+      execution = executor.run();
+    } catch (RuntimeException error) {
+      closeExecution(client, closeClientOnFinish, collectingCallback);
+      return CompletableFuture.failedFuture(error);
+    }
+    CompletableFuture<ExecutionResult> exposed = new CompletableFuture<>();
+    var closed = new java.util.concurrent.atomic.AtomicBoolean();
+    Runnable cleanup = () -> {
+      if (closed.compareAndSet(false, true)) {
+        closeExecution(client, closeClientOnFinish, collectingCallback);
+      }
+    };
+    var finishing = new java.util.concurrent.atomic.AtomicReference<CompletableFuture<ExecutionResult>>();
+    exposed.whenComplete((result, error) -> {
+      if (exposed.isCancelled()) {
+        execution.cancel(true);
+        CompletableFuture<ExecutionResult> pending = finishing.get();
+        if (pending != null) pending.cancel(true);
+        cleanup.run();
+      }
+    });
+    // Observe the source independently: cancelling the public future must not skip cleanup.
+    execution.whenComplete((result, error) -> {
+      ExecutionResult outcome = error == null ? result : handleExecutionError(error);
+      CompletableFuture<ExecutionResult> completion =
+          finalizeResult(outcome, collectingCallback, collected, onFinish, cleanup);
+      finishing.set(completion);
+      if (exposed.isCancelled()) completion.cancel(true);
+      completion.whenComplete((value, failure) -> {
+        if (failure == null) exposed.complete(value);
+        else exposed.completeExceptionally(failure);
+      });
+    });
+    return exposed;
   }
 
   /** Convenience overload using default transport/authentication configuration. */
@@ -252,10 +281,14 @@ public class ExecutePsop {
   }
 
   private static ExecutionResult handleExecutionError(Throwable error) {
-    log.error("[execute_psop] Execution failed: {}", error.getMessage());
+    boolean cancelled = error instanceof java.util.concurrent.CancellationException;
+    String message = cancelled ? "Workflow execution cancelled"
+        : error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+    if (cancelled) log.info("[execute_psop] {}", message);
+    else log.error("[execute_psop] Execution failed: {}", message);
     return ExecutionResult.builder()
         .success(false)
-        .error(error.getMessage())
+        .error(message)
         .history(List.of())
         .stepOutputs(Map.of())
         .build();
@@ -263,11 +296,10 @@ public class ExecutePsop {
 
   private static CompletableFuture<ExecutionResult> finalizeResult(
       ExecutionResult result,
-      WorkflowEngineClient client,
-      boolean closeClientOnFinish,
       EventCallback callback,
       List<Map<String, Object>> collected,
-      BiFunction<ExecutionResult, List<Map<String, Object>>, CompletableFuture<Void>> onFinish) {
+      BiFunction<ExecutionResult, List<Map<String, Object>>, CompletableFuture<Void>> onFinish,
+      Runnable cleanup) {
     try {
       emitResultEvent(result, callback);
     } catch (Exception e) {
@@ -281,18 +313,28 @@ public class ExecutePsop {
                 "[execute_psop] Finished: workflow success={}, history={}",
                 result.isSuccess(),
                 result.getHistory() != null ? result.getHistory().size() : 0);
-            callback.onEvent(EventType.CLOSE, Map.of());
           } finally {
-            if (closeClientOnFinish) {
-              try {
-                client.close();
-              } catch (Exception e) {
-                log.warn("[execute_psop] Owned client close failed: {}", e.getMessage());
-              }
-            }
+            cleanup.run();
           }
           return result;
         });
+  }
+
+  private static void closeExecution(
+      WorkflowEngineClient client, boolean owned, EventCallback callback) {
+    try {
+      callback.onEvent(EventType.CLOSE, Map.of());
+    } catch (RuntimeException error) {
+      log.warn("[execute_psop] Close observer failed", error);
+    } finally {
+      if (owned) {
+        try {
+          client.close();
+        } catch (Exception error) {
+          log.warn("[execute_psop] Owned client close failed", error);
+        }
+      }
+    }
   }
 
   private static void emitResultEvent(ExecutionResult result, EventCallback callback) {

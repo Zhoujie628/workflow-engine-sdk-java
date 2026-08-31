@@ -42,6 +42,72 @@ import org.junit.jupiter.api.Test;
  */
 class ExecutePsopTest {
 
+  @Test
+  void cancellationStopsLateTaskPreparationAndClosesLifecycleOnce() throws Exception {
+    var prepared = new CompletableFuture<MessageContent>();
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var finished = new java.util.concurrent.CountDownLatch(1);
+    var closes = new AtomicInteger();
+    var stub = new StubWorkflowEngineClient("A", "B");
+    var execution = ExecutePsop.builder().psop(linearWorkflow()).engineClient(stub)
+        .controlPoint(ControlPoint.builder().onTask(request -> {
+          entered.countDown();
+          return prepared;
+        }).build())
+        .eventCallback(new EventCallback() {
+          @Override public void onEvent(String type, Map<String, Object> data) {
+            if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
+          }
+        })
+        .onFinish((result, events) -> {
+          assertFalse(result.isSuccess());
+          assertEquals("Workflow execution cancelled", result.getError());
+          finished.countDown();
+          return CompletableFuture.completedFuture(null);
+        }).execute();
+    assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS));
+    assertTrue(execution.cancel(true));
+    prepared.complete(MessageContent.text("must not send"));
+    assertTrue(finished.await(2, java.util.concurrent.TimeUnit.SECONDS));
+    assertTrue(execution.isCancelled());
+    assertEquals(0, stub.getSentMessages().size());
+    assertEquals(1, closes.get());
+  }
+
+  @Test
+  void cancellationWhileOnFinishIsPendingStillClosesExactlyOnce() {
+    var finish = new CompletableFuture<Void>();
+    var closes = new AtomicInteger();
+    var execution = ExecutePsop.builder().psop(linearWorkflow())
+        .engineClient(new StubWorkflowEngineClient("A", "B")).controlPoint(autoCp())
+        .eventCallback(new EventCallback() {
+          @Override public void onEvent(String type, Map<String, Object> data) {
+            if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
+          }
+        }).onFinish((result, events) -> finish).execute();
+    assertTrue(execution.cancel(true));
+    assertEquals(1, closes.get());
+    finish.complete(null);
+    assertEquals(1, closes.get());
+  }
+
+  @Test
+  void cancelledRunnerClosesItsOwnedRuntime() {
+    var closes = new AtomicInteger();
+    var runtime = (dev.openan.workflow.engine.client.A2AJavaClientRuntime)
+        java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+            new Class<?>[] {dev.openan.workflow.engine.client.A2AJavaClientRuntime.class},
+            (proxy, method, args) -> {
+              if (method.getName().equals("close")) closes.incrementAndGet();
+              return null;
+            });
+    var execution = ExecutePsop.builder().psop(linearWorkflow()).a2aClientRuntime(runtime)
+        .controlPoint(ControlPoint.builder().onTask(request -> new CompletableFuture<>()).build())
+        .execute();
+    assertTrue(execution.cancel(true));
+    assertEquals(1, closes.get());
+  }
+
   private Task task(String agent, String desc) {
     return Task.builder().agent(agent).description(desc).build();
   }

@@ -25,8 +25,6 @@ import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * AES-GCM credential encryption/decryption utility.
@@ -47,7 +45,6 @@ import org.slf4j.LoggerFactory;
  */
 public final class CredentialCrypto {
 
-  private static final Logger log = LoggerFactory.getLogger(CredentialCrypto.class);
   private static final String ENV_KEY = "A2AT_CRED_KEY";
   private static final String PREFIX = "enc:";
   private static final String ALGORITHM = "AES/GCM/NoPadding";
@@ -83,11 +80,8 @@ public final class CredentialCrypto {
       System.exit(1);
     }
     String plaintext = args[0];
-    if (args.length >= 2) {
-      System.setProperty(ENV_KEY, args[1]);
-    }
     try {
-      String encrypted = encrypt(plaintext);
+      String encrypted = encrypt(plaintext, args.length >= 2 ? args[1] : null);
       System.out.println(encrypted);
     } catch (IllegalStateException e) {
       System.err.println("Error: " + e.getMessage());
@@ -107,7 +101,7 @@ public final class CredentialCrypto {
     return decryptIfNeeded(value, null);
   }
 
-  /** Decrypts with an optional instance-scoped key read from a configured SDK env file. */
+  /** Decrypts with an optional instance-scoped key supplied explicitly by the host. */
   static String decryptIfNeeded(String value, String configuredKeyHex) {
     if (value == null || !value.startsWith(PREFIX)) {
       return value;
@@ -151,7 +145,12 @@ public final class CredentialCrypto {
    * @throws IllegalStateException if the key env var is not set
    */
   public static String encrypt(String plaintext) {
-    String keyHex = resolveKey();
+    return encrypt(plaintext, null);
+  }
+
+  /** Encrypts using an explicit instance key, or OS/JVM configuration when the key is null. */
+  public static String encrypt(String plaintext, String configuredKeyHex) {
+    String keyHex = resolveKey(configuredKeyHex);
     if (keyHex == null || keyHex.isBlank()) {
       throw new IllegalStateException(ENV_KEY + " environment variable not set");
     }
@@ -175,15 +174,10 @@ public final class CredentialCrypto {
   }
 
   /**
-   * Resolve the encryption key from OS environment variable first, then from system property (set
-   * by {@code .env} file loader).
+   * Resolve an explicit key first, then OS environment, then a host-supplied system property.
    *
    * @return the hex key string, or null if not found
    */
-  private static String resolveKey() {
-    return resolveKey(null);
-  }
-
   private static String resolveKey(String configuredKeyHex) {
     if (configuredKeyHex != null && !configuredKeyHex.isBlank()) {
       return configuredKeyHex;

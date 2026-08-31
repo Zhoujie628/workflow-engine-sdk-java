@@ -41,8 +41,18 @@ public class RegistryClient {
 
   private final String baseUrl;
   private final HttpClient httpClient;
+  private final java.time.Duration requestTimeout;
 
   public RegistryClient(String url, boolean sslVerify) {
+    this(url, sslVerify, java.time.Duration.ofSeconds(30));
+  }
+
+  /** Creates a discovery client with a positive deadline for each complete HTTP response. */
+  public RegistryClient(String url, boolean sslVerify, java.time.Duration requestTimeout) {
+    if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
+      throw new IllegalArgumentException("requestTimeout must be positive");
+    }
+    this.requestTimeout = requestTimeout;
     this.baseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     HttpClient.Builder clientBuilder =
         HttpClient.newBuilder()
@@ -58,8 +68,8 @@ public class RegistryClient {
   public List<Map<String, Object>> fetchAgentCards() throws Exception {
     String url = baseUrl + "/rest/v1/registry-center/agent-cards";
     log.info("[Registry] Fetching all agent cards from {}", baseUrl);
-    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
-    HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
+    HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
       throw new RuntimeException("Registry returned " + resp.statusCode());
     }
@@ -94,8 +104,8 @@ public class RegistryClient {
     }
     String url = urlBuilder.toString();
     log.info("[Registry] Fetching agent card: name={}, org={}", name, organization);
-    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
-    HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
+    HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
       throw new RuntimeException("Registry returned " + resp.statusCode());
     }
@@ -130,10 +140,11 @@ public class RegistryClient {
     HttpRequest request =
         HttpRequest.newBuilder()
             .uri(URI.create(url))
+            .timeout(requestTimeout)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(json))
             .build();
-    HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    HttpResponse<String> resp = send(request);
     Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
     if (resp.statusCode() == 200 || resp.statusCode() == 201) {
       log.info("[Registry] Agent card registered: name={}", agentCard.get("name"));
@@ -141,5 +152,20 @@ public class RegistryClient {
       log.warn("[Registry] Registration returned {}: {}", resp.statusCode(), resp.body());
     }
     return result;
+  }
+
+  private HttpResponse<String> send(HttpRequest request) throws Exception {
+    var response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    try {
+      // Also bound body consumption: a peer may send headers and then stall its body.
+      return response.get(Math.max(1, requestTimeout.toMillis()), java.util.concurrent.TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.TimeoutException error) {
+      response.cancel(true);
+      throw new java.net.http.HttpTimeoutException("Registry response deadline exceeded");
+    } catch (InterruptedException error) {
+      response.cancel(true);
+      Thread.currentThread().interrupt();
+      throw error;
+    }
   }
 }

@@ -31,6 +31,13 @@ import org.junit.jupiter.api.Test;
  */
 class LoadPsopSearchTest {
 
+  @Test
+  void tokenLogsRevealPresenceButNoTokenCharacters() {
+    assertEquals("https://example.test/search?access_token=<anonymous>",
+        LoadPsop.anonymousUrl("https://example.test/search?access_token=secret%2Bvalue", "secret+value"));
+    assertEquals("https://example.test/search", LoadPsop.anonymousUrl("https://example.test/search", null));
+  }
+
   /**
    * Verifies that the search method correctly parses the orchestration center's JSON response into
    * WorkflowSearchResult objects.
