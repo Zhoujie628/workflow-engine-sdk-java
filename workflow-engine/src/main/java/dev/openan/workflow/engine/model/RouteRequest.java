@@ -23,16 +23,16 @@ import java.util.List;
 
 /** Conditional route input; upstream selection is identical to task callbacks. */
 public record RouteRequest(
-        String executionId,
-        String stepName,
-        WorkflowInput workflowInput,
-        List<TaskExecutionResult> currentResults,
-        List<RouteOption> candidates) {
-    public RouteRequest {
-        currentResults = List.copyOf(currentResults);
-        candidates = List.copyOf(candidates);
-    }
+    String executionId,
+    String stepName,
+    WorkflowInput workflowInput,
+    List<TaskExecutionResult> currentResults,
+    List<RouteOption> candidates) {
+  public RouteRequest {
+    currentResults = List.copyOf(currentResults);
+    candidates = List.copyOf(candidates);
+  }
 
-    /** A permitted target and its business condition. */
-    public record RouteOption(String nextStep, String condition) {}
+  /** A permitted target and its business condition. */
+  public record RouteOption(String nextStep, String condition) {}
 }

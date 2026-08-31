@@ -2,13 +2,18 @@
 
 ## Unreleased — business callback boundary
 
-- Use published A2A-T 1.1.0 from Maven Central; remove SDK source checkout/install from CI; move content generation, validation, templates and SDK initialization to the host.
+- Use published A2A-T 1.1.0 from Maven Central; remove SDK source checkout/install from CI; move content generation,
+  validation, templates and SDK initialization to the host.
 - onTask returns final MessageContent; onNegotiation returns Send/Stop. Remove engine profiles and content handlers.
-- Preserve complete ReceivedMessage and metadata layers alongside deterministic convenience outputs; keep local nested multi-output values.
-- Deduplicate negotiation rounds, separate resource budgets from protocol rounds, and suppress late sends after timeout/cancellation.
+- Preserve complete ReceivedMessage and metadata layers alongside deterministic convenience outputs; keep local nested
+  multi-output values.
+- Deduplicate negotiation rounds, separate resource budgets from protocol rounds, and suppress late sends after
+  timeout/cancellation.
 - Separate authorization/notification lifecycle from workflow outcomes; never synthesize a subscription ACK.
-- Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and bounded SSE.
-- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation remains separate.
+- Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and
+  bounded SSE.
+- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation
+  remains separate.
 - Refresh bilingual callback, architecture and integration contracts. No older SDK compatibility layer.
 
 All notable changes to this project will be documented in this file.
@@ -34,18 +39,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - TLS configuration is now per client; it no longer changes JVM-wide hostname-verification properties
 - Credential login uses the same TLS policy as agent traffic and encrypted credentials now fail closed
-- AgentCards that declare security requirements now fail closed when neither matching credentials nor an `AuthProvider` is configured
-- `securitySchemes` no longer implies non-empty `securityRequirements`; an `AuthProvider` can be the sole authentication source
+- AgentCards that declare security requirements now fail closed when neither matching credentials nor an `AuthProvider`
+  is configured
+- `securitySchemes` no longer implies non-empty `securityRequirements`; an `AuthProvider` can be the sole authentication
+  source
 - Notification-T distinguishes acknowledgement timeout from real stream failure and keeps its lifecycle independent from
   workflow request transports
 - Workflow execution validates graph targets and cycles up front and waits only for activated predecessors at joins
 - Protocol headers are redacted by default; sensitive values require an explicit diagnostic opt-in
 - Agent clients and transport executors are reused and closed through their owning runtime
 - Task-T, Authorization-T, and Notification-T use independent transport/runtime/context instances
-- Negotiation-T uses the latest stateless content APIs and canonical `negotiationContext`; removed SDK state-machine APIs are not used
+- Negotiation-T uses the latest stateless content APIs and canonical `negotiationContext`; removed SDK state-machine
+  APIs are not used
 - SDK `.env` paths remain instance-local instead of being copied into JVM-wide system properties
-- Extension subscription and task-control capabilities are explicit interface contracts instead of
-  default methods that fail at runtime
+- Extension subscription and task-control capabilities are explicit interface contracts instead of default methods that
+  fail at runtime
 
 ### Fixed
 
@@ -55,9 +63,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Notification callback implementations can no longer silently discard the supplied callback
 - Header construction is split into isolated auth, credential, and extension contributors with conflict detection
 - Protocol generation/validation failures now fail closed instead of sending raw text under an A2A-T URI
-- Authorization-T rejection stops the independent authorization operation; add/modify/delete/query operations follow the SDK template contract
-- Notification-T failed/canceled/rejected acknowledgements fail the subscription and callback failures cannot prevent cleanup
-- Workflow joins merge all predecessor outputs deterministically and execute exactly once after active predecessors complete
+- Authorization-T rejection stops the independent authorization operation; add/modify/delete/query operations follow the
+  SDK template contract
+- Notification-T failed/canceled/rejected acknowledgements fail the subscription and callback failures cannot prevent
+  cleanup
+- Workflow joins merge all predecessor outputs deterministically and execute exactly once after active predecessors
+  complete
 
 ## [1.0.0] - 2026-07-28
 
@@ -70,7 +81,8 @@ and full A2A-T extension support. Full A2A-T extension support and multi-protoco
   extraction
 - `ExtensionSender` / `DefaultExtensionSender`: pre-positioning facade for one-shot Authorization-T and long-lived
   Notification-T SSE subscriptions
-- `ControlPoint` / `ExtensionSender` split: flow decisions (`onTask` / `onSelfTask` / `onRoute` / `onNegotiation`) on `ControlPoint`; Authorization-T / Notification-T pre-positioning on `ExtensionSender`
+- `ControlPoint` / `ExtensionSender` split: flow decisions (`onTask` / `onSelfTask` / `onRoute` / `onNegotiation`) on
+  `ControlPoint`; Authorization-T / Notification-T pre-positioning on `ExtensionSender`
 - `NegotiationStrategy`: pluggable clarification strategy injected into
   `DefaultControlPoint`
 - `SELF_LOOP` step type for local task handling without an A2A-T message

@@ -23,20 +23,24 @@ import java.util.Map;
 
 /** Host-supplied safe business failure. Do not include credentials or raw provider errors. */
 public final class BusinessFailure extends RuntimeException {
-    private final String code;
-    private final Map<String, Object> details;
+  private final String code;
+  private final Map<String, Object> details;
 
-    /** Constructs a failure with an application code and explicitly safe diagnostic fields. */
-    public BusinessFailure(String code, String message, Map<String, Object> details) {
-        super(message);
-        if (code == null || code.isBlank()) throw new IllegalArgumentException("Failure code required");
-        this.code = code;
-        this.details = details == null ? Map.of() : BusinessValues.map(details);
-    }
+  /** Constructs a failure with an application code and explicitly safe diagnostic fields. */
+  public BusinessFailure(String code, String message, Map<String, Object> details) {
+    super(message);
+    if (code == null || code.isBlank()) throw new IllegalArgumentException("Failure code required");
+    this.code = code;
+    this.details = details == null ? Map.of() : BusinessValues.map(details);
+  }
 
-    /** Machine-readable business failure code. */
-    public String code() { return code; }
+  /** Machine-readable business failure code. */
+  public String code() {
+    return code;
+  }
 
-    /** Safe business facts selected by the host. */
-    public Map<String, Object> details() { return details; }
+  /** Safe business facts selected by the host. */
+  public Map<String, Object> details() {
+    return details;
+  }
 }

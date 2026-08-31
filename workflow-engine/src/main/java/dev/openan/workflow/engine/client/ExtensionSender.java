@@ -27,10 +27,12 @@ import java.util.function.BiConsumer;
 
 /** Operations independent of workflow execution; all content is supplied by the host. */
 public interface ExtensionSender {
-    /** Sends final authorization content on this sender's independent transport. */
-    CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+  /** Sends final authorization content on this sender's independent transport. */
+  CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
 
-    /** Registers a handle before starting I/O; early callbacks may close it directly. */
-    NotificationSubscription openNotification(String agentName, MessageContent content,
-            BiConsumer<NotificationSubscription, ReceivedMessage> listener);
+  /** Registers a handle before starting I/O; early callbacks may close it directly. */
+  NotificationSubscription openNotification(
+      String agentName,
+      MessageContent content,
+      BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 }

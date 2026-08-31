@@ -7,39 +7,35 @@
 
 ## 1. 概述
 
-SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独立业务平台。
-宿主提供最终内容，引擎管理 DAG、并行调度、标准 A2A 信封、认证、传输、等待和结果关联。
-业务回调决定是否调用 A2A-T 的自然语言／结构化内容接口，模板、schema、LLM 与语义校验均归宿主。
+SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独立业务平台。 宿主提供最终内容，引擎管理 DAG、并行调度、标准 A2A
+信封、认证、传输、等待和结果关联。 业务回调决定是否调用 A2A-T 的自然语言／结构化内容接口，模板、schema、LLM 与语义校验均归宿主。
 引擎只通过 a2a-t-core 读取规范协商上下文和复制扩展 metadata，不包含内容生成管线。
 
-| 引擎职责 | 宿主职责 |
-|---|---|
-| DAG、任务／会话关联、并行与路由校验 | 内容生成、业务路由决策、本地汇总 |
-| 按 contextFrom 选择完整上游结果 | 决定如何使用这些来源、映射下游输入 |
-| A2A 认证与传输机制 | 凭据来源、AuthProvider、部署配置 |
+| 引擎职责                             | 宿主职责                               |
+|--------------------------------------|----------------------------------------|
+| DAG、任务／会话关联、并行与路由校验  | 内容生成、业务路由决策、本地汇总       |
+| 按 contextFrom 选择完整上游结果      | 决定如何使用这些来源、映射下游输入     |
+| A2A 认证与传输机制                   | 凭据来源、AuthProvider、部署配置       |
 | 独立授权发送、订阅 handle 和生命周期 | 授权策略、订阅内容、通知消费和关闭时机 |
 
 ## 2. 周边系统依赖与宿主集成
 
 ![工作流执行引擎与周边系统依赖架构](../images/workflow-engine-surrounding-systems.png)
 
-上图中的 SDK 是**嵌入宿主智能体进程的库**，不是独立部署的编排服务。当前
+上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务。当前
 `SpringSpnDemo` 的宿主是传输工作台智能体，实际责任链如下：
 
 1. WAIMO 通过 A2A Task-T 调用工作台的服务端入口。
-2. 工作台准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心
-   搜索、加载 PSOP；SDK 提供可选的 `RegistryClient` 和 `LoadPsop` 辅助 API，但何时发现、如何缓存、
-   失败策略均由宿主决定。
-3. 工作台把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG，
-   并行向两个地市 OMC 下发任务，并在必要时处理 Negotiation-T；工作台通过 `ControlPoint` 接管
-   本地汇总、路由和澄清等业务操作。
+2. 工作台准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心 搜索、加载 PSOP；SDK 提供可选的
+   `RegistryClient` 和 `LoadPsop` 辅助 API，但何时发现、如何缓存、 失败策略均由宿主决定。
+3. 工作台把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG， 并行向两个地市 OMC 下发任务，并在必要时处理
+   Negotiation-T；工作台通过 `ControlPoint` 接管 本地汇总、路由和澄清等业务操作。
 4. 工作台把汇总结果作为 Task-T artifact 和完成状态返回 WAIMO。
-5. Authorization-T 与 Notification-T 由工作台在各自业务时机通过 `ExtensionSender` 单独触发，
-   不属于 PSOP DAG，也不与工作流任务复用 transport/runtime/context。
+5. Authorization-T 与 Notification-T 由工作台在各自业务时机通过 `ExtensionSender` 单独触发， 不属于 PSOP DAG，也不与工作流任务复用
+   transport/runtime/context。
 
-Demo 为保证离线可运行，`WorkbenchAgentCatalog` 从 classpath 加载 AgentCard；仅在编排中心搜索或
-加载失败时使用本地 PSOP fallback。这两项是样例替代路径，不代表生产环境的数据来源或容灾策略。
-图的可编辑源文件见
+Demo 为保证离线可运行，`WorkbenchAgentCatalog` 从 classpath 加载 AgentCard；仅在编排中心搜索或 加载失败时使用本地 PSOP
+fallback。这两项是样例替代路径，不代表生产环境的数据来源或容灾策略。 图的可编辑源文件见
 [`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd)。
 
 ---
@@ -61,21 +57,18 @@ graph TD
 
 ### 3.1 Layer 0 - 通信层
 
-A2ATransport 使用 A2A SDK 的 REST、JSON-RPC、gRPC 绑定，负责认证头、实际传输和完整响应组装。
-WorkflowEngineClient 接收 MessageContent 并管理远端任务和必要的协商续发。
-ExtensionSender 负责流程外 sendAuthorization 与 openNotification。
-三种协议操作复用实现而不共用 transport/runtime/context 实例。
-ProtocolResponses 按 artifact 身份合并流式增量，ReceivedMessage 保留各层 metadata。
+A2ATransport 使用 A2A SDK 的 REST、JSON-RPC、gRPC 绑定，负责认证头、实际传输和完整响应组装。 WorkflowEngineClient 接收
+MessageContent 并管理远端任务和必要的协商续发。 ExtensionSender 负责流程外 sendAuthorization 与 openNotification。
+三种协议操作复用实现而不共用 transport/runtime/context 实例。 ProtocolResponses 按 artifact 身份合并流式增量，ReceivedMessage
+保留各层 metadata。
 
 ### 3.2 Layer 1 - 遍历层
 
 **`WorkflowExecutor`** 遍历 DAG。在每个步骤按 `contextFrom` 选择强类型上游结果（`ContextBuilder`），
-并发下发子任务，应用步骤成功策略，确定下一步。所有决策委托给 `ControlPoint`，
-所有发送委托给 `WorkflowEngineClient`。
+并发下发子任务，应用步骤成功策略，确定下一步。所有决策委托给 `ControlPoint`， 所有发送委托给 `WorkflowEngineClient`。
 
-TaskRequest 当前输入与 workflowInput 分离。上游完整视图和便利 outputs 由 contextFrom 选择，
-不会自动拼接、生成或套用业务 schema；业务自行决定怎么消费。详见 [回调契约](BUSINESS_CALLBACKS.md)。
-
+TaskRequest 当前输入与 workflowInput 分离。上游完整视图和便利 outputs 由 contextFrom 选择， 不会自动拼接、生成或套用业务
+schema；业务自行决定怎么消费。详见 [回调契约](BUSINESS_CALLBACKS.md)。
 
 - 前驱步骤全部完成的步骤被收集并并行下发
 - 同一层的步骤并发执行
@@ -85,8 +78,8 @@ TaskRequest 当前输入与 workflowInput 分离。上游完整视图和便利 o
 
 ### 3.3 Layer 2 - 编排层
 
-**`ExecutePsop`** 是高层运行器。包装执行器，提供生命周期管理（启动/完成/错误/关闭）、
-事件序列化、客户端断连取消、`onFinish` 持久化钩子。大多数集成使用这一层。
+**`ExecutePsop`** 是高层运行器。包装执行器，提供生命周期管理（启动/完成/错误/关闭）、 事件序列化、客户端断连取消、`onFinish`
+持久化钩子。大多数集成使用这一层。
 
 ---
 
@@ -101,9 +94,8 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。
-onSelfTask 返回本地 TaskResult；onRoute 选择允许的候选；onNegotiation 返回 Send 或 Stop。
-未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
+选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ## 5. A2A-T 扩展模型
@@ -112,21 +104,19 @@ Task-T：宿主生成最终内容，引擎只封装并发送。AgentCard 声明�
 
 Negotiation-T：
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。
-终态不会重启协商，普通 INPUT_REQUIRED 明确报告不支持的交互。
-宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。
-通过 `A2atMessages.contextOf(request.received())` 取得收到的上下文；
-结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行 nextRound 或返回新 Propose。
+只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+`A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
+nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容；
-返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成 Abort。
-同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
-`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。
-超时、预算耗尽、回调缺失均明确失败，不默认 Accept，也不自动生成 Abort。
-Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。
-业务发送 Abort 后，即使远端用 COMPLETED 确认，也不能判为诊断成功。
+返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
+Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
+Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
+COMPLETED 确认，也不能判为诊断成功。
 
-Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿主生成内容并使用独立发送器；失败不影响工作流。白名单仅影响 OMC 自动抢通，订阅保持到业务主动关闭。
+Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿主生成内容并使用独立发送器；失败不影响工作流。白名单仅影响
+OMC 自动抢通，订阅保持到业务主动关闭。
 
 ## 6. 条件路由
 
@@ -204,16 +194,12 @@ sequenceDiagram
 ## 9. 依赖
 
 workflow-engine：A2A Java `1.2.0.Final`（REST/JSON-RPC/gRPC）、匹配的 gRPC runtime、
-`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`、Jackson、SLF4J。
-纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或 resources。
-samples／宿主显式依赖 a2a-t-client，需要实现 OMC 接收端时另依赖 a2a-t-server。
-注册中心和编排中心由宿主调用，可选择 RegistryClient/LoadPsop 辅助接口或自己的实现。
-模板和 slot schema 来自锁定 SDK jar，样例不覆盖同名资源。
+`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`、Jackson、SLF4J。 纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或
+resources。 samples／宿主显式依赖 a2a-t-client，需要实现 OMC 接收端时另依赖 a2a-t-server。 注册中心和编排中心由宿主调用，可选择
+RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 来自锁定 SDK jar，样例不覆盖同名资源。
 
 ## 10. 设计决策总结
 
-最终内容与协议调度分离，宿主不自行维护 A2A 信封。
-本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。
-独立授权和通知不成为工作流前提，直连与 dev 东信转发继续共享回调。
-协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，直连与 dev
+东信转发继续共享回调。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。

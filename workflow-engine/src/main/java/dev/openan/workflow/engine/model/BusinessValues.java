@@ -20,45 +20,42 @@
 package dev.openan.workflow.engine.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.util.*;
 
 /** Defensive JSON snapshots: payloads are unrestricted JSON, never shared mutable objects. */
 public final class BusinessValues {
-    private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = new ObjectMapper();
 
-    private BusinessValues() {}
+  private BusinessValues() {}
 
-    /** Snapshots any JSON value, preserving nested arrays as values rather than outputs. */
-    public static Object snapshot(Object value) {
-        return freeze(JSON.convertValue(value, Object.class));
+  /** Snapshots any JSON value, preserving nested arrays as values rather than outputs. */
+  public static Object snapshot(Object value) {
+    return freeze(JSON.convertValue(value, Object.class));
+  }
+
+  /** Snapshots an ordered JSON object. */
+  @SuppressWarnings("unchecked")
+  public static Map<String, Object> map(Map<String, ?> value) {
+    return (Map<String, Object>) freeze(JSON.convertValue(value, Map.class));
+  }
+
+  /** Snapshots ordered outputs without flattening nested arrays. */
+  @SuppressWarnings("unchecked")
+  public static List<Object> list(List<?> value) {
+    return value == null ? List.of() : (List<Object>) freeze(JSON.convertValue(value, List.class));
+  }
+
+  private static Object freeze(Object value) {
+    if (value instanceof Map<?, ?> map) {
+      Map<String, Object> copy = new LinkedHashMap<>();
+      map.forEach((k, v) -> copy.put(String.valueOf(k), freeze(v)));
+      return Collections.unmodifiableMap(copy);
     }
-
-    /** Snapshots an ordered JSON object. */
-    @SuppressWarnings("unchecked")
-    public static Map<String, Object> map(Map<String, ?> value) {
-        return (Map<String, Object>) freeze(JSON.convertValue(value, Map.class));
+    if (value instanceof List<?> list) {
+      List<Object> copy = new ArrayList<>();
+      list.forEach(v -> copy.add(freeze(v)));
+      return Collections.unmodifiableList(copy);
     }
-
-    /** Snapshots ordered outputs without flattening nested arrays. */
-    @SuppressWarnings("unchecked")
-    public static List<Object> list(List<?> value) {
-        return value == null
-                ? List.of()
-                : (List<Object>) freeze(JSON.convertValue(value, List.class));
-    }
-
-    private static Object freeze(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> copy = new LinkedHashMap<>();
-            map.forEach((k, v) -> copy.put(String.valueOf(k), freeze(v)));
-            return Collections.unmodifiableMap(copy);
-        }
-        if (value instanceof List<?> list) {
-            List<Object> copy = new ArrayList<>();
-            list.forEach(v -> copy.add(freeze(v)));
-            return Collections.unmodifiableList(copy);
-        }
-        return value;
-    }
+    return value;
+  }
 }

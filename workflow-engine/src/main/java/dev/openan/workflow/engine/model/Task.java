@@ -29,9 +29,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class Task {
-    private String agent;
-    private BusinessInput input;
-    @Builder.Default private String skill = "";
-    @Builder.Default private String description = "";
-    @Builder.Default private TaskStatus status = TaskStatus.PENDING;
+  private String agent;
+  private BusinessInput input;
+  @Builder.Default private String skill = "";
+  @Builder.Default private String description = "";
+  @Builder.Default private TaskStatus status = TaskStatus.PENDING;
 }

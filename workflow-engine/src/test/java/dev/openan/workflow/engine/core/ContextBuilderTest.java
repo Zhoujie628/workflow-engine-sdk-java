@@ -24,135 +24,131 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.Task;
-import dev.openan.workflow.engine.model.Workflow;
-import dev.openan.workflow.engine.model.WorkflowStep;
 import dev.openan.workflow.engine.model.TaskExecutionResult;
 import dev.openan.workflow.engine.model.TaskStatus;
-
-import org.junit.jupiter.api.Test;
-
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowStep;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Test;
 
 class ContextBuilderTest {
 
-    private WorkflowStep step(String name, int layer, List<String> next, List<String> contextFrom) {
-        return WorkflowStep.builder()
-                .name(name)
-                .layer(layer)
-                .next(
-                        next == null
-                                ? List.of()
-                                : next.stream()
-                                        .map(target -> JumpCondition.builder().step(target).build())
-                                        .toList())
-                .contextFrom(contextFrom)
-                .subtasks(List.of(Task.builder().agent("A").description("t").build()))
-                .build();
-    }
+  private WorkflowStep step(String name, int layer, List<String> next, List<String> contextFrom) {
+    return WorkflowStep.builder()
+        .name(name)
+        .layer(layer)
+        .next(
+            next == null
+                ? List.of()
+                : next.stream()
+                    .map(target -> JumpCondition.builder().step(target).build())
+                    .toList())
+        .contextFrom(contextFrom)
+        .subtasks(List.of(Task.builder().agent("A").description("t").build()))
+        .build();
+  }
 
-    private TaskExecutionResult result(String agent, String output) {
-        return new TaskExecutionResult(
-                agent,
-                "diagnose",
-                agent + "-task",
-                "task",
-                TaskStatus.SUCCESS,
-                List.of(output),
-                List.of(), null, null, Map.of());
-    }
+  private TaskExecutionResult result(String agent, String output) {
+    return new TaskExecutionResult(
+        agent,
+        "diagnose",
+        agent + "-task",
+        "task",
+        TaskStatus.SUCCESS,
+        List.of(output),
+        List.of(),
+        null,
+        null,
+        Map.of());
+  }
 
-    @Test
-    void layerZeroKeepsRuntimeIntentSeparateFromTaskInstruction() {
-        Workflow workflow =
-                Workflow.builder()
-                        .name("w")
-                        .steps(List.of(step("s1", 0, List.of("s2"), null)))
-                        .build();
+  @Test
+  void layerZeroKeepsRuntimeIntentSeparateFromTaskInstruction() {
+    Workflow workflow =
+        Workflow.builder().name("w").steps(List.of(step("s1", 0, List.of("s2"), null))).build();
 
-        var context = new ContextBuilder(workflow, "my intent")
-                        .buildWorkflowInput(workflow.getSteps().get(0), Map.of());
-        assertEquals("my intent", context.runtimeIntent());
-        assertTrue(context.upstreamResults().isEmpty());
-    }
+    var context =
+        new ContextBuilder(workflow, "my intent")
+            .buildWorkflowInput(workflow.getSteps().get(0), Map.of());
+    assertEquals("my intent", context.runtimeIntent());
+    assertTrue(context.upstreamResults().isEmpty());
+  }
 
-    @Test
-    void directPredecessorsProvideTypedResults() {
-        WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
-        WorkflowStep s2 = step("s2", 1, List.of(), null);
-        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
-        Map<String, List<TaskExecutionResult>> results =
-                Map.of("s1", List.of(result("OMC-1", "result-from-A")));
+  @Test
+  void directPredecessorsProvideTypedResults() {
+    WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
+    WorkflowStep s2 = step("s2", 1, List.of(), null);
+    Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
+    Map<String, List<TaskExecutionResult>> results =
+        Map.of("s1", List.of(result("OMC-1", "result-from-A")));
 
-        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
+    var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
 
-        assertEquals("intent", context.runtimeIntent());
-        assertEquals(1, context.upstreamResults().size());
-        assertEquals("s1", context.upstreamResults().get(0).stepName());
-        assertEquals("OMC-1", context.upstreamResults().get(0).taskResults().get(0).agentName());
-        assertEquals(
-                List.of("result-from-A"),
-                context.upstreamResults().get(0).taskResults().get(0).outputs());
-    }
+    assertEquals("intent", context.runtimeIntent());
+    assertEquals(1, context.upstreamResults().size());
+    assertEquals("s1", context.upstreamResults().get(0).stepName());
+    assertEquals("OMC-1", context.upstreamResults().get(0).taskResults().get(0).agentName());
+    assertEquals(
+        List.of("result-from-A"), context.upstreamResults().get(0).taskResults().get(0).outputs());
+  }
 
-    @Test
-    void contextFromExplicitListOverridesDirectPredecessors() {
-        WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
-        WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
-        WorkflowStep s3 = step("s3", 1, List.of(), List.of("s2"));
-        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
-        Map<String, List<TaskExecutionResult>> results = new HashMap<>();
-        results.put("s1", List.of(result("OMC-1", "out1")));
-        results.put("s2", List.of(result("OMC-2", "out2")));
+  @Test
+  void contextFromExplicitListOverridesDirectPredecessors() {
+    WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
+    WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
+    WorkflowStep s3 = step("s3", 1, List.of(), List.of("s2"));
+    Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
+    Map<String, List<TaskExecutionResult>> results = new HashMap<>();
+    results.put("s1", List.of(result("OMC-1", "out1")));
+    results.put("s2", List.of(result("OMC-2", "out2")));
 
-        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
+    var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
 
-        assertEquals(
-                List.of("s2"),
-                context.upstreamResults().stream().map(value -> value.stepName()).toList());
-    }
+    assertEquals(
+        List.of("s2"), context.upstreamResults().stream().map(value -> value.stepName()).toList());
+  }
 
-    @Test
-    void contextFromStarIncludesAllAncestors() {
-        WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
-        WorkflowStep s2 = step("s2", 1, List.of("s3"), null);
-        WorkflowStep s3 = step("s3", 2, List.of(), List.of("*"));
-        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
-        Map<String, List<TaskExecutionResult>> results = new HashMap<>();
-        results.put("s1", List.of(result("OMC-1", "out1")));
-        results.put("s2", List.of(result("OMC-2", "out2")));
+  @Test
+  void contextFromStarIncludesAllAncestors() {
+    WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
+    WorkflowStep s2 = step("s2", 1, List.of("s3"), null);
+    WorkflowStep s3 = step("s3", 2, List.of(), List.of("*"));
+    Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
+    Map<String, List<TaskExecutionResult>> results = new HashMap<>();
+    results.put("s1", List.of(result("OMC-1", "out1")));
+    results.put("s2", List.of(result("OMC-2", "out2")));
 
-        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
+    var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
 
-        assertEquals(2, context.upstreamResults().size());
-        assertEquals(
-                List.of("s2", "s1"),
-                context.upstreamResults().stream().map(value -> value.stepName()).toList());
-    }
+    assertEquals(2, context.upstreamResults().size());
+    assertEquals(
+        List.of("s2", "s1"),
+        context.upstreamResults().stream().map(value -> value.stepName()).toList());
+  }
 
-    @Test
-    void explicitEmptyContextFromDisablesUpstreamAggregation() {
-        WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
-        WorkflowStep s2 = step("s2", 1, List.of(), List.of());
-        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
-        Map<String, List<TaskExecutionResult>> results =
-                Map.of("s1", List.of(result("OMC-1", "out1")));
+  @Test
+  void explicitEmptyContextFromDisablesUpstreamAggregation() {
+    WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
+    WorkflowStep s2 = step("s2", 1, List.of(), List.of());
+    Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
+    Map<String, List<TaskExecutionResult>> results = Map.of("s1", List.of(result("OMC-1", "out1")));
 
-        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
-        assertTrue(context.upstreamResults().isEmpty());
-    }
+    var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
+    assertTrue(context.upstreamResults().isEmpty());
+  }
 
-    @Test
-    void getStepPredecessorsFindsDirectParents() {
-        WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
-        WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
-        WorkflowStep s3 = step("s3", 1, List.of(), null);
-        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
+  @Test
+  void getStepPredecessorsFindsDirectParents() {
+    WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
+    WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
+    WorkflowStep s3 = step("s3", 1, List.of(), null);
+    Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
 
-        List<String> predecessors = new ContextBuilder(workflow, "").getStepPredecessors("s3");
-        assertEquals(2, predecessors.size());
-        assertTrue(predecessors.contains("s1"));
-        assertTrue(predecessors.contains("s2"));
-    }
+    List<String> predecessors = new ContextBuilder(workflow, "").getStepPredecessors("s3");
+    assertEquals(2, predecessors.size());
+    assertTrue(predecessors.contains("s1"));
+    assertTrue(predecessors.contains("s2"));
+  }
 }

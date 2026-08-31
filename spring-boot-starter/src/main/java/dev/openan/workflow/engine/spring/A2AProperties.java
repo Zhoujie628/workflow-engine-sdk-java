@@ -30,121 +30,120 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "a2at.server")
 public class A2AProperties {
 
-    /** Whether A2A server autoconfiguration is enabled. Set false to disable all A2A beans. */
-    private boolean enabled = true;
+  /** Whether A2A server autoconfiguration is enabled. Set false to disable all A2A beans. */
+  private boolean enabled = true;
 
-    /** Path to the AgentCard JSON file (classpath: or file: prefix supported). */
-    private String agentCard = "classpath:agentcard.json";
+  /** Path to the AgentCard JSON file (classpath: or file: prefix supported). */
+  private String agentCard = "classpath:agentcard.json";
 
-    /** URL path prefix for A2A endpoints (extracted from AgentCard by default). */
-    private String pathPrefix = "/a2a/json";
+  /** URL path prefix for A2A endpoints (extracted from AgentCard by default). */
+  private String pathPrefix = "/a2a/json";
 
-    /** Timeout for blocking agent execution. */
-    private int agentTimeoutSeconds = 30;
+  /** Timeout for blocking agent execution. */
+  private int agentTimeoutSeconds = 30;
 
-    /** Timeout for consuming and persisting events in blocking calls. */
-    private int consumptionTimeoutSeconds = 5;
+  /** Timeout for consuming and persisting events in blocking calls. */
+  private int consumptionTimeoutSeconds = 5;
 
-    /** Timeout for TaskStore reconciliation polling in blocking calls. */
-    private int reconciliationTimeoutSeconds = 1;
+  /** Timeout for TaskStore reconciliation polling in blocking calls. */
+  private int reconciliationTimeoutSeconds = 1;
 
-    /** Core server executor thread count. */
-    private int executorCoreSize = 8;
+  /** Core server executor thread count. */
+  private int executorCoreSize = 8;
 
-    /** Maximum server executor thread count. */
-    private int executorMaxSize = 8;
+  /** Maximum server executor thread count. */
+  private int executorMaxSize = 8;
 
-    /** Maximum number of queued server tasks. */
-    private int executorQueueCapacity = 100;
+  /** Maximum number of queued server tasks. */
+  private int executorQueueCapacity = 100;
 
-    /** Idle timeout for server executor threads above the core size. */
-    private int executorKeepAliveSeconds = 60;
+  /** Idle timeout for server executor threads above the core size. */
+  private int executorKeepAliveSeconds = 60;
 
-    public boolean isEnabled() {
-        return enabled;
-    }
+  private static int positive(int value, String name) {
+    if (value <= 0) throw new IllegalArgumentException(name + " must be positive");
+    return value;
+  }
 
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
+  public boolean isEnabled() {
+    return enabled;
+  }
 
-    public String getAgentCard() {
-        return agentCard;
-    }
+  public void setEnabled(boolean enabled) {
+    this.enabled = enabled;
+  }
 
-    public void setAgentCard(String agentCard) {
-        this.agentCard = agentCard;
-    }
+  public String getAgentCard() {
+    return agentCard;
+  }
 
-    public String getPathPrefix() {
-        return pathPrefix;
-    }
+  public void setAgentCard(String agentCard) {
+    this.agentCard = agentCard;
+  }
 
-    public void setPathPrefix(String pathPrefix) {
-        this.pathPrefix = pathPrefix;
-    }
+  public String getPathPrefix() {
+    return pathPrefix;
+  }
 
-    public int getAgentTimeoutSeconds() {
-        return agentTimeoutSeconds;
-    }
+  public void setPathPrefix(String pathPrefix) {
+    this.pathPrefix = pathPrefix;
+  }
 
-    public void setAgentTimeoutSeconds(int agentTimeoutSeconds) {
-        this.agentTimeoutSeconds = positive(agentTimeoutSeconds, "agentTimeoutSeconds");
-    }
+  public int getAgentTimeoutSeconds() {
+    return agentTimeoutSeconds;
+  }
 
-    public int getConsumptionTimeoutSeconds() {
-        return consumptionTimeoutSeconds;
-    }
+  public void setAgentTimeoutSeconds(int agentTimeoutSeconds) {
+    this.agentTimeoutSeconds = positive(agentTimeoutSeconds, "agentTimeoutSeconds");
+  }
 
-    public void setConsumptionTimeoutSeconds(int consumptionTimeoutSeconds) {
-        this.consumptionTimeoutSeconds =
-                positive(consumptionTimeoutSeconds, "consumptionTimeoutSeconds");
-    }
+  public int getConsumptionTimeoutSeconds() {
+    return consumptionTimeoutSeconds;
+  }
 
-    public int getReconciliationTimeoutSeconds() {
-        return reconciliationTimeoutSeconds;
-    }
+  public void setConsumptionTimeoutSeconds(int consumptionTimeoutSeconds) {
+    this.consumptionTimeoutSeconds =
+        positive(consumptionTimeoutSeconds, "consumptionTimeoutSeconds");
+  }
 
-    public void setReconciliationTimeoutSeconds(int reconciliationTimeoutSeconds) {
-        this.reconciliationTimeoutSeconds =
-                positive(reconciliationTimeoutSeconds, "reconciliationTimeoutSeconds");
-    }
+  public int getReconciliationTimeoutSeconds() {
+    return reconciliationTimeoutSeconds;
+  }
 
-    public int getExecutorCoreSize() {
-        return executorCoreSize;
-    }
+  public void setReconciliationTimeoutSeconds(int reconciliationTimeoutSeconds) {
+    this.reconciliationTimeoutSeconds =
+        positive(reconciliationTimeoutSeconds, "reconciliationTimeoutSeconds");
+  }
 
-    public void setExecutorCoreSize(int executorCoreSize) {
-        this.executorCoreSize = positive(executorCoreSize, "executorCoreSize");
-    }
+  public int getExecutorCoreSize() {
+    return executorCoreSize;
+  }
 
-    public int getExecutorMaxSize() {
-        return executorMaxSize;
-    }
+  public void setExecutorCoreSize(int executorCoreSize) {
+    this.executorCoreSize = positive(executorCoreSize, "executorCoreSize");
+  }
 
-    public void setExecutorMaxSize(int executorMaxSize) {
-        this.executorMaxSize = positive(executorMaxSize, "executorMaxSize");
-    }
+  public int getExecutorMaxSize() {
+    return executorMaxSize;
+  }
 
-    public int getExecutorQueueCapacity() {
-        return executorQueueCapacity;
-    }
+  public void setExecutorMaxSize(int executorMaxSize) {
+    this.executorMaxSize = positive(executorMaxSize, "executorMaxSize");
+  }
 
-    public void setExecutorQueueCapacity(int executorQueueCapacity) {
-        this.executorQueueCapacity = positive(executorQueueCapacity, "executorQueueCapacity");
-    }
+  public int getExecutorQueueCapacity() {
+    return executorQueueCapacity;
+  }
 
-    public int getExecutorKeepAliveSeconds() {
-        return executorKeepAliveSeconds;
-    }
+  public void setExecutorQueueCapacity(int executorQueueCapacity) {
+    this.executorQueueCapacity = positive(executorQueueCapacity, "executorQueueCapacity");
+  }
 
-    public void setExecutorKeepAliveSeconds(int executorKeepAliveSeconds) {
-        this.executorKeepAliveSeconds =
-                positive(executorKeepAliveSeconds, "executorKeepAliveSeconds");
-    }
+  public int getExecutorKeepAliveSeconds() {
+    return executorKeepAliveSeconds;
+  }
 
-    private static int positive(int value, String name) {
-        if (value <= 0) throw new IllegalArgumentException(name + " must be positive");
-        return value;
-    }
+  public void setExecutorKeepAliveSeconds(int executorKeepAliveSeconds) {
+    this.executorKeepAliveSeconds = positive(executorKeepAliveSeconds, "executorKeepAliveSeconds");
+  }
 }

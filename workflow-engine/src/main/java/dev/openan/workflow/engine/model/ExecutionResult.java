@@ -19,21 +19,20 @@
 
 package dev.openan.workflow.engine.model;
 
+import java.util.List;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.util.List;
-import java.util.Map;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class ExecutionResult {
-    private boolean success;
-    private List<Map<String, Object>> history;
-    private Map<String, Map<String, Object>> stepOutputs;
-    private String error;
+  private boolean success;
+  private List<Map<String, Object>> history;
+  private Map<String, Map<String, Object>> stepOutputs;
+  private String error;
 }

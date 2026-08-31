@@ -15,6 +15,6 @@ import org.a2aproject.sdk.spec.AgentCard;
  */
 public interface ConversationScopedA2AJavaClientRuntime {
 
-    /** Release resources retained for the completed logical conversation. */
-    void closeConversation(AgentCard agentCard, String contextId);
+  /** Release resources retained for the completed logical conversation. */
+  void closeConversation(AgentCard agentCard, String contextId);
 }

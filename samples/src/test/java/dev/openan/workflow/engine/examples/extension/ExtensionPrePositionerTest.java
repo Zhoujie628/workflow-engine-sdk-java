@@ -25,10 +25,45 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ExtensionPrePositionerTest {
+  private static org.a2aproject.sdk.spec.AgentCard city1Card() {
+    return new WorkbenchAgentCatalog()
+        .load().stream()
+            .filter(card -> "SPN Domain Agent City1".equals(card.name()))
+            .findFirst()
+            .orElseThrow();
+  }
+
+  private static NotificationSubscription newSubscription(String agentName) throws Exception {
+    Constructor<NotificationSubscription> constructor =
+        NotificationSubscription.class.getDeclaredConstructor(
+            String.class, String.class, Runnable.class);
+    constructor.setAccessible(true);
+    return constructor.newInstance(agentName, "notification-context", (Runnable) () -> {});
+  }
+
+  private static void acknowledge(NotificationSubscription subscription, String state)
+      throws Exception {
+    Method acknowledge =
+        NotificationSubscription.class.getDeclaredMethod("acknowledge", SendMessageResult.class);
+    acknowledge.setAccessible(true);
+    acknowledge.invoke(
+        subscription, SendMessageResult.builder().taskState(state).text("subscribed").build());
+  }
+
+  private static ExtensionSender sender(Invocation invocation) {
+    return (ExtensionSender)
+        Proxy.newProxyInstance(
+            ExtensionSender.class.getClassLoader(),
+            new Class<?>[] {ExtensionSender.class},
+            (proxy, method, args) -> invocation.invoke(method, args));
+  }
+
   @org.junit.jupiter.api.BeforeEach
   void configureOfflineContentSdk() throws Exception {
     dev.openan.workflow.engine.examples.testsupport.OfflineA2ATLlmClient.install();
-    System.setProperty("a2at.env.path", java.nio.file.Path.of(getClass().getResource("/a2at-e2e.env").toURI()).toString());
+    System.setProperty(
+        "a2at.env.path",
+        java.nio.file.Path.of(getClass().getResource("/a2at-e2e.env").toURI()).toString());
   }
 
   @org.junit.jupiter.api.AfterEach
@@ -119,39 +154,6 @@ class ExtensionPrePositionerTest {
     assertEquals(List.of(subscription), result.get(5, TimeUnit.SECONDS));
     assertTrue(notificationAttempted.get());
     assertSame(subscription, registeredSubscription.get());
-  }
-
-  private static org.a2aproject.sdk.spec.AgentCard city1Card() {
-    return new WorkbenchAgentCatalog()
-        .load().stream()
-            .filter(card -> "SPN Domain Agent City1".equals(card.name()))
-            .findFirst()
-            .orElseThrow();
-  }
-
-  private static NotificationSubscription newSubscription(String agentName) throws Exception {
-    Constructor<NotificationSubscription> constructor =
-        NotificationSubscription.class.getDeclaredConstructor(
-            String.class, String.class, Runnable.class);
-    constructor.setAccessible(true);
-    return constructor.newInstance(agentName, "notification-context", (Runnable) () -> {});
-  }
-
-  private static void acknowledge(NotificationSubscription subscription, String state)
-      throws Exception {
-    Method acknowledge =
-        NotificationSubscription.class.getDeclaredMethod("acknowledge", SendMessageResult.class);
-    acknowledge.setAccessible(true);
-    acknowledge.invoke(
-        subscription, SendMessageResult.builder().taskState(state).text("subscribed").build());
-  }
-
-  private static ExtensionSender sender(Invocation invocation) {
-    return (ExtensionSender)
-        Proxy.newProxyInstance(
-            ExtensionSender.class.getClassLoader(),
-            new Class<?>[] {ExtensionSender.class},
-            (proxy, method, args) -> invocation.invoke(method, args));
   }
 
   @FunctionalInterface

@@ -12,13 +12,16 @@ import org.junit.jupiter.api.Test;
 
 class SpringSpnDemoTest {
 
-    @Test
-    void demoOnlyReportsSuccessForACompletedWorkbenchTask() {
-        assertDoesNotThrow(() -> SpringSpnDemo.requireCompleted(
+  @Test
+  void demoOnlyReportsSuccessForACompletedWorkbenchTask() {
+    assertDoesNotThrow(
+        () ->
+            SpringSpnDemo.requireCompleted(
                 SendMessageResult.builder().taskState("TASK_STATE_COMPLETED").text("ok").build()));
-        assertThrows(
-                IllegalStateException.class,
-                () -> SpringSpnDemo.requireCompleted(
-                        SendMessageResult.builder().taskState("TASK_STATE_FAILED").text("failed").build()));
-    }
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            SpringSpnDemo.requireCompleted(
+                SendMessageResult.builder().taskState("TASK_STATE_FAILED").text("failed").build()));
+  }
 }

@@ -23,19 +23,19 @@ import java.util.Objects;
 
 /** Business chooses a final protocol reply or a local stop; the engine never generates an Abort. */
 public sealed interface NegotiationReply {
-    /** Final content to send on the original remote task and context. */
-    record Send(MessageContent content) implements NegotiationReply {
-        public Send {
-            Objects.requireNonNull(content, "content");
-        }
+  /** Final content to send on the original remote task and context. */
+  record Send(MessageContent content) implements NegotiationReply {
+    public Send {
+      Objects.requireNonNull(content, "content");
     }
+  }
 
-    /** Ends local execution only. Does not imply a protocol Abort was sent or acknowledged. */
-    record Stop(String code, String reason) implements NegotiationReply {
-        public Stop {
-            if (code == null || code.isBlank() || reason == null || reason.isBlank()) {
-                throw new IllegalArgumentException("Stop code and reason are required");
-            }
-        }
+  /** Ends local execution only. Does not imply a protocol Abort was sent or acknowledged. */
+  record Stop(String code, String reason) implements NegotiationReply {
+    public Stop {
+      if (code == null || code.isBlank() || reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("Stop code and reason are required");
+      }
     }
+  }
 }

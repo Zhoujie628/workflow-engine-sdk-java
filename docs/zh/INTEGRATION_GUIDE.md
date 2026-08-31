@@ -95,9 +95,8 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。
-onSelfTask 返回本地 TaskResult；onRoute 选择允许的候选；onNegotiation 返回 Send 或 Stop。
-未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
+选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ```java
@@ -138,13 +137,11 @@ ExecutionResult result = ExecutePsop.builder()
 
 ### 5.1 .env 文件
 
-引擎不读取 A2A-T .env，也不创建 LLM client。业务回调需要 A2A-T 时，
-宿主用自己的环境文件初始化 A2ATClient/A2ATServer，配置 provider/model/key/base URL 和 A2AT_LANGUAGE。
-样例的 a2atEnvPath 是宿主／Demo 配置，不是引擎 builder 参数。
-OMC 凭据解密不与 LLM 配置耦合：内置凭据模式通过
-WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) 显式提供密钥，
-再将配置好的 engineClient 传给 ExecutePsop。自定义 AuthProvider 自行管理 token 和配置。
-测试使用当前 SDK SPI 的离线 provider，不覆盖模板，也不是生产失败兜底。
+引擎不读取 A2A-T .env，也不创建 LLM client。业务回调需要 A2A-T 时， 宿主用自己的环境文件初始化 A2ATClient/A2ATServer，配置
+provider/model/key/base URL 和 A2AT_LANGUAGE。 样例的 a2atEnvPath 是宿主／Demo 配置，不是引擎 builder 参数。 OMC 凭据解密不与
+LLM 配置耦合：内置凭据模式通过 WorkflowEngineClientConfig.builder ().credentialEncryptionKey (key) 显式提供密钥， 再将配置好的
+engineClient 传给 ExecutePsop。自定义 AuthProvider 自行管理 token 和配置。 测试使用当前 SDK SPI 的离线
+provider，不覆盖模板，也不是生产失败兜底。
 
 ### 5.2 凭证配置文件
 
@@ -222,6 +219,7 @@ enc:uHQcTeKZMVNRM9Ga:o5vm4weRozBXBs04phrLq7j7+/yRVyDsrw==
 4. 将新的 `enc:...` 结果更新到凭证 JSON 文件
 
 > `.env` 文件不应提交到版本库，建议加入 `.gitignore`。
+
 ### 5.3 自定义认证（AuthProvider）
 
 当令牌由工作台或外部认证服务获取，或使用非标准认证方式时，实现 `AuthProvider` 接口。接口只有一个方法：
@@ -283,10 +281,12 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 **注意事项：**
 
 - `applyAuth` 每次发消息都会调用，内部可自行实现 token 缓存和刷新逻辑
-- `securitySchemes` 表示智能体支持的认证方式；`securityRequirements` 表示当前对接强制要求的认证方式。`securityRequirements` 为空时不启用内置凭证认证，但 `AuthProvider` 仍会被调用
+- `securitySchemes` 表示智能体支持的认证方式；`securityRequirements` 表示当前对接强制要求的认证方式。
+  `securityRequirements` 为空时不启用内置凭证认证，但 `AuthProvider` 仍会被调用
 - 只配置 `AuthProvider` 时，它可以作为唯一认证来源，即使 `securityRequirements` 非空
 - 如果同时配了凭证文件和 `AuthProvider`，两者分别生成 Header 后合并；同名不同值会 fail-fast
 - 认证失败时（如 token 获取异常），抛出的异常会传播到 `send()` 方法，请求会被拦截，不会发出
+
 ## 6. AgentCard 定义
 
 AgentCard 通过 `capabilities.extensions` 声明扩展点：
@@ -344,23 +344,21 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 扩展 URI 必须与 A2A-T 定义完全一致。
 
-`securitySchemes` 与 `securityRequirements` 都是可选字段。前者表示智能体支持的认证方式，后者表示当前对接强制要求的认证方式；`securityRequirements: []` 表示不启用内置凭证认证。
+`securitySchemes` 与 `securityRequirements` 都是可选字段。前者表示智能体支持的认证方式，后者表示当前对接强制要求的认证方式；
+`securityRequirements: []` 表示不启用内置凭证认证。
 
 ## 7. A2A-T 扩展能力
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。
-终态不会重启协商，普通 INPUT_REQUIRED 明确报告不支持的交互。
-宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。
-通过 `A2atMessages.contextOf(request.received())` 取得收到的上下文；
-结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行 nextRound 或返回新 Propose。
+只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+`A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
+nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容；
-返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成 Abort。
-同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
-`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。
-超时、预算耗尽、回调缺失均明确失败，不默认 Accept，也不自动生成 Abort。
-Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。
-业务发送 Abort 后，即使远端用 COMPLETED 确认，也不能判为诊断成功。
+返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
+Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
+Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
+COMPLETED 确认，也不能判为诊断成功。
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -368,7 +366,9 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-宿主生成最终 Authorization-T/Notification-T 内容后调用上述接口；使用三类独立 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，按业务收到抢通结果后关闭。handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，不用它们的成功作为工作流前提。
+宿主生成最终 Authorization-T/Notification-T 内容后调用上述接口；使用三类独立 transport/runtime/context。订阅监听器收到
+handle 与完整 ReceivedMessage，按业务收到抢通结果后关闭。handle.acknowledgement () 和 completion () 分别表示 ACK
+和真实流退出，不用它们的成功作为工作流前提。
 
 ## 8. HTTPS 配置
 
@@ -387,22 +387,20 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 .crlPath("/path/to/revocations.crl")
 ```
 
-HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局主机名校验设置；关闭证书链校验时仍会加载 mTLS
-客户端身份。生产环境应保持 `sslVerify(true)`；自签证书通过 `caCertsPath` 建立信任。默认 gRPC runtime 在
+HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局主机名校验设置；关闭证书链校验时仍会加载 mTLS 客户端身份。生产环境应保持
+`sslVerify(true)`；自签证书通过 `caCertsPath` 建立信任。默认 gRPC runtime 在
 `sslVerify(false)` 时使用 plaintext，因此不能同时配置 mTLS 或 `crlPath`，这些组合会 fail-fast。
 
 ## 9. 日志
 
-将 `PROTOCOL` logger 设为 DEBUG，可查看实际传输边界的观测记录。
-HTTP/JSON-RPC 记录 A2A SDK 处理后的实际序列化正文和应用头；
-A2A-Version 只在真实请求有该头时出现，不为日志展示补造 Header。
-gRPC 记录实际 metadata 和 protobuf 的 JSON 展示，不伪装成 HTTP JSON 报文。
-JDK 自动网络头、HTTP/2 帧、TLS 密文及服务端字节不在此观测范围。
+将 `PROTOCOL` logger 设为 DEBUG，可查看实际传输边界的观测记录。 HTTP/JSON-RPC 记录 A2A SDK 处理后的实际序列化正文和应用头；
+A2A-Version 只在真实请求有该头时出现，不为日志展示补造 Header。 gRPC 记录实际 metadata 和 protobuf 的 JSON 展示，不伪装成
+HTTP JSON 报文。 JDK 自动网络头、HTTP/2 帧、TLS 密文及服务端字节不在此观测范围。
 
 dev 中 `ORDER_FORWARD_REQUEST` 表示交给东信 SDK 的请求，
 `ORDER_SDK_RESPONSE` 表示 SDK 实际交付的状态、多值响应头和文本。
-`sdk-sse-text` 从 SDK 字符串分片组装可见 SSE 帧；原始字节编码及平台到 OMC 的报文不可见，
-不能称为 OMC 抓包。`MODEL_PREVIEW` 只是高层预览，默认关闭，不是协议证据。
+`sdk-sse-text` 从 SDK 字符串分片组装可见 SSE 帧；原始字节编码及平台到 OMC 的报文不可见， 不能称为 OMC 抓包。`MODEL_PREVIEW`
+只是高层预览，默认关闭，不是协议证据。
 
 ```properties
 logger.protocol.name=PROTOCOL
@@ -412,32 +410,28 @@ WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
 WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
 ```
 
-DEBUG 开启时正文观测默认开启；敏感部署可显式禁用。JVM 同名属性优先于环境变量。
-认证头、Cookie、Token 及识别出的口令字段强制脱敏，不提供关闭脱敏的开关。
-这是字段级脱敏，不能自动识别所有个人信息和业务敏感内容，生产应另定日志策略。
-缓冲有界：原始收集器按该数值限制字节，输出文本按字符限制；
-超限 SSE 帧整帧丢弃至下个分隔符并标记 dropped-capacity，禁用、截断、中断也有明确标记。
-UTF-8 分片先组装再解码，日志观察失败不改变报文投递；文件引用不会为打印日志而下载。
-requestId 关联单次调用；工作流调用还带 executionId/logicalTaskId/attempt、
-agent/contextId/channel，已知远端任务时附 remoteTaskId，均为本地日志字段，不污染协议 metadata。
+DEBUG 开启时正文观测默认开启；敏感部署可显式禁用。JVM 同名属性优先于环境变量。 认证头、Cookie、Token
+及识别出的口令字段强制脱敏，不提供关闭脱敏的开关。 这是字段级脱敏，不能自动识别所有个人信息和业务敏感内容，生产应另定日志策略。
+缓冲有界：原始收集器按该数值限制字节，输出文本按字符限制； 超限 SSE 帧整帧丢弃至下个分隔符并标记
+dropped-capacity，禁用、截断、中断也有明确标记。 UTF-8 分片先组装再解码，日志观察失败不改变报文投递；文件引用不会为打印日志而下载。
+requestId 关联单次调用；工作流调用还带 executionId/logicalTaskId/attempt、 agent/contextId/channel，已知远端任务时附
+remoteTaskId，均为本地日志字段，不污染协议 metadata。
 
 ### 查看真实协商与协议日志
 
-直接运行本地 SpringSpnDemo，默认 City1 缺参并协商、City2 参数完整直接诊断，无需添加 VM 参数。
-Negotiation-T 扩展激活本身不强制协商；这是本地 Demo 专门设置的场景，不是引擎默认行为。
-要关闭本地缺参演示、让两城市都直接诊断，在 IDEA **VM options** 增加：
+直接运行本地 SpringSpnDemo，默认 City1 缺参并协商、City2 参数完整直接诊断，无需添加 VM 参数。 Negotiation-T 扩展激活本身不强制协商；这是本地
+Demo 专门设置的场景，不是引擎默认行为。 要关闭本地缺参演示、让两城市都直接诊断，在 IDEA **VM options** 增加：
 
 ```text
 -Da2at.samples.negotiation=false
 ```
 
 默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
-可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` → `INPUT_REQUIRED / PROPOSE`
-→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。
-非内嵌 OMC 模式默认不注入缺参，显式设置 `-Da2at.samples.negotiation=true` 也会被拒绝。
-Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
-协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。
-main 支持直连；dev 默认 order，两种模式使用同一业务回调。
+可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` →
+`INPUT_REQUIRED / PROPOSE`
+→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
+`-Da2at.samples.negotiation=true` 也会被拒绝。 Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
+协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 main 支持直连；dev 默认 order，两种模式使用同一业务回调。
 
 离线重复验证（两个命令顺序执行，避免端口冲突）：
 
@@ -447,8 +441,8 @@ mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifi
 mvn -q -pl samples -am "-Dtest=SpringSpnDemoOrderE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
 ```
 
-每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK 的
-模板、校验和 HTTP/SSE；不是现网 OMC、平台或真实模型语义的验证。
+每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK
+的 模板、校验和 HTTP/SSE；不是现网 OMC、平台或真实模型语义的验证。
 
 ## 10. 事件回调
 
@@ -491,7 +485,9 @@ Workflow workflow = LoadPsop.load(
 
 ## 12. 自定义扩展
 
-直接构造最终 MessageContent(parts, metadata, extensions)，由宿主管理扩展内容的生成／校验。无需注册引擎 handler 或 SDK 实例。A2atMessages.from 是 A2A-T metadata 复制辅助；非 A2A-T 扩展也可直接提供 metadata 和激活 URI。引擎不会仅因 AgentCard 声明而自动生成内容。
+直接构造最终 MessageContent (parts, metadata, extensions)，由宿主管理扩展内容的生成／校验。无需注册引擎 handler 或 SDK
+实例。A2atMessages.from 是 A2A-T metadata 复制辅助；非 A2A-T 扩展也可直接提供 metadata 和激活 URI。引擎不会仅因 AgentCard
+声明而自动生成内容。
 
 ## 13. 你需要使用的接口一览
 
@@ -508,4 +504,4 @@ Workflow workflow = LoadPsop.load(
 | `LoadPsop` / `RegistryClient`                          | 工作流加载 / AgentCard 获取                                   |
 | `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | 工作流定义                                                    |
 | `ExecutionResult`                                      | 执行结果                                                      |
-| `SendMessageResult` / `TaskResult`                   | 消息/任务响应                                                 |
+| `SendMessageResult` / `TaskResult`                     | 消息/任务响应                                                 |
