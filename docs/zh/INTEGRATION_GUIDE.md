@@ -28,6 +28,12 @@ A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T
 
 整个集成过程分四步：定义工作流 -> 加载 AgentCard -> 实现 ControlPoint -> 执行。
 
+完整可运行源码：[HostQuickStart.java](../../samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java)。
+该源码参与编译，远端任务→本地汇总流程由 HostQuickStartTest 验证。
+可复制到集成方工程，或在 IDEA 的 samples 模块运行，传入注册中心 URL、目标 AgentCard 名称、凭证路径。
+下列片段解释同一套 API；AgentCard 加载方式二选一，Task-T 内容生成需要由业务实现。
+非空业务条件必须实现 onRoute 策略；这里使用无条件边，不依赖默认选路。
+
 ### 4.1 定义工作流
 
 ```java
@@ -45,7 +51,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("merge")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(0)
                         .build(),
@@ -61,7 +67,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("end")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(1)
                         .contextFrom(List.of("*"))
@@ -81,8 +87,16 @@ AgentCard card = mapper.readValue(
 
 // 方式二：从注册中心拉取
 RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-List<Map<String, Object>> cards = registry.fetchAgentCards();
+ObjectMapper cardMapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
+List<AgentCard> cards = registry.fetchAgentCards().stream()
+        .map(raw -> cardMapper.convertValue(raw, AgentCard.class)).toList();
 ```
+
+
+
+RegistryClient 默认设置覆盖正文读取的 30 秒截止时间；可使用
+`new RegistryClient(url, true, Duration.ofSeconds(15))` 设置正值预算。编排中心 query token 日志仅显示 `<anonymous>`，
+集成方也不要自行打印带凭据的原始 URL。
 
 ### 4.3 实现 ControlPoint
 
@@ -116,10 +130,10 @@ ControlPoint callbacks = ControlPoint.builder()
 ### 4.4 执行
 
 ```java
-ExecutionResult result = ExecutePsop.builder()
+CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
         .psop(workflow)
-        .agentCards(List.of(card1, card2))
-        .controlPoint(new MyControlPoint())
+        .agentCards(cards)
+        .controlPoint(callbacks)
         .runtimeIntent("SPN跨城专线故障诊断与抢通")
         .lang("zh")
         .credentialsConfigPath("credentials.json")
@@ -127,8 +141,13 @@ ExecutionResult result = ExecutePsop.builder()
         .onFinish((r, history) -> {
             System.out.println("执行结果: " + r.isSuccess());
         })
-        .execute()
-        .get(10, TimeUnit.MINUTES);
+        .execute();
+try {
+    ExecutionResult result = execution.get(10, TimeUnit.MINUTES);
+    System.out.println(result.getStepOutputs());
+} finally {
+    if (!execution.isDone()) execution.cancel(true);
+}
 ```
 
 必填项：`psop`、`controlPoint`。其余配置项都有默认值。
@@ -192,15 +211,21 @@ openssl rand -hex 32
 A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
+实例隔离加密可调用 `CredentialCrypto.encrypt(plaintext, keyHex)`；显式 key 优先且不会修改 JVM 全局属性。不要记录明文或密钥。
+
 **加密密码**
+
+先执行 `mvn -pl workflow-engine -am package`，以下命令在仓库根目录运行，仅需 SDK jar 和 JDK。
+`set` 是 Windows cmd 语法，PowerShell 应使用 `$env:A2AT_CRED_KEY='...'`。
+以下参数仅用于演示；命令行口令/密钥可能进入终端历史和进程参数。生产应由集成方安全读取密钥并调用 Java 加密 API。
 
 ```bash
 # 方式一：先设置环境变量
 set A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
 
 # 方式二：密钥作为第二个参数
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
 输出：
@@ -214,15 +239,15 @@ enc:uHQcTeKZMVNRM9Ga:o5vm4weRozBXBs04phrLq7j7+/yRVyDsrw==
 **更换密钥**
 
 1. 生成新密钥：`openssl rand -hex 32`
-2. 更新 `.env` 中的 `A2AT_CRED_KEY`
-3. 用新密钥重新加密所有密码：`java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "明文密码" 新密钥`
+2. 更新集成方密钥存储及显式 `credentialEncryptionKey`，或 OS/JVM 的 `A2AT_CRED_KEY`；引擎不自动加载 `.env`
+3. 用新密钥重新加密所有密码：`java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "明文密码" 新密钥`
 4. 将新的 `enc:...` 结果更新到凭证 JSON 文件
 
 > `.env` 文件不应提交到版本库，建议加入 `.gitignore`。
 
 ### 5.3 自定义认证（AuthProvider）
 
-当令牌由工作台或外部认证服务获取，或使用非标准认证方式时，实现 `AuthProvider` 接口。接口只有一个方法：
+当令牌由集成方或外部认证服务获取，或使用非标准认证方式时，实现 `AuthProvider` 接口。接口只有一个方法：
 
 ```java
 public interface AuthProvider {
@@ -397,10 +422,7 @@ HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局�
 A2A-Version 只在真实请求有该头时出现，不为日志展示补造 Header。 gRPC 记录实际 metadata 和 protobuf 的 JSON 展示，不伪装成
 HTTP JSON 报文。 JDK 自动网络头、HTTP/2 帧、TLS 密文及服务端字节不在此观测范围。
 
-dev 中 `ORDER_FORWARD_REQUEST` 表示交给东信 SDK 的请求，
-`ORDER_SDK_RESPONSE` 表示 SDK 实际交付的状态、多值响应头和文本。
-`sdk-sse-text` 从 SDK 字符串分片组装可见 SSE 帧；原始字节编码及平台到 OMC 的报文不可见， 不能称为 OMC 抓包。`MODEL_PREVIEW`
-只是高层预览，默认关闭，不是协议证据。
+`MODEL_PREVIEW` 只是高层预览，默认关闭，不是协议证据。
 
 ```properties
 logger.protocol.name=PROTOCOL
@@ -429,16 +451,14 @@ Demo 专门设置的场景，不是引擎默认行为。 要关闭本地缺参�
 默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
 可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` →
 `INPUT_REQUIRED / PROPOSE`
-→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
+→ 集成方 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
 `-Da2at.samples.negotiation=true` 也会被拒绝。 Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
-协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 main 支持直连；dev 默认 order，两种模式使用同一业务回调。
+协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 本分支使用直连模式。
 
-离线重复验证（两个命令顺序执行，避免端口冲突）：
+离线重复验证：
 
 ```powershell
 mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
-# 仅 dev：真实供应商 jar + 本地平台/OMC 模拟器
-mvn -q -pl samples -am "-Dtest=SpringSpnDemoOrderE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
 ```
 
 每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK

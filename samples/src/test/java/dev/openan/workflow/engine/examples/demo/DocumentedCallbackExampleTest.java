@@ -29,7 +29,7 @@ class DocumentedCallbackExampleTest {
       String doc = Files.readString(root.resolve("docs/" + language + "/BUSINESS_CALLBACKS.md"));
       String callbacks = block(doc, "ControlPoint callbacks =");
       String generated = block(doc, "MetadataContent generated =");
-      String source =
+      String callbackSource =
           """
                 import java.util.*;
                 import java.util.concurrent.*;
@@ -47,6 +47,25 @@ class DocumentedCallbackExampleTest {
               + "MessageContent generate(A2ATClient sdk, Map<String,Object> data, Map<String,Object> schema) {\n"
               + generated
               + "\nreturn outgoing;\n}\n}";
+      String integration = Files.readString(root.resolve("docs/" + language + "/INTEGRATION_GUIDE.md"));
+      String quickStartSource = """
+          import java.util.*;
+          import java.util.concurrent.*;
+          import com.fasterxml.jackson.databind.ObjectMapper;
+          import org.a2aproject.sdk.spec.AgentCard;
+          import dev.openan.workflow.engine.control.*;
+          import dev.openan.workflow.engine.model.*;
+          import dev.openan.workflow.engine.client.*;
+          import dev.openan.workflow.engine.registry.*;
+          import dev.openan.workflow.engine.runner.ExecutePsop;
+          class DocumentedIntegration {
+            void run() throws Exception {
+          """
+          + block(integration, "Workflow workflow =") + "\n"
+          + block(integration, "RegistryClient registry =") + "\n"
+          + block(integration, "ControlPoint callbacks =") + "\n"
+          + block(integration, "CompletableFuture<ExecutionResult> execution =") + "\n}}";
+      for (String source : List.of(callbackSource, quickStartSource)) {
       JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
       assertNotNull(compiler, "Tests require a JDK, not a JRE");
       DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
@@ -85,6 +104,7 @@ class DocumentedCallbackExampleTest {
                     List.of(input))
                 .call();
         assertTrue(ok, () -> language + ": " + diagnostics.getDiagnostics());
+      }
       }
     }
   }

@@ -1,4 +1,4 @@
-# Contributing to a2at-engine-java
+# Contributing to workflow-engine-sdk-java
 
 Thank you for your interest in contributing! This document covers the contribution process and coding standards.
 
@@ -11,16 +11,15 @@ Thank you for your interest in contributing! This document covers the contributi
 ## Development Setup
 
 ```bash
-git clone git@github.com:Zhoujie628/a2at-engine-java.git
-cd a2at-engine-java
-mvn -o clean compile
-mvn -o test
+git clone https://github.com/project-openan/workflow-engine-sdk-java.git
+cd workflow-engine-sdk-java
+mvn -B clean verify
 ```
 
 ## Project Structure
 
 ```
-a2at-engine-java/
+workflow-engine-sdk-java/
 |-- workflow-engine/       SDK engine module
 |   +-- src/main/java/dev/openan/workflow/engine/
 |       |-- client/       A2A transport, auth, extensions (package-private internals)
@@ -91,21 +90,21 @@ Every Java file must start with the Apache 2.0 license header:
 - WARN: recoverable failures, fallbacks
 - ERROR: auth failures, agent call failures
 - Dedicated `PROTOCOL` logger for protocol-level request/response dumps
-- No log truncation in demo/samples; full messages should be visible
+- Always anonymize credentials; protocol bodies have configurable size limits and sensitive-data redaction
 
 ### Testing
 
 - JUnit 5
 - Unit tests for all public methods
 - Integration tests for end-to-end workflows
-- Run tests: `mvn -o test`
+- Run the complete reactor: `mvn -B clean verify`; `-o` is only for a fully populated local dependency cache
 
 ## Commit Process
 
 1. Fork the repository and create a feature branch
 2. Write code following the standards above
 3. Add/update tests
-4. Run `mvn -o test` and ensure all tests pass
+4. Run `mvn -B clean verify` and ensure all tests pass (including samples)
 5. Add DCO signoff to your commit:
    ```
    Signed-off-by: Your Name <your.email@example.com>
@@ -133,3 +132,13 @@ Every Java file must start with the Apache 2.0 license header:
 - Use GitHub Issues
 - Include: Java version, Maven version, error log, reproduction steps
 - For protocol issues: include the `PROTOCOL` logger output
+
+## Release acceptance
+
+- Run the complete `mvn -B clean verify` reactor; sample failures block release.
+- Documentation code snippets are compiled by DocumentedCallbackExampleTest; HostQuickStartTest executes the minimal host flow.
+- Check default single-city negotiation, final serialized protocol logs, independent extension lifecycle, cancellation and secret anonymization.
+- Verify published POM coordinates, sources/Javadoc artifacts and the absence of private configuration/reference documents.
+- Record the tested commit and Surefire reports. Offline providers and local OMC simulators are not live acceptance.
+- Live model/OMC validation requires authorized endpoints and a separate acceptance record. Never commit customer integration notes.
+- Do not publish, tag, or push as a side effect of running tests.

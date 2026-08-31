@@ -2,7 +2,7 @@
 
 Initial-release API; A2A-T SDK `1.1.0`, A2A Java `1.2.0.Final`. The engine owns DAG scheduling, standard A2A envelopes,
 auth, transport and task waiting. The host owns content, schemas, templates, semantic validation and any LLM calls.
-Direct OMC and dev's Eastcom forwarding use the same business contracts.
+The business contracts are independent of the transport runtime.
 
 ## 1. Callbacks
 
@@ -186,7 +186,7 @@ External-OMC mode defaults to no injection and rejects an explicit true switch. 
 current Spring application context without modifying JVM-wide properties. Protocol observations are in the console and
 `logs/spn-demo.log` relative to the run directory.
 
-Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially. Each tests the no-VM-option
+Run `SpringSpnDemoE2ETest` for direct transport. It tests the no-VM-option
 single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
 provider. This is local protocol E2E evidence, not real model/platform/OMC validation.
 
@@ -202,7 +202,7 @@ role calls the APIs it needs; do not invoke every generation alternative for the
 
 | Business path              | SDK generation and receiving validation                                                                                                                                 | Consumed result                                                              |
 |----------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| WAIMO → workbench          | generateTaskPromptFromDataWithSchema → validateTaskPromptAndDataFilling                                                                                                 | WorkbenchTaskInputParser retains filled.data for workflow selection          |
+| WAIMO → integrator          | generateTaskPromptFromDataWithSchema → validateTaskPromptAndDataFilling                                                                                                 | WorkbenchTaskInputParser retains filled.data for workflow selection          |
 | onTask → either OMC        | generateTaskPromptFromDataWithSchema → validateTaskPromptAndDataFilling                                                                                                 | SpnTaskInput built from filled.data, not raw protocol text                   |
 | Either OMC → onNegotiation | generateNegotiationProposePromptFromData → validateProposePromptAndDataFilling                                                                                          | Requested items answered only from the current city's authoritative input    |
 | Host Accept → OMC          | generateNegotiationAcceptPromptFromData → validateAcceptPromptAndDataFilling                                                                                            | Merge requested filled fields; validate domain requirements before diagnosis |
@@ -240,8 +240,7 @@ outcomes remain independent of workflow execution.
 
 EmbeddedA2AServerTest covers normal/Accept filled data, invalid formal text, missing fields, cross-negotiation replies,
 Reject and Abort. NegotiationStrategyTest covers city isolation and host Abort/Reject policy. RecoveryNotificationTest
-covers complete success/failure and malformed/incomplete events. SpringSpnDemoE2ETest and dev's
-SpringSpnDemoOrderE2ETest cover full input, City1 missing input and both cities missing input; SpnCrossCityE2ETest
+covers complete success/failure and malformed/incomplete events. SpringSpnDemoE2ETest covers full input, City1 missing input and both cities missing input; SpnCrossCityE2ETest
 checks the recovery lifecycle. Tests use actual SDK pipelines with a strict fixture-only offline LLM provider, not a
 live-model semantic evaluation or real-OMC certification.
 

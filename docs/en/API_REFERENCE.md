@@ -323,6 +323,12 @@ POST `/api/v1/orchestrate/search`. Returns ranked workflow summaries matched by 
 
 ### RegistryClient
 
+The two-argument constructor uses a 30-second complete-response deadline. Override it with
+`new RegistryClient(url, sslVerify, Duration.ofSeconds(15))`; the duration must be positive.
+The deadline includes response-body consumption, and interruption cancels the pending request.
+Registry methods return JSON maps; convert them to AgentCard with AgentCardJacksonModule as shown in the integration guide.
+
+
 Fetch and register AgentCards from the Registry Center.
 
 ```java

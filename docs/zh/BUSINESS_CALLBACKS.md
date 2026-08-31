@@ -1,7 +1,7 @@
 # 业务回调集成契约
 
 首发 API，A2A-T SDK `1.1.0`，A2A Java `1.2.0.Final`。 引擎负责 DAG、标准 A2A 信封、认证、传输和任务等待；宿主负责消息内容、schema、模板、语义校验和
-LLM。 直连与 dev 东信转发使用相同业务契约。
+LLM。业务契约独立于具体传输实现。
 
 ## 1. 回调接口
 
@@ -159,16 +159,14 @@ Demo 专门设置的场景，不是引擎默认行为。 要关闭本地缺参�
 默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
 可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` →
 `INPUT_REQUIRED / PROPOSE`
-→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
+→ 集成方 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
 `-Da2at.samples.negotiation=true` 也会被拒绝。 Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
-协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 main 支持直连；dev 默认 order，两种模式使用同一业务回调。
+协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 本分支使用直连模式。
 
-离线重复验证（两个命令顺序执行，避免端口冲突）：
+离线重复验证：
 
 ```powershell
 mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
-# 仅 dev：真实供应商 jar + 本地平台/OMC 模拟器
-mvn -q -pl samples -am "-Dtest=SpringSpnDemoOrderE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
 ```
 
 每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK
@@ -184,11 +182,11 @@ FromText 和 FromData。
 
 | 业务位置                        | 生成／校验入口                                                                                                                                              | 对结果的业务使用                                                                   |
 |---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-| WAIMO → 工作台                  | SpringSpnDemo：generateTaskPromptFromDataWithSchema；WorkbenchTaskInputParser：validateTaskPromptAndDataFilling                                             | 将 filled.data 作为投诉参数，按任务检索工作流                                      |
-| 工作台 onTask → 两地市 OMC      | WorkbenchControlPoint：generateTaskPromptFromDataWithSchema；NegotiationBaseAgentExecutor：validateTaskPromptAndDataFilling                                 | 用 filled.data 构造 SpnTaskInput，交给 executeBusiness；不把原始协议提示词传给诊断 |
-| OMC 缺参 → 工作台 onNegotiation | 两地市共用 generateNegotiationProposePromptFromData；NegotiationStrategy：validateProposePromptAndDataFilling                                               | 从 items 读取实际请求字段，仅从当前城市原始业务输入补充，不使用另一城市的数据      |
-| 工作台补参 → OMC                | generateNegotiationAcceptPromptFromData；validateAcceptPromptAndDataFilling                                                                                 | 合并所请求字段的 filled.data，复核端口、投诉分类及 OSS 流水号后执行诊断            |
-| 工作台拒绝／终止 → OMC          | generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData；对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling | 校验原因后结束当前诊断任务，不进入诊断业务                                         |
+| WAIMO → 集成方                  | SpringSpnDemo：generateTaskPromptFromDataWithSchema；WorkbenchTaskInputParser：validateTaskPromptAndDataFilling                                             | 将 filled.data 作为投诉参数，按任务检索工作流                                      |
+| 集成方 onTask → 两地市 OMC      | WorkbenchControlPoint：generateTaskPromptFromDataWithSchema；NegotiationBaseAgentExecutor：validateTaskPromptAndDataFilling                                 | 用 filled.data 构造 SpnTaskInput，交给 executeBusiness；不把原始协议提示词传给诊断 |
+| OMC 缺参 → 集成方 onNegotiation | 两地市共用 generateNegotiationProposePromptFromData；NegotiationStrategy：validateProposePromptAndDataFilling                                               | 从 items 读取实际请求字段，仅从当前城市原始业务输入补充，不使用另一城市的数据      |
+| 集成方补参 → OMC                | generateNegotiationAcceptPromptFromData；validateAcceptPromptAndDataFilling                                                                                 | 合并所请求字段的 filled.data，复核端口、投诉分类及 OSS 流水号后执行诊断            |
+| 集成方拒绝／终止 → OMC          | generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData；对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling | 校验原因后结束当前诊断任务，不进入诊断业务                                         |
 | 独立白名单授权                  | ExtensionPrePositioner：generateAuthPromptFromDataWithSchema；PrePositionedExtensionHandler：validateAuthPromptAndDataFilling                               | 用 filled.data 构建并应用 AuthorizationPolicy                                      |
 | 独立订阅                        | ExtensionPrePositioner：generateNotificationPromptFromDataWithSchema；PrePositionedExtensionHandler：validateNotificationPromptAndDataFilling               | 用 filled.data 构建 NotificationPolicy，保持独立通知连接                           |
 
@@ -247,10 +245,9 @@ City1 上报的端口和 OSS 流水号来自本次已校验 SpnTaskInput，不�
 
 EmbeddedA2AServerTest 覆盖正常填充数据、Accept 填充数据保留、错误正文、漏填、跨协商回复、 Reject 和
 Abort；NegotiationStrategyTest 覆盖城市输入隔离、不可核实的 Abort 和业务拒绝的 Reject； RecoveryNotificationTest
-覆盖完整成功／失败结果、仅摘要、错误命名和不完整事件。 SpringSpnDemoE2ETest 及 dev 的 SpringSpnDemoOrderE2ETest
-均覆盖完整输入、City1 缺参、两城市同时缺参。 完整业务抢通链路由 SpnCrossCityE2ETest 验证。
+覆盖完整成功／失败结果、仅摘要、错误命名和不完整事件。 SpringSpnDemoE2ETest 覆盖完整输入、City1 缺参、两城市同时缺参。 完整业务抢通链路由 SpnCrossCityE2ETest 验证。
 
-这些测试用真实 SDK 1.1.0 的生成和校验管线、真实 A2A HTTP/SSE；Order 测试使用供应商 jar 和本地平台模拟器。 离线 LLM provider
+这些测试用真实 SDK 1.1.0 的生成和校验管线、真实 A2A HTTP/SSE。 离线 LLM provider
 仅解析明确的样例输入，拒绝错误摘要／缺参，不代表真实模型的语义质量或现网联调已通过。
 
 ### 授权策略格式与协商字段（SDK 1.1.0）

@@ -20,18 +20,82 @@ SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独�
 
 ## 2. 周边系统依赖与宿主集成
 
-![工作流执行引擎与周边系统依赖架构](../images/workflow-engine-surrounding-systems.png)
+```mermaid
+%%{
+  init: {
+    "flowchart": {
+      "curve": "basis",
+      "nodeSpacing": 55,
+      "rankSpacing": 75
+    }
+  }
+}%%
+flowchart TB
+    classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
+    classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
+    classDef sdk fill: #ECFDF5, stroke: #059669, color: #052E16, stroke-width: 1.5px
+    classDef local fill: #F8FAFC, stroke: #64748B, color: #0F172A, stroke-dasharray: 5 3
+    classDef agent fill: #F5F3FF, stroke: #7C3AED, color: #2E1065, stroke-width: 1.5px
+
+    subgraph CONTROL["周边控制面与上游系统"]
+        direction LR
+        WAIMO["WAIMO<br/>上游任务发起方"]:::external
+        REG["注册中心 / Registry Center<br/>AgentCard 发布与查询"]:::external
+        ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
+    end
+
+    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
+        direction TB
+        ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
+        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
+
+        subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
+            direction TB
+            LOAD["发现辅助 API<br/>RegistryClient / LoadPsop"]:::sdk
+            RUN["工作流协议调度<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
+            CALLBACK["宿主回调接口<br/>ControlPoint / EventCallback / onFinish"]:::sdk
+            EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
+        end
+
+        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+    end
+
+    subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]
+        direction LR
+        LOCALCARD["本地 AgentCard JSON<br/>WorkbenchAgentCatalog"]:::local
+        LOCALPSOP["本地 PSOP fallback<br/>仅用于离线演示"]:::local
+    end
+
+    subgraph DOWNSTREAM["下游业务智能体"]
+        OMCS["地市 OMC 智能体群<br/>地市 1 OMC ｜ 地市 2 OMC"]:::agent
+    end
+
+    WAIMO <-->|" Task-T 诊断任务 / 汇总 artifact "| ENTRY
+    ENTRY -->|" 运行意图 "| ADAPTER
+    REG -->|" 生产：查询 AgentCard "| LOAD
+    ORCH -->|" search / load PSOP "| LOAD
+    LOCALCARD -.->|" Demo 替代注册中心 "| ADAPTER
+    LOCALPSOP -.->|" Demo 检索失败时 "| ADAPTER
+    LOAD -->|" 发现结果交给宿主 "| ADAPTER
+    ADAPTER -->|" Workflow + AgentCards "| RUN
+    RUN <-->|" 业务决策与执行结果 "| CALLBACK
+    CALLBACK <-->|" 回调 "| BIZ
+    ADAPTER -->|" 独立业务时机 "| EXT
+    RUN <-->|" 向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果 "| OMCS
+    EXT <-->|" Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE "| OMCS
+    BIZ -->|" 汇总结果 "| ENTRY
+```
 
 上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务。当前
-`SpringSpnDemo` 的宿主是传输工作台智能体，实际责任链如下：
+`SpringSpnDemo` 的宿主是集成方智能体，实际责任链如下：
 
-1. WAIMO 通过 A2A Task-T 调用工作台的服务端入口。
-2. 工作台准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心 搜索、加载 PSOP；SDK 提供可选的
+1. WAIMO 通过 A2A Task-T 调用集成方的服务端入口。
+2. 集成方准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心 搜索、加载 PSOP；SDK 提供可选的
    `RegistryClient` 和 `LoadPsop` 辅助 API，但何时发现、如何缓存、 失败策略均由宿主决定。
-3. 工作台把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG， 并行向两个地市 OMC 下发任务，并在必要时处理
-   Negotiation-T；工作台通过 `ControlPoint` 接管 本地汇总、路由和澄清等业务操作。
-4. 工作台把汇总结果作为 Task-T artifact 和完成状态返回 WAIMO。
-5. Authorization-T 与 Notification-T 由工作台在各自业务时机通过 `ExtensionSender` 单独触发， 不属于 PSOP DAG，也不与工作流任务复用
+3. 集成方把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG， 并行向两个地市 OMC 下发任务，并在必要时处理
+   Negotiation-T；集成方通过 `ControlPoint` 接管 本地汇总、路由和澄清等业务操作。
+4. 集成方把汇总结果作为 Task-T artifact 和完成状态返回 WAIMO。
+5. Authorization-T 与 Notification-T 由集成方在各自业务时机通过 `ExtensionSender` 单独触发， 不属于 PSOP DAG，也不与工作流任务复用
    transport/runtime/context。
 
 Demo 为保证离线可运行，`WorkbenchAgentCatalog` 从 classpath 加载 AgentCard；仅在编排中心搜索或 加载失败时使用本地 PSOP
@@ -201,5 +265,4 @@ RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 
 ## 10. 设计决策总结
 
 最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，直连与 dev
-东信转发继续共享回调。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。

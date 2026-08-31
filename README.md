@@ -22,17 +22,17 @@ return final message content and own any A2A-T generation, schema, validation or
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
 - **HTTPS/TLS**: Configurable trust store, self-signed cert support for development
-- **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf views and dev Order SDK observations;
+- **Protocol Logging**: actual HTTP/JSON-RPC boundaries and gRPC metadata/protobuf views;
   bodies default on at DEBUG with mandatory secret-field redaction
 
 The SPN sample treats the protocol document as an input, not as executable truth. The pinned A2A-T SDK templates, slot
 schemas, canonical URIs, and validation results are authoritative. Protocol generation and validation fail closed; raw
 text is never sent under an A2A-T URI as a fallback.
 
-In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the workbench. The workbench loads the PSOP, dispatches two
+In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the integrator. The integrator loads the PSOP, dispatches two
 city-specific OMC diagnoses in parallel, joins both branches exactly once, and returns the real merged result over
 direct HTTP+JSON transport. Task-T, Authorization-T, and Notification-T each use an independent
-transport/runtime/context. Authorization and Notification are independently triggered workbench operations rather than
+transport/runtime/context. Authorization and Notification are independently triggered integrator operations rather than
 DAG nodes; Notification keeps an explicit long-lived subscription until the recovery result, cancellation, or shutdown.
 
 ## Quick Start
@@ -65,46 +65,22 @@ For Spring Boot server-side integration:
 
 ### 2. Execute a workflow
 
+The complete, compiled example is [HostQuickStart.java](samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
+It converts registry JSON maps to typed AgentCards, runs a remote task and local aggregation, cancels timed-out work,
+and closes caller-owned transport resources. Run its main method in IDEA with three arguments: registry URL,
+target AgentCard name, and credentials JSON path. The registry and target agent must be reachable; TLS verification is enabled.
+
 ```java
-import java.util.concurrent.*;
-
-// 1. Load workflow (PSOP) from orchestration center
-Workflow workflow = LoadPsop.load(
-        "https://127.0.0.1:5001", "psop-id", null, false);
-
-// 2. Load agent cards
-RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-List<AgentCard> agentCards = registry.fetchAgentCards();
-
-// 3. Create transport + engine client
-A2ATransport transport = new A2ATransport(agentCards, null,
-        WorkflowEngineClientConfig.builder()
-                .sslVerify(true)
-                .credentialsConfigPath("credentials.json")
-                .build());
-WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
-
-// 4. Plain A2A example; use host A2A-T SDK generation for Task-T.
-ControlPoint controlPoint = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .build();
-// Implement local, conditional-route and negotiation callbacks as needed.
-// Complete contract: docs/en/BUSINESS_CALLBACKS.md
-
-// 5. Execute
-ExecutionResult result = ExecutePsop.builder()
-        .psop(workflow)
-        .agentCards(agentCards)
-        .controlPoint(controlPoint)
-        .engineClient(client)
-        .runtimeIntent("Diagnose fault")
-        .lang("zh")
-        .execute()
-        .get(10, TimeUnit.MINUTES);
-
-System.out.println("Success: " + result.isSuccess());
+// In the samples module; HostQuickStart is example source, not a class shipped in the SDK jar.
+HostQuickStart.main(new String[] {
+    "https://registry.example.com",
+    "Your Agent Name",
+    "/secure/credentials.json"
+});
 ```
+
+This minimal example sends plain A2A content. For Task-T, Negotiation-T, Authorization-T and Notification-T content
+generation/validation in host business callbacks, follow SpringSpnDemo and the business callback guide.
 
 Final content callbacks, complete dependency inputs and negotiation
 Send/Stop: [English](docs/en/BUSINESS_CALLBACKS.md) / [中文](docs/zh/BUSINESS_CALLBACKS.md).
@@ -176,7 +152,7 @@ graph TD
 - [API 参考](docs/zh/API_REFERENCE.md) - 公共接口和类文档
 - [架构设计](docs/zh/DESIGN.md) - 架构、模块结构、设计决策
 - [开发者指南](docs/zh/DEVELOPER_GUIDE.md) - 内部架构、贡献、调试
-- [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台 Spring Boot 集成完整指南
+- [集成方集成指南](docs/zh/集成方场景接入指南.md) - 集成方 Spring Boot 集成完整指南
 
 ## Modules
 
@@ -206,6 +182,6 @@ External-OMC mode defaults to no injection and rejects an explicit true switch. 
 current Spring application context without modifying JVM-wide properties. Protocol observations are in the console and
 `logs/spn-demo.log` relative to the run directory.
 
-Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially. Each tests the no-VM-option
+Run `SpringSpnDemoE2ETest` for direct transport. It tests the no-VM-option
 single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
 provider. This is local protocol E2E evidence, not real model/platform/OMC validation.

@@ -191,7 +191,7 @@ seconds, and attaches the auth header to outbound requests.
 ```
 
 Passwords can be AES-GCM encrypted with `enc:<iv>:<ciphertext>` prefix. The decryption key is read from `A2AT_CRED_KEY`
-(env var or system property, loaded from `.env` by `EnvFileLoader`).
+(explicit instance configuration > OS environment > JVM property). The host owns loading; the engine does not read `.env` automatically.
 
 ### 7.2 Custom AuthProvider
 
