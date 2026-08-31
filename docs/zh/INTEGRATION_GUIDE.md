@@ -4,7 +4,7 @@
 
 A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T 电信扩展编排多智能体工作流。
 
-引擎自动处理 A2A 协议层的全部机制（消息收发、SSE 流式传输、Task-T 提示词生成、Negotiation-T 协商循环、认证、TLS），你只需关注业务决策。
+引擎处理 A2A 信封、消息收发、流式响应、协商关联、认证和 TLS；宿主负责最终内容生成、语义校验和业务决策。
 
 ## 2. 环境要求
 
@@ -86,77 +86,33 @@ List<Map<String, Object>> cards = registry.fetchAgentCards();
 
 ### 4.3 实现 ControlPoint
 
-继承 `DefaultControlPoint`，按需覆盖以下方法：
-
 ```java
-public class MyControlPoint extends DefaultControlPoint {
-    @Override
-    public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, TaskDispatcher dispatcher) {
-        return dispatcher.dispatch(TaskSubmission.fromText(
-                        request.getAgentName(), request.getMessage(),
-                        StandardTemplates.PRIVATE_LINE_COMPLAINT))
-                .thenApply(r -> {
-                    String state = r.getTaskState();
-                    boolean success = state == null || state.isBlank()
-                            ? r.getText() != null && !r.getText().isBlank()
-                            : state.endsWith("COMPLETED");
-                    return TaskResponse.builder()
-                            .success(success)
-                            .output(r.getText())
-                            .build();
-                });
-    }
-
-    @Override
-    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
-        // SELF_LOOP 步骤在这里本地处理，不需要 engineClient，不发 A2A-T 消息。
-        // request.getMessage() 已包含上游步骤的执行结果上下文。
-        String summary = summarizeLocally(request.getMessage());
-        return CompletableFuture.completedFuture(
-                TaskResponse.builder().success(true).output(summary).build());
-    }
-
-    @Override
-    public CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results,
-            List<JumpCondition> conditions) {
-        return CompletableFuture.completedFuture(
-                RouteDecision.builder()
-                        .nextStep(conditions.get(0).getStep())
-                        .build());
-    }
-
-    @Override
-    public CompletableFuture<NegotiationDecision> onNegotiation(
-            NegotiationRequest request) {
-        return CompletableFuture.completedFuture(
-                NegotiationDecision.acceptText("请使用现有信息继续执行。"));
-    }
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```
 
-| 方法              | 何时调用                       | 你需要做什么                                             |
-|-------------------|--------------------------------|----------------------------------------------------------|
-| `onTask`          | 步骤向其他智能体分派任务时     | 向 `TaskDispatcher` 提交强类型 `TaskSubmission`         |
-| `onSelfTask`      | `SELF_LOOP` 步骤本地执行时     | 本地处理并返回结果（不发 A2A-T 消息）                    |
-| `onRoute`         | 步骤完成后、决定下一步前       | 从候选分支中选择下一步                                   |
-| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时 | 返回强类型 `NegotiationDecision`                         |
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。
+onSelfTask 返回本地 TaskResult；onRoute 选择允许的候选；onNegotiation 返回 Send 或 Stop。
+未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
-`onNegotiation` 默认返回通用的 `acceptText` 决策。结构化业务数据应使用
-`acceptData/rejectData/abortData`，不要拼接字符串控制前缀。信息协商使用 `rejectData`
-时，Map 必须以每个无法提供的信息项名称为 key、具体原因为 value 逐项填写；不能只传一个汇总的
-“拒绝原因”。例如同时无法提供端口和投诉分类时，应分别传入 `接入端口名称` 与 `投诉分类` 两项。
-
-**流程外操作（Authorization-T / Notification-T）**：两者都由宿主在各自业务时机通过
-`ExtensionSender` 独立触发，与工作流没有固定先后关系。Authorization-T 是响应完成即结束的一次性请求；
-Notification-T 是独立于单次工作流 transport 的长连接订阅，ACK 通过
-`NotificationSubscription.acknowledgement()` 获取，后续事件通过回调持续接收，直到收到目标结果、
-显式取消或宿主关闭订阅。
-
-**自环节点（SelfLoop）**：当一个步骤是工作流执行智能体自身的任务（例如汇总多个智能体的诊断结果），把 `stepType` 设为
-`SELF_LOOP`。引擎会调用 `onSelfTask` 本地处理，而不是通过 A2A-T 协议给智能体自己发消息。`onSelfTask` 不接收 `engineClient`
-参数——从契约上保证自环任务不会误发 A2A-T。只有发给其他智能体的步骤才走 `onTask` + A2A-T 协议。
+```java
+ControlPoint callbacks = ControlPoint.builder()
+    .onTask(request -> CompletableFuture.completedFuture(
+        MessageContent.text(request.getInstruction())))
+    .onSelfTask(request -> CompletableFuture.completedFuture(
+        TaskResult.success(List.of(Map.of(
+            "sourceResults", request.getWorkflowInput().upstreamResults())))))
+    .onRoute(request -> CompletableFuture.failedFuture(
+        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onNegotiation(request -> CompletableFuture.completedFuture(
+        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+    .build();
+```
 
 ### 4.4 执行
 
@@ -167,7 +123,6 @@ ExecutionResult result = ExecutePsop.builder()
         .controlPoint(new MyControlPoint())
         .runtimeIntent("SPN跨城专线故障诊断与抢通")
         .lang("zh")
-        .a2atEnvPath(".env")
         .credentialsConfigPath("credentials.json")
         .sslVerify(true)
         .onFinish((r, history) -> {
@@ -183,21 +138,13 @@ ExecutionResult result = ExecutePsop.builder()
 
 ### 5.1 .env 文件
 
-配置 LLM 和提示词运行时：
-
-```ini
-A2AT_LANGUAGE=zh-CN
-A2AT_LLM_PROVIDER=openai
-A2AT_LLM_MODEL=deepseek-v4-flash
-A2AT_LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
-A2AT_LLM_BASE_URL=https://api.deepseek.com
-A2AT_LLM_MAX_TOKENS=2000
-A2AT_LLM_TEMPERATURE=0
-A2AT_LLM_TIMEOUT_SECONDS=60
-A2AT_CRED_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-```
-
-不配置 `.env` 时，Task-T 提示词生成不可用，其余功能不受影响。
+引擎不读取 A2A-T .env，也不创建 LLM client。业务回调需要 A2A-T 时，
+宿主用自己的环境文件初始化 A2ATClient/A2ATServer，配置 provider/model/key/base URL 和 A2AT_LANGUAGE。
+样例的 a2atEnvPath 是宿主／Demo 配置，不是引擎 builder 参数。
+OMC 凭据解密不与 LLM 配置耦合：内置凭据模式通过
+WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) 显式提供密钥，
+再将配置好的 engineClient 传给 ExecutePsop。自定义 AuthProvider 自行管理 token 和配置。
+测试使用当前 SDK SPI 的离线 provider，不覆盖模板，也不是生产失败兜底。
 
 ### 5.2 凭证配置文件
 
@@ -242,7 +189,7 @@ openssl rand -hex 32
 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
-将生成的密钥写入 `.env` 文件：
+生成密钥后由宿主安全保存，并显式传给 credentialEncryptionKey；下列环境变量也可由宿主读取：
 
 ```
 A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
@@ -308,7 +255,6 @@ public class SsoAuthProvider implements AuthProvider {
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .authProvider(new SsoAuthProvider(mySsoClient))
         .sslVerify(true)
-        .a2atEnvPath(".env")
         .build();
 ```
 
@@ -357,7 +303,7 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
         "description": "协商文本交换",
         "required": false
       },
@@ -402,59 +348,27 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 ## 7. A2A-T 扩展能力
 
-引擎自动处理四个 A2A-T 扩展，你无需关心协议细节：
+只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。
+终态不会重启协商，普通 INPUT_REQUIRED 明确报告不支持的交互。
+宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。
+通过 `A2atMessages.contextOf(request.received())` 取得收到的上下文；
+结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行 nextRound 或返回新 Propose。
 
-### Task-T（自动）
-
-`onTask` 通过 `TaskSubmission.fromText(..., templateUri)`、
-`TaskSubmission.fromUnclassifiedText(...)` 或 `TaskSubmission.fromData(...)` 明确选择输入轨道，
-再交给 `TaskDispatcher.dispatch(...)`。工作流已经知道投诉模板时必须传入模板；只有宿主尚未完成
-场景分类时才使用 `fromUnclassifiedText` 让 SDK 识别场景。引擎自动调用匹配的 A2A-T SDK 方法并注入 metadata。
-
-### Negotiation-T（自动）
-
-智能体返回 `INPUT_REQUIRED` 时，引擎构造 `NegotiationRequest`，调用你的 `onNegotiation()` 获取
-Accept/Reject/Abort 强类型决策，然后调用对应 SDK fromText/fromData 方法并发回后续消息。自动循环最多
-`maxNegotiationRounds` 次（默认 3）。
-
-### Authorization-T（独立授权操作）
-
-工作台在需要管理抢通白名单时单独调用，不作为工作流节点。Authorization-T 使用专用
-transport/runtime/context：
+返回 `new NegotiationReply.Send(content)` 发送最终内容；
+返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成 Abort。
+同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。
+超时、预算耗尽、回调缺失均明确失败，不默认 Accept，也不自动生成 Abort。
+Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。
+业务发送 Abort 后，即使远端用 COMPLETED 确认，也不能判为诊断成功。
 
 ```java
-ExtensionSender authorizationSender = new DefaultExtensionSender(authorizationTransport);
-authorizationSender.sendExtensionMessageFromData(
-    "SPN Domain Agent",
-    "Authorization-T 结构化独立操作",
-    authorizationData,
-    authorizationSchema,
-    A2ATExtension.AUTHORIZATION_T).join();
+CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+NotificationSubscription openNotification(String agentName, MessageContent content,
+    BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-内部使用 `A2ATExtension.AUTHORIZATION_T`，勿硬编码 URI。SPN 智能体收到后存储策略，后续操作与白名单比对，在策略内直接执行，不在则拒绝。
-
-### Notification-T（独立长连接订阅）
-
-工作台在需要订阅抢通结果时单独调用，使用与 Task-T、Authorization-T 不同的
-transport/runtime/context：
-
-```java
-NotificationSubscription subscription = notificationSender.openNotificationFromData(
-    "SPN Domain Agent",
-    "Notification-T subscription",
-    notificationData,
-    notificationSchema,
-    event -> {
-        if ("recovery-result".equals(event.get("artifact_name"))) {
-            persistRecoveryResult(event);
-        }
-    }).join();
-SendMessageResult ack = subscription.acknowledgement().join();
-```
-
-ACK 仅表示订阅已建立。工作台应保留 `NotificationSubscription`，收到预期的
-`recovery-result`、取消或关闭服务时调用幂等 `close()`。单次工作流完成不关闭该通道。
+宿主生成最终 Authorization-T/Notification-T 内容后调用上述接口；使用三类独立 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，按业务收到抢通结果后关闭。handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，不用它们的成功作为工作流前提。
 
 ## 8. HTTPS 配置
 
@@ -479,25 +393,62 @@ HTTP/JSON-RPC 的 TLS 策略只作用于当前客户端，不修改 JVM 全局�
 
 ## 9. 日志
 
-引擎设有专用 `PROTOCOL` 日志器输出协议层请求/响应摘要。Body 默认禁用；
-`Authorization`、Cookie、API Key、Token、Secret 等敏感 Header 默认脱敏。只能在受控联调环境临时开启 DEBUG 和 body：
+将 `PROTOCOL` logger 设为 DEBUG，可查看实际传输边界的观测记录。
+HTTP/JSON-RPC 记录 A2A SDK 处理后的实际序列化正文和应用头；
+A2A-Version 只在真实请求有该头时出现，不为日志展示补造 Header。
+gRPC 记录实际 metadata 和 protobuf 的 JSON 展示，不伪装成 HTTP JSON 报文。
+JDK 自动网络头、HTTP/2 帧、TLS 密文及服务端字节不在此观测范围。
+
+dev 中 `ORDER_FORWARD_REQUEST` 表示交给东信 SDK 的请求，
+`ORDER_SDK_RESPONSE` 表示 SDK 实际交付的状态、多值响应头和文本。
+`sdk-sse-text` 从 SDK 字符串分片组装可见 SSE 帧；原始字节编码及平台到 OMC 的报文不可见，
+不能称为 OMC 抓包。`MODEL_PREVIEW` 只是高层预览，默认关闭，不是协议证据。
 
 ```properties
 logger.protocol.name=PROTOCOL
 logger.protocol.level=DEBUG
-# 复用 root 的 console/file appender；不要在没有正确 appenderRef 时设为 false
 logger.protocol.additivity=true
-```
-
-以下环境变量或同名 JVM system property 控制内容：
-
-```properties
 WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
 WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
-WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=false
 ```
 
-只有在隔离、受控的本地联调中才可临时打开敏感 Header；打开时引擎会打印安全告警。
+DEBUG 开启时正文观测默认开启；敏感部署可显式禁用。JVM 同名属性优先于环境变量。
+认证头、Cookie、Token 及识别出的口令字段强制脱敏，不提供关闭脱敏的开关。
+这是字段级脱敏，不能自动识别所有个人信息和业务敏感内容，生产应另定日志策略。
+缓冲有界：原始收集器按该数值限制字节，输出文本按字符限制；
+超限 SSE 帧整帧丢弃至下个分隔符并标记 dropped-capacity，禁用、截断、中断也有明确标记。
+UTF-8 分片先组装再解码，日志观察失败不改变报文投递；文件引用不会为打印日志而下载。
+requestId 关联单次调用；工作流调用还带 executionId/logicalTaskId/attempt、
+agent/contextId/channel，已知远端任务时附 remoteTaskId，均为本地日志字段，不污染协议 metadata。
+
+### 查看真实协商与协议日志
+
+直接运行本地 SpringSpnDemo，默认 City1 缺参并协商、City2 参数完整直接诊断，无需添加 VM 参数。
+Negotiation-T 扩展激活本身不强制协商；这是本地 Demo 专门设置的场景，不是引擎默认行为。
+要关闭本地缺参演示、让两城市都直接诊断，在 IDEA **VM options** 增加：
+
+```text
+-Da2at.samples.negotiation=false
+```
+
+默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
+可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` → `INPUT_REQUIRED / PROPOSE`
+→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。
+非内嵌 OMC 模式默认不注入缺参，显式设置 `-Da2at.samples.negotiation=true` 也会被拒绝。
+Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
+协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。
+main 支持直连；dev 默认 order，两种模式使用同一业务回调。
+
+离线重复验证（两个命令顺序执行，避免端口冲突）：
+
+```powershell
+mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+# 仅 dev：真实供应商 jar + 本地平台/OMC 模拟器
+mvn -q -pl samples -am "-Dtest=SpringSpnDemoOrderE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK 的
+模板、校验和 HTTP/SSE；不是现网 OMC、平台或真实模型语义的验证。
 
 ## 10. 事件回调
 
@@ -540,41 +491,7 @@ Workflow workflow = LoadPsop.load(
 
 ## 12. 自定义扩展
 
-如需扩展新的 A2A-T 扩展点，实现 `ExtensionHandler` 接口：
-
-```java
-public class MyExtensionHandler implements ExtensionHandler {
-    @Override
-    public String extensionKeyword() {
-        return "My-Extension";
-    }
-
-    @Override
-    public CompletableFuture<Map<String, Object>> beforeSend(
-            AgentCard agentCard, String messageText,
-            Map<String, Object> metadata,
-            A2ATClient a2atClient, ControlPoint controlPoint) {
-        metadata.put("https://example.com/extensions/My-Extension/v1", "value");
-        return CompletableFuture.completedFuture(metadata);
-    }
-
-    @Override
-    public CompletableFuture<SendMessageResult> afterReceive(
-            AgentCard agentCard, SendMessageResult result,
-            A2ATClient a2atClient, ControlPoint controlPoint,
-            EventCallback eventCallback) {
-        return CompletableFuture.completedFuture(result);
-    }
-}
-```
-
-通过配置注册：
-
-```java
-WorkflowEngineClientConfig.builder()
-    .customHandlers(List.of(new MyExtensionHandler()))
-    .build();
-```
+直接构造最终 MessageContent(parts, metadata, extensions)，由宿主管理扩展内容的生成／校验。无需注册引擎 handler 或 SDK 实例。A2atMessages.from 是 A2A-T metadata 复制辅助；非 A2A-T 扩展也可直接提供 metadata 和激活 URI。引擎不会仅因 AgentCard 声明而自动生成内容。
 
 ## 13. 你需要使用的接口一览
 
@@ -587,9 +504,8 @@ WorkflowEngineClientConfig.builder()
 | `A2ATransport`                                         | 共享通信层（A2A Java 客户端 runtime、认证、SSE 消费）         |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |
 | `AuthProvider`                                         | 自定义认证                                                    |
-| `ExtensionHandler`                                     | 自定义扩展                                                    |
 | `EventCallback` / `EventType`                          | 事件回调                                                      |
 | `LoadPsop` / `RegistryClient`                          | 工作流加载 / AgentCard 获取                                   |
 | `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | 工作流定义                                                    |
 | `ExecutionResult`                                      | 执行结果                                                      |
-| `SendMessageResult` / `TaskResponse`                   | 消息/任务响应                                                 |
+| `SendMessageResult` / `TaskResult`                   | 消息/任务响应                                                 |
