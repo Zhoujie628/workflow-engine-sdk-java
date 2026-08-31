@@ -9,25 +9,48 @@
 
 ## 1. Overview
 
-The A2A-T Engine SDK lets a host agent execute multi-step workflows over the A2A protocol with A2A-T telecom extensions.
-A workflow is a directed acyclic graph (DAG) of steps; each step dispatches one or more tasks to remote agents and
-routes to the next step. The SDK owns the protocol mechanics - message send, streaming, authentication, Task-T prompt
-generation, the Negotiation-T auto-loop - and exposes a small set of decision interfaces the host implements for
-business logic.
+The SDK is an embedded workflow protocol scheduler, not a separately deployed business service.
+The host supplies final content; the engine owns DAG execution, parallel scheduling, A2A envelopes,
+authentication, transport, waiting and result association. Host callbacks choose whether/how to invoke
+A2A-T natural-language or structured content APIs. Templates, schemas, LLMs and semantic validation belong to the host.
+The engine uses a2a-t-core only for canonical negotiation context and metadata copying, not content generation.
 
-The guiding principle is a clean separation between **mechanics the SDK owns** and **decisions the host owns**:
+| Engine responsibility | Host responsibility |
+|---|---|
+| DAG, task/context association, concurrency and route validation | Final content, routing policy and local analysis |
+| Select complete upstream results with contextFrom | Consume evidence and map downstream business input |
+| A2A authentication and transport mechanics | Credential source, AuthProvider and deployment |
+| Independent sends, subscription handles and lifecycle | Authorization policy, subscription content and closure timing |
 
-| The SDK owns (protocol mechanics)                                         | The host owns (business decisions)            |
-|---------------------------------------------------------------------------|-----------------------------------------------|
-| A2A message send, streaming, SSE normalization                            | Whether and when to send a task               |
-| Agent authentication (Bearer, custom headers)                             | Credential configuration                      |
-| A2A-T extensions (Task-T, Negotiation-T, Authorization-T, Notification-T) | Authorization approval, notification handling |
-| DAG traversal, context assembly, state management                         | Branch routing decisions                      |
-| Event emission                                                            | Event handling                                |
+## 2. Host Integration and Surrounding Systems
+
+![Workflow engine and surrounding-system dependencies](../images/workflow-engine-surrounding-systems.png)
+
+The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed
+orchestration service. In `SpringSpnDemo`, the transport workbench is the host agent:
+
+1. WAIMO invokes the workbench's A2A server endpoint with a Task-T diagnosis request.
+2. The workbench prepares execution inputs. In production it obtains downstream AgentCards from the
+   registry center and searches/loads a PSOP from the orchestration center. The SDK offers optional
+   `RegistryClient` and `LoadPsop` helpers, while discovery timing, caching, and failure policy remain
+   host responsibilities.
+3. The workbench passes the `Workflow`, AgentCards, runtime intent, and business callbacks to
+   `ExecutePsop`. The engine walks the DAG, dispatches both city tasks in parallel, and handles
+   Negotiation-T when needed. `ControlPoint` returns control to the workbench for local aggregation,
+   routing, and clarification decisions.
+4. The workbench returns the aggregate as a Task-T artifact and terminal status to WAIMO.
+5. Authorization-T and Notification-T are invoked by the workbench at independent business times
+   through `ExtensionSender`. They are outside the PSOP DAG and do not share a transport, runtime, or
+   context with workflow tasks.
+
+For offline execution, the demo loads AgentCards from the classpath through `WorkbenchAgentCatalog`
+and uses a local PSOP fallback only if orchestration-center search or load fails. These are sample
+substitutes, not production discovery or disaster-recovery rules. The editable diagram source is
+[`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd).
 
 ---
 
-## 2. Layered Architecture
+## 3. Layered Architecture
 
 The SDK is structured in four layers. Each layer builds on the one below; each has a single responsibility and a clear
 entry point.
@@ -36,47 +59,30 @@ entry point.
 graph TD
     L2["Layer 2 - Orchestration<br/>execute_psop / ExecutePsop<br/>lifecycle, event stream, cancellation, onFinish persistence"]
     L1["Layer 1 - Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
-    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (one-shot)"]
+    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (independent operations)"]
     F["Foundation - Decision<br/>ControlPoint<br/>user-implemented business decisions"]
 
     L2 --> L1 --> L0
     L0 -.-> F
 ```
 
-### 2.1 Layer 0 - Communication
+### 3.1 Layer 0 - Communication
 
-This layer is the heart of the transport-facade split.
+A2ATransport uses A2A SDK REST, JSON-RPC and gRPC bindings for authentication, delivery and complete response assembly.
+WorkflowEngineClient accepts MessageContent and manages task association and negotiation continuation.
+ExtensionSender provides independent sendAuthorization and openNotification operations.
+The implementations are reusable; task, authorization and notification do not share transport/runtime/context instances.
+ProtocolResponses assembles artifact deltas by identity and ReceivedMessage preserves metadata at each level.
 
-**`A2ATransport`** is the shared wire layer. It owns exactly one concern:
-getting bytes to and from remote agents. That means the A2A SDK client runtime,
-the auth manager and interceptors, the agent-card map, and the streaming-response consumer. It exposes two send
-primitives - `send` (collect-and-return) and
-`sendNotificationStream` (long-lived SSE) - plus static extractors that turn the raw SDK event stream into text, task
-state, and metadata.
+### 3.2 Layer 1 - Traversal
 
-**Two facades sit on top of the transport, each with a single responsibility:**
-
-- **`WorkflowEngineClient`** - the workflow execution send path. Owns Task-T prompt generation (before send), the
-  Negotiation-T auto-loop (after receive), the global `EventCallback`, and the `ControlPoint` wiring.
-  This is the facade the executor calls during workflow execution.
-- **`ExtensionSender`** - pre-positioning facade. Sends one-shot Authorization-T requests or establishes long-lived
-  Notification-T subscriptions *before* the workflow starts. It bypasses Task-T generation and the negotiation loop;
-  Notification-T events use the subscription callback rather than the workflow-global callback.
-
-#### Why reusable transport machinery with two facades?
-
-Both the workflow send path and the pre-positioning path need the same wire-level machinery: an HTTP client,
-TLS configuration, auth interceptors, agent-card resolution, and SSE parsing. Putting that machinery on either facade
-would either (a) force a caller that only wants to pre-position to hold the full workflow facade, or (b) duplicate the
-wire code across two classes. The reusable transport / two-facade design avoids both:
-the wire layer is written once on `A2ATransport`, and each facade delegates all wire work to it while keeping its own
-orchestration concern isolated. The facades may use task-scoped or workbench-scoped transport lifetimes.
-
-### 2.2 Layer 1 - Traversal
-
-**`WorkflowExecutor`** walks the DAG. At each step it assembles upstream context (`ContextBuilder`), dispatches subtasks
+**`WorkflowExecutor`** walks the DAG. At each step it selects typed upstream results according to `contextFrom`
+(`ContextBuilder`), dispatches subtasks
 concurrently, applies the step's success policy, and determines the next step (s). It delegates every *decision* to
 `ControlPoint` and every *send* to `WorkflowEngineClient`.
+
+TaskRequest separates current input from workflowInput. ContextBuilder selects complete upstream views
+and convenience outputs; it never formats or generates downstream content. The host decides how to consume them.
 
 Step dispatch rules:
 
@@ -86,7 +92,7 @@ Step dispatch rules:
 - `ANY_SUCCESS` - the first successful subtask wins; the rest are cancelled.
 - `SELF_LOOP` - the task is handled locally via `onSelfTask`, with no A2A-T message sent to the agent.
 
-### 2.3 Layer 2 - Orchestration
+### 3.3 Layer 2 - Orchestration
 
 **`ExecutePsop`** is the high-level runner. It wraps the executor with a lifecycle
 (start / complete / error / close), event serialization, client-disconnect cancellation, and an
@@ -94,80 +100,46 @@ Step dispatch rules:
 
 ---
 
-## 3. Decision Interfaces
+## 4. Decision Interfaces
 
-The SDK exposes two user-implemented interfaces, split by responsibility.
-
-### 3.1 ControlPoint - flow decisions
-
-Drives the workflow forward. Each method is called by the executor or the auto-negotiate loop and makes exactly one
-decision:
-
-| Method          | Called by        | Decision                                     |
-|-----------------|------------------|----------------------------------------------|
-| `onTask`        | executor         | Send a task to an agent (call `sendMessage`) |
-| `onSelfTask`    | executor         | Handle a self-loop task locally (no A2A-T)   |
-| `onRoute`       | executor         | Choose a branch at a conditional step        |
-| `onNegotiation` | client auto-loop | Supply clarification on INPUT_REQUIRED       |
-
-Authorization-T and Notification-T are pre-positioning concerns handled via `ExtensionSender` before the workflow starts, not in-workflow callbacks.
-
----
-
-## 4. A2A-T Extension Model
-
-Four A2A-T extensions are supported. They divide into two groups by lifecycle.
-
-### 4.1 In-workflow extensions
-
-Participate in every `sendMessage` lifecycle through the extension handler chain (`ExtensionRegistry` pre-registers
-both):
-
-- **Task-T** - On send, calls the A2A-T SDK to generate a structured task prompt from the natural-language message and
-  injects it into the message metadata. Skipped for negotiation follow-ups and when the caller pre-sets the prompt. On
-  receive: pass-through.
-- **Negotiation-T** - On receive, when the agent returns `INPUT_REQUIRED`
-  and declares the extension, extracts the negotiation context and message. This feeds the auto-loop: the engine calls
-  `ControlPoint.onNegotiation`
-  for a clarification, resends the follow-up, and repeats up to a configured round limit.
-
-### 4.2 Pre-positioning extensions
-
-Established through `ExtensionSender` before a workflow and decoupled from any single workflow transport:
-
-- **Authorization-T** - Sends a one-shot authorization request. The current implementation uses the caller-supplied natural-language input directly as the metadata value.
-- **Notification-T** - Establishes a result subscription. Opens a long-lived SSE stream so later recovery results flow
-  back through the response stream.
-
-The subscription *result* (e.g. a recovery outcome pushed later) flows back through the `sendNotification` response
-stream, not through
-`onNotification`. That hook only fires when an agent voluntarily includes a Notification-T payload in a `sendMessage`
-task response.
-
-Task-T uses the SDK's `generateTaskPrompt`. Authorization-T and Notification-T currently use caller-supplied metadata
-values because the upstream SDK does not expose corresponding prompt generators.
-
-### 4.3 Extension handler chain
-
-```mermaid
-graph TD
-    SM["sendMessage(agent, message)"]
-    BS["before_send: Task-T generates prompt, injects into metadata"]
-    TS["transport.send (Task-T metadata on the wire)"]
-    AR["after_receive: Negotiation-T extracts context (feeds auto-loop)"]
-    AN["auto_negotiate loop (if INPUT_REQUIRED)"]
-
-    SM --> BS --> TS --> AR --> AN
+```java
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
+}
 ```
 
-`ExtensionRegistry.getHandlersForExtensions` matches an agent's declared extension URIs against handler keywords
-(case-insensitive) and returns the handler chain for that agent. Authorization-T / Notification-T handler classes are
-retained for callers that need inline handling of agent-pushed data, but they are not auto-registered - that is a
-pre-positioning concern.
+onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
+onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
+Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
----
+## 5. A2A-T Extension Model
 
-## 5. Condition Routing
+Task-T: the host generates final content; the engine envelopes and sends it. AgentCard declarations do not trigger generation.
+
+Negotiation-T:
+
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
+Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
+The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
+Use `A2atMessages.contextOf(request.received())` to obtain the received context;
+reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Do not call nextRound for an ending reply or return a new Propose.
+
+Return `new NegotiationReply.Send(content)` to send that exact content.
+Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
+Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
+Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
+Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
+A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
+
+Authorization-T and Notification-T are independent of the DAG. The host generates content and uses dedicated senders; failure does not affect the workflow. Whitelists only control optional OMC recovery. Subscriptions stay open until the host closes them.
+
+## 6. Condition Routing
 
 A step's `next` list holds `JumpCondition(step, condition)` entries. The routing rule is:
 
@@ -181,7 +153,7 @@ This makes conditional branches an N-choose-1 selection and keeps unconditional 
 
 ---
 
-## 6. Event Model
+## 7. Event Model
 
 Events are emitted to an optional `EventCallback` as stable string types (`EventType`). They are grouped by origin:
 
@@ -191,98 +163,72 @@ Events are emitted to an optional `EventCallback` as stable string types (`Event
   `workflow_complete`
 - **Agent traffic** - `agent_request`, `agent_response`,
   `agent_status_update`, `agent_artifact_update`, `agent_message_event`
-- **A2A-T extensions** - `negotiation_request`, `negotiation_resolved`,
-  `negotiation_failed`, `authorization_request`, `authorization_resolved`,
-  `notification`
+- **In-workflow A2A-T extensions** - `negotiation_request`, `negotiation_resolved`,
+  `negotiation_failed`
 - **Failure** - `error`, emitted on step failure by the executor and on final failure by the runner
 
----
-
-## 7. Interaction Sequences
-
-### 7.1 Workflow execution with negotiation
-
-```mermaid
-sequenceDiagram
-    participant H as Host
-    participant E as Executor
-    participant C as EngineClient
-    participant A as Agent
-
-    H->>E: run(workflow)
-    E->>C: onTask(req)
-    C->>A: before_send: Task-T
-    A-->>C: INPUT_REQUIRED (Negotiation-T)
-    C->>E: negotiation result
-    E->>H: onNegotiation (host supplies clarification)
-    H->>E: clarification
-    E->>C: follow-up send
-    C->>A: send follow-up
-    A-->>C: final result
-    C->>E: final result
-    E->>H: ExecutionResult
-```
-
-### 7.2 Pre-positioning authorization
-
-```mermaid
-sequenceDiagram
-    participant H as Host
-    participant ES as ExtensionSender
-    participant T as Transport
-    participant A as Agent
-
-    H->>ES: sendAuthorization(agent)
-    ES->>ES: generate prompt (SDK)
-    ES->>T: send(instruction, auth)
-    T->>A: send
-    A-->>T: auth result
-    T-->>ES: auth result
-    ES-->>H: result
-```
-
-### 7.3 Notification subscription
-
-```mermaid
-sequenceDiagram
-    participant H as Host
-    participant ES as ExtensionSender
-    participant T as Transport
-    participant A as Agent
-
-    H->>ES: sendNotification
-    ES->>T: sendNotificationStream
-    T->>A: open long-lived SSE
-    A-->>T: ack (working)
-    T-->>ES: first event -> future
-    ES-->>H: result
-    Note over T,A: later results stream back over the same connection
-```
+`authorization_request`, `authorization_resolved`, and `notification` currently remain reserved
+`EventType` constants; the workflow event stream does not emit them. Independent authorization
+results are handled through the `ExtensionSender` result, and subscription events through the
+`NotificationSubscription` callback.
 
 ---
 
-## 8. Dependencies
+## 8. Interaction Sequences
 
+```mermaid
+sequenceDiagram
+    participant H as Host callbacks + A2A-T client
+    participant E as Workflow engine
+    participant A as Remote agent
+    E->>H: onTask(TaskRequest + upstream window)
+    H->>H: Generate/validate final content
+    H-->>E: MessageContent
+    E->>A: A2A envelope + unchanged content
+    opt INPUT_REQUIRED with valid Propose
+        A-->>E: Task status + Negotiation-T Propose
+        E->>H: onNegotiation(originalSubmission, received, history)
+        H->>H: Validate proposal; generate reply
+        H-->>E: Send(MessageContent) or local Stop
+        E->>A: Same task/context; final reply content
+    end
+    A-->>E: Task result / artifacts
+    E->>H: onSelfTask(selected complete upstream results)
+    H-->>E: TaskResult
+```
 
-**Java SDK:** `org.a2aproject.sdk:a2a-java-sdk-client` (A2A protocol),
-`net.openan.a2at.sdk:a2a-t-client` (A2A-T extensions), Jackson, SLF4J, Lombok.
+```mermaid
+sequenceDiagram
+    participant H as Host + A2A-T client
+    participant ES as Independent ExtensionSender
+    participant A as OMC
+    H->>H: Generate final authorization content
+    H->>ES: sendAuthorization(agent, content)
+    ES->>A: One-shot authorization
+    A-->>H: Independent result, never gates workflow
+    H->>H: Generate final subscription content
+    H->>ES: openNotification(agent, content, listener)
+    ES-->>H: Registered handle
+    ES->>A: Independent long-lived stream
+    A-->>H: ACK via acknowledgement()
+    A-->>H: listener(handle, ReceivedMessage)
+    H->>ES: handle.close() on recovery/cancel/shutdown
+    ES-->>H: completion() after stream exits
+```
 
-The SDK is standalone: it does not depend on the orchestration center.
+## 9. Dependencies
 
----
+workflow-engine uses A2A Java `1.2.0.Final` (REST/JSON-RPC/gRPC), a matching gRPC runtime,
+`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`, Jackson and SLF4J.
+Pure engine consumers do not transitively receive A2A-T client/server, LLM, prompt or resources.
+samples/hosts explicitly depend on a2a-t-client, and OMC receivers additionally use a2a-t-server.
+Registry/orchestration discovery is host-owned; RegistryClient/LoadPsop are optional helpers.
+Templates and slot schemas come from the pinned SDK jar, not sample resource overrides.
 
-## 9. Design Decisions Summary
+## 10. Design Decisions Summary
 
-1. **Reusable transport, two facades** - wire machinery written once on
-   `A2ATransport`; `WorkflowEngineClient` and `ExtensionSender` each own one orchestration concern and delegate wire
-   work, with task-scoped or workbench-scoped transport lifetimes. Avoids forced-facade coupling and wire-code duplication.
-
-2. **In-workflow vs pre-positioning extensions** - Task-T and Negotiation-T are part of the `sendMessage` chain;
-   Authorization-T is a one-shot request sent before the workflow, while Notification-T is a long-lived subscription
-   established before the workflow. The registry auto-registers only the in-workflow pair.
-
-3. **Auto-negotiation loop** - the engine owns the resend loop so hosts only supply clarification text
-   (`onNegotiation`), never the protocol mechanics of resending.
-
-4. **Condition routing semantics** - empty conditions mean fan-out (parallel), conditional branches mean N-choose-1 via
-   `onRoute`. Keeps the routing model predictable.
+Final content is separate from protocol scheduling; hosts do not maintain A2A envelopes.
+Local multiple outputs and complete remote evidence enter the selected upstream window without losing metadata or flattening arrays.
+Business owns negotiation reply content; the engine owns association, deduplication and bounded waiting. Stop and Abort are distinct.
+Independent authorization/notification never gate the workflow; direct and dev Order share callbacks.
+Protocol logs observe actual boundaries with mandatory redaction; see [Integration guide](INTEGRATION_GUIDE.md).

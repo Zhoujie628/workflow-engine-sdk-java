@@ -11,50 +11,61 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import org.junit.jupiter.api.Test;
-
 import java.net.URL;
+import org.junit.jupiter.api.Test;
 
 class AgentAuthManagerTest {
 
-    @Test
-    void loadsCredentialsFromClasspathLocation() throws Exception {
-        URL resource = getClass().getClassLoader().getResource("test-agent-credentials.json");
-        assertNotNull(resource, "test resource must exist on classpath");
-        AgentAuthManager manager = new AgentAuthManager(resource.getPath());
+  @Test
+  void loadsCredentialsFromClasspathLocation() throws Exception {
+    URL resource = getClass().getClassLoader().getResource("test-agent-credentials.json");
+    assertNotNull(resource, "test resource must exist on classpath");
+    AgentAuthManager manager = new AgentAuthManager(resource.getPath());
 
-        var config = manager.getConfig("Test Agent");
+    var config = manager.getConfig("Test Agent");
 
-        assertNotNull(config);
-        assertEquals(
-                "https://auth.example.test/token",
-                config.get("bearerAuth").get("login_url"));
-    }
+    assertNotNull(config);
+    assertEquals("https://auth.example.test/token", config.get("bearerAuth").get("login_url"));
+  }
 
-    @Test
-    void loadsCredentialsFromClasspathPrefix() {
-        AgentAuthManager manager =
-                new AgentAuthManager("classpath:test-agent-credentials.json");
+  @Test
+  void loadsCredentialsFromClasspathPrefix() {
+    AgentAuthManager manager = new AgentAuthManager("classpath:test-agent-credentials.json");
 
-        var config = manager.getConfig("Test Agent");
+    var config = manager.getConfig("Test Agent");
 
-        assertNotNull(config);
-        assertEquals(
-                "https://auth.example.test/token",
-                config.get("bearerAuth").get("login_url"));
-    }
+    assertNotNull(config);
+    assertEquals("https://auth.example.test/token", config.get("bearerAuth").get("login_url"));
+  }
 
-    @Test
-    void missingFileFailsClosed() {
-        assertThrows(
-                IllegalStateException.class,
-                () -> new AgentAuthManager("/nonexistent/missing-agent-credentials.json"));
-    }
+  @Test
+  void resolvesSharedProfilesAndPerAgentOverrides() {
+    AgentAuthManager manager = new AgentAuthManager("classpath:test-profile-credentials.json");
 
-    @Test
-    void missingClasspathResourceFailsClosed() {
-        assertThrows(
-                IllegalStateException.class,
-                () -> new AgentAuthManager("classpath:nonexistent-credentials.json"));
-    }
+    var city1 = manager.getConfig("City 1").get("bearerAuth");
+    var city2 = manager.getConfig("City 2").get("bearerAuth");
+
+    assertEquals("https://city1.example.test/token", city1.get("login_url"));
+    assertEquals("https://shared.example.test/token", city2.get("login_url"));
+    assertEquals(
+        "shared-user", ((java.util.Map<?, ?>) city1.get("request_fields")).get("userName"));
+    assertEquals(
+        "city1-password", ((java.util.Map<?, ?>) city1.get("request_fields")).get("value"));
+    assertEquals(
+        "shared-password", ((java.util.Map<?, ?>) city2.get("request_fields")).get("value"));
+  }
+
+  @Test
+  void missingFileFailsClosed() {
+    assertThrows(
+        IllegalStateException.class,
+        () -> new AgentAuthManager("/nonexistent/missing-agent-credentials.json"));
+  }
+
+  @Test
+  void missingClasspathResourceFailsClosed() {
+    assertThrows(
+        IllegalStateException.class,
+        () -> new AgentAuthManager("classpath:nonexistent-credentials.json"));
+  }
 }

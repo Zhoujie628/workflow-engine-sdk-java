@@ -21,55 +21,38 @@ package dev.openan.workflow.engine.client;
 
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
+import dev.openan.workflow.engine.model.MessageContent;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import dev.openan.workflow.engine.model.TaskRequest;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
-/**
- * Workflow-execution send facade over a shared {@link A2ATransport}.
- *
- * <p>Single responsibility: the workflow execution send path. This facade owns Task-T prompt
- * generation, the Negotiation-T auto-loop, the global {@link EventCallback}, and the ControlPoint
- * wiring. All wire-level work (client runtime, auth, SSE event extraction) delegates to the
- * transport.
- *
- * <p>One-shot pre-positioning (Authorization-T / Notification-T) is a separate concern and lives on
- * {@link ExtensionSender}; callers that only need pre-positioning hold that lighter facade over the
- * same transport.
- *
- * <p>The single message type on this facade:
- *
- * <ul>
- *   <li>{@link #sendMessage} - streaming send used during workflow execution (invoked from {@link
- *       ControlPoint#onTask}). Runs through Task-T prompt generation, the Negotiation-T auto-loop,
- *       and the global {@link EventCallback}.
- * </ul>
- */
+/** Sends final content and coordinates task interaction. Content generation belongs to the host. */
 public interface WorkflowEngineClient {
+    /** Dispatches a prepared workflow activation; target and protocol association remain internal. */
+    CompletableFuture<SendMessageResult> dispatch(
+            TaskRequest request, MessageContent content, ControlPoint callbacks);
 
-    /**
-     * Send a message to an agent via SSE streaming. Used during workflow execution. The engine
-     * handles Task-T prompt generation, Negotiation-T auto-loop, auth, and extension header
-     * injection automatically.
-     *
-     * @param agentName target agent name (must match AgentCard.name)
-     * @param message full assembled message text
-     * @param contextId optional context ID (null = auto-generated)
-     * @param metadata optional preset metadata
-     * @return future completing with response text, task, metadata, task state
-     */
-    CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message, String contextId, Map<String, Object> metadata);
+    /** Sends final content outside the DAG using explicitly configured interaction callbacks. */
+    CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 
-    /** Convenience: no context ID, no preset metadata. */
-    default CompletableFuture<SendMessageResult> sendMessage(String agentName, String message) {
-        return sendMessage(agentName, message, null, null);
-    }
+    /** Maximum wait for each business callback, including initial content preparation. */
+    default long callbackTimeoutSeconds() { return 600; }
 
     void setControlPoint(ControlPoint controlPoint);
-
     void setEventCallback(EventCallback callback);
+
+    /** Queries an existing remote task. */
+    CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+
+    /** Cancels an existing remote task; this is not a Negotiation-T Abort. */
+    CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+
+    /** Subscribes to an existing task, preserving its identity. */
+    CompletableFuture<SendMessageResult> subscribeToTask(
+            String agentName, String taskId, Consumer<Map<String, Object>> eventCallback);
 
     void close();
 }

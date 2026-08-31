@@ -1,31 +1,50 @@
 # A2A-T 工作流执行引擎 - 架构设计
 
 > A2A-T 工作流执行引擎的架构设计与设计原理。
-> 本文档描述 v1.0 发布版本。面向集成或扩展 SDK 的工程师，
-> 不是某个 bug 修复的历史记录。
+> 本文档描述 v1.0 发布版本。面向集成或扩展 SDK 的工程师
 
 ---
 
 ## 1. 概述
 
-A2A-T 工作流执行引擎让宿主智能体通过 A2A 协议和 A2A-T 电信扩展执行多步骤工作流。
-工作流是一个有向无环图（DAG），每个步骤向远程智能体下发一个或多个任务，并路由到下一步。
-SDK 负责协议机制（消息发送、流式传输、认证、Task-T 提示词生成、Negotiation-T 自动协商循环），
-暴露少量决策接口由宿主实现业务逻辑。
+SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独立业务平台。
+宿主提供最终内容，引擎管理 DAG、并行调度、标准 A2A 信封、认证、传输、等待和结果关联。
+业务回调决定是否调用 A2A-T 的自然语言／结构化内容接口，模板、schema、LLM 与语义校验均归宿主。
+引擎只通过 a2a-t-core 读取规范协商上下文和复制扩展 metadata，不包含内容生成管线。
 
-核心设计原则：**SDK 负责协议机制，宿主负责业务决策**。
+| 引擎职责 | 宿主职责 |
+|---|---|
+| DAG、任务／会话关联、并行与路由校验 | 内容生成、业务路由决策、本地汇总 |
+| 按 contextFrom 选择完整上游结果 | 决定如何使用这些来源、映射下游输入 |
+| A2A 认证与传输机制 | 凭据来源、AuthProvider、部署配置 |
+| 独立授权发送、订阅 handle 和生命周期 | 授权策略、订阅内容、通知消费和关闭时机 |
 
-| SDK 负责（协议机制）                                      | 宿主负责（业务决策）           |
-|----------------------------------------------------------|-------------------------------|
-| A2A 消息发送、流式传输、SSE 规范化                        | 是否发送任务、何时发送         |
-| 智能体认证（Bearer、自定义 Header）                       | 凭证配置                       |
-| A2A-T 扩展（Task-T、Negotiation-T、Authorization-T、Notification-T） | 授权审批、通知处理             |
-| DAG 遍历、上下文组装、状态管理                            | 分支路由决策                   |
-| 事件发射                                                  | 事件处理                       |
+## 2. 周边系统依赖与宿主集成
+
+![工作流执行引擎与周边系统依赖架构](../images/workflow-engine-surrounding-systems.png)
+
+上图中的 SDK 是**嵌入宿主智能体进程的库**，不是独立部署的编排服务。当前
+`SpringSpnDemo` 的宿主是传输工作台智能体，实际责任链如下：
+
+1. WAIMO 通过 A2A Task-T 调用工作台的服务端入口。
+2. 工作台准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心
+   搜索、加载 PSOP；SDK 提供可选的 `RegistryClient` 和 `LoadPsop` 辅助 API，但何时发现、如何缓存、
+   失败策略均由宿主决定。
+3. 工作台把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG，
+   并行向两个地市 OMC 下发任务，并在必要时处理 Negotiation-T；工作台通过 `ControlPoint` 接管
+   本地汇总、路由和澄清等业务操作。
+4. 工作台把汇总结果作为 Task-T artifact 和完成状态返回 WAIMO。
+5. Authorization-T 与 Notification-T 由工作台在各自业务时机通过 `ExtensionSender` 单独触发，
+   不属于 PSOP DAG，也不与工作流任务复用 transport/runtime/context。
+
+Demo 为保证离线可运行，`WorkbenchAgentCatalog` 从 classpath 加载 AgentCard；仅在编排中心搜索或
+加载失败时使用本地 PSOP fallback。这两项是样例替代路径，不代表生产环境的数据来源或容灾策略。
+图的可编辑源文件见
+[`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd)。
 
 ---
 
-## 2. 分层架构
+## 3. 分层架构
 
 SDK 分为四层，每层构建在下一层之上，单一职责，入口清晰。
 
@@ -33,120 +52,83 @@ SDK 分为四层，每层构建在下一层之上，单一职责，入口清晰�
 graph TD
     L2["Layer 2 - 编排层<br/>ExecutePsop<br/>生命周期、事件流、取消、onFinish 持久化"]
     L1["Layer 1 - 遍历层<br/>WorkflowExecutor<br/>DAG 遍历、并行下发、上下文组装、路由"]
-    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（一次性前置下发）"]
+    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（独立协议操作）"]
     F["基础层 - 决策<br/>ControlPoint<br/>用户实现的业务决策"]
 
     L2 --> L1 --> L0
     L0 -.-> F
 ```
 
-### 2.1 Layer 0 - 通信层
+### 3.1 Layer 0 - 通信层
 
-**`A2ATransport`** 是共享通信层，只负责一件事：把字节发到远程智能体再收回来。
-它拥有 A2A SDK 客户端运行时、认证管理器和拦截器、智能体卡片映射、流式响应消费者。
-暴露两个发送原语：`send`（收集并返回）和 `sendNotificationStream`（长连接 SSE），
-以及将原始 SDK 事件流转换为文本、任务状态和元数据的静态提取器。
+A2ATransport 使用 A2A SDK 的 REST、JSON-RPC、gRPC 绑定，负责认证头、实际传输和完整响应组装。
+WorkflowEngineClient 接收 MessageContent 并管理远端任务和必要的协商续发。
+ExtensionSender 负责流程外 sendAuthorization 与 openNotification。
+三种协议操作复用实现而不共用 transport/runtime/context 实例。
+ProtocolResponses 按 artifact 身份合并流式增量，ReceivedMessage 保留各层 metadata。
 
-**两个门面构建在 transport 之上，各司其职：**
+### 3.2 Layer 1 - 遍历层
 
-- **`WorkflowEngineClient`** — 工作流执行发送路径。拥有 Task-T 提示词生成（发送前）、
-  Negotiation-T 自动循环（接收后）、全局 `EventCallback`、`ControlPoint` 装配。
-  这是执行器在工作流执行期间调用的门面。
-- **`ExtensionSender`** — 前置下发门面。在工作流启动前发送一次性 Authorization-T 请求或建立长连接 Notification-T 订阅。
-  绕过 Task-T 生成和协商循环，不通过全局回调发射事件 — 返回的结果就是回调。
-
-#### 为什么复用 transport 实现 + 两个门面？
-
-工作流发送路径和前置下发路径都需要相同的通信层机制：HTTP 客户端、TLS 配置、
-认证拦截器、智能体卡片解析、SSE 解析。把这些机制放在任一门面上要么 (a) 强制只想做前置下发的
-调用方持有完整工作流门面，要么 (b) 在两个类中重复通信代码。复用 `A2ATransport` 实现 + 两个门面的设计
-避免了这两个问题。两个门面可以持有不同生命周期的 transport 实例：工作流发送使用任务级 transport，
-Notification-T 订阅使用工作台级 transport。
-
-### 2.2 Layer 1 - 遍历层
-
-**`WorkflowExecutor`** 遍历 DAG。在每个步骤组装上游上下文（`ContextBuilder`），
+**`WorkflowExecutor`** 遍历 DAG。在每个步骤按 `contextFrom` 选择强类型上游结果（`ContextBuilder`），
 并发下发子任务，应用步骤成功策略，确定下一步。所有决策委托给 `ControlPoint`，
 所有发送委托给 `WorkflowEngineClient`。
 
-步骤下发规则：
+TaskRequest 当前输入与 workflowInput 分离。上游完整视图和便利 outputs 由 contextFrom 选择，
+不会自动拼接、生成或套用业务 schema；业务自行决定怎么消费。详见 [回调契约](BUSINESS_CALLBACKS.md)。
+
+
 - 前驱步骤全部完成的步骤被收集并并行下发
 - 同一层的步骤并发执行
 - `ALL_SUCCESS` — 所有子任务必须成功
 - `ANY_SUCCESS` — 第一个成功的子任务胜出，其余取消
 - `SELF_LOOP` — 任务由 `onSelfTask` 本地处理，不发送 A2A-T 消息
 
-### 2.3 Layer 2 - 编排层
+### 3.3 Layer 2 - 编排层
 
 **`ExecutePsop`** 是高层运行器。包装执行器，提供生命周期管理（启动/完成/错误/关闭）、
 事件序列化、客户端断连取消、`onFinish` 持久化钩子。大多数集成使用这一层。
 
 ---
 
-## 3. 决策接口
+## 4. 决策接口
 
-SDK 暴露两个用户实现的接口，按职责拆分。
-
-### 3.1 ControlPoint — 流程决策
-
-驱动工作流前进。每个方法由执行器或自动协商循环调用，做恰好一个决策：
-
-| 方法             | 调用方       | 决策                                       |
-|------------------|-------------|-------------------------------------------|
-| `onTask`         | 执行器       | 向智能体发送任务（调用 `sendMessage`）       |
-| `onSelfTask`     | 执行器       | 本地处理自环任务（不走 A2A-T）              |
-| `onRoute`        | 执行器       | 在条件步骤选择分支                          |
-| `onNegotiation`  | 客户端自动循环 | 在 INPUT_REQUIRED 时提供澄清文本            |
-
-Authorization-T 和 Notification-T 是预置操作，通过 `ExtensionSender` 在工作流启动前发送，不在工作流执行中回调。
-
----
-
-## 4. A2A-T 扩展模型
-
-支持四个 A2A-T 扩展，按生命周期分为两组。
-
-### 4.1 工作流内扩展
-
-参与每次 `sendMessage` 生命周期，通过扩展处理器链（`ExtensionRegistry` 自动注册）：
-
-- **Task-T** — 发送时，调用 A2A-T SDK 从自然语言消息生成结构化任务提示词，注入消息 metadata。
-  协商后续和调用方预设提示词时跳过。接收时：透传。
-- **Negotiation-T** — 接收时，当智能体返回 `INPUT_REQUIRED` 并声明该扩展，
-  提取协商上下文和消息。这驱动自动循环：引擎调用 `ControlPoint.onNegotiation` 获取澄清，
-  重发后续消息，重复直到达到配置的轮次上限。
-
-### 4.2 前置下发扩展
-
-在工作流启动前通过 `ExtensionSender` 建立，并与单次工作流 transport 解耦：
-
-- **Authorization-T** — 发送一次性授权前置请求。当前直接使用调用方提供的自然语言输入作为 metadata 值。
-- **Notification-T** — 建立结果订阅。打开长连接 SSE 流，后续抢通结果通过该流返回。
-
-订阅结果（如后续推送的抢通结果）通过 `sendNotification` 响应流返回，
-不通过 `onNotification`。该钩子仅在智能体在 `sendMessage` 任务响应中主动包含
-Notification-T 载荷时触发。
-
-### 4.3 扩展处理器链
-
-```mermaid
-graph TD
-    SM["sendMessage(agent, message)"]
-    BS["before_send: Task-T 生成提示词，注入 metadata"]
-    TS["transport.send（Task-T metadata 在线上传输）"]
-    AR["after_receive: Negotiation-T 提取上下文（驱动自动循环）"]
-    AN["auto_negotiate 循环（如果 INPUT_REQUIRED）"]
-
-    SM --> BS --> TS --> AR --> AN
+```java
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
+}
 ```
 
-`ExtensionRegistry.getHandlersForExtensions` 将智能体声明的扩展 URI 与处理器关键字
-（不区分大小写）匹配，返回该智能体的处理器链。Authorization-T / Notification-T 处理器类
-保留给需要内联处理智能体推送数据的调用方，但不自动注册 — 这是前置下发的关注点。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。
+onSelfTask 返回本地 TaskResult；onRoute 选择允许的候选；onNegotiation 返回 Send 或 Stop。
+未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
----
+## 5. A2A-T 扩展模型
 
-## 5. 条件路由
+Task-T：宿主生成最终内容，引擎只封装并发送。AgentCard 声明扩展不触发生成。
+
+Negotiation-T：
+
+只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。
+终态不会重启协商，普通 INPUT_REQUIRED 明确报告不支持的交互。
+宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。
+通过 `A2atMessages.contextOf(request.received())` 取得收到的上下文；
+结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行 nextRound 或返回新 Propose。
+
+返回 `new NegotiationReply.Send(content)` 发送最终内容；
+返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成 Abort。
+同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。
+超时、预算耗尽、回调缺失均明确失败，不默认 Accept，也不自动生成 Abort。
+Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。
+业务发送 Abort 后，即使远端用 COMPLETED 确认，也不能判为诊断成功。
+
+Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿主生成内容并使用独立发送器；失败不影响工作流。白名单仅影响 OMC 自动抢通，订阅保持到业务主动关闭。
+
+## 6. 条件路由
 
 步骤的 `next` 列表持有 `JumpCondition(step, condition)` 条目。路由规则：
 
@@ -159,7 +141,7 @@ graph TD
 
 ---
 
-## 6. 事件模型
+## 7. 事件模型
 
 事件通过可选的 `EventCallback` 以稳定字符串类型（`EventType`）发射，按来源分组：
 
@@ -168,97 +150,70 @@ graph TD
   `task_status_changed`、`route_decision`、`workflow_complete`
 - **智能体流量** — `agent_request`、`agent_response`、`agent_status_update`、
   `agent_artifact_update`、`agent_message_event`
-- **A2A-T 扩展** — `negotiation_request`、`negotiation_resolved`、`negotiation_failed`、
-  `authorization_request`、`authorization_resolved`、`notification`
+- **工作流内 A2A-T 扩展** — `negotiation_request`、`negotiation_resolved`、`negotiation_failed`
 - **失败** — `error`，由执行器在步骤失败时和运行器在最终失败时发射
 
----
-
-## 7. 交互序列
-
-### 7.1 带协商的工作流执行
-
-```mermaid
-sequenceDiagram
-    participant H as 宿主
-    participant E as 执行器
-    participant C as EngineClient
-    participant A as 智能体
-
-    H->>E: run(workflow)
-    E->>C: onTask(req)
-    C->>A: before_send: Task-T
-    A-->>C: INPUT_REQUIRED (Negotiation-T)
-    C->>E: negotiation result
-    E->>H: onNegotiation (宿主提供澄清)
-    H->>E: clarification
-    E->>C: follow-up send
-    C->>A: send follow-up
-    A-->>C: final result
-    C->>E: final result
-    E->>H: ExecutionResult
-```
-
-### 7.2 前置下发授权
-
-```mermaid
-sequenceDiagram
-    participant H as 宿主
-    participant ES as ExtensionSender
-    participant T as Transport
-    participant A as 智能体
-
-    H->>ES: sendAuthorization
-    ES->>ES: generate prompt (SDK)
-    ES->>T: send(instruction, auth)
-    T->>A: send
-    A-->>T: auth result
-    T-->>ES: auth result
-    ES-->>H: result
-```
-
-### 7.3 Notification 订阅
-
-```mermaid
-sequenceDiagram
-    participant H as 宿主
-    participant ES as ExtensionSender
-    participant T as Transport
-    participant A as 智能体
-
-    H->>ES: sendNotification
-    ES->>T: sendNotificationStream
-    T->>A: open long-lived SSE
-    A-->>T: ack (working)
-    T-->>ES: first event -> future
-    ES-->>H: result
-    Note over T,A: 后续结果通过同一连接流回
-```
+`authorization_request`、`authorization_resolved` 和 `notification` 目前只是 `EventType` 中的保留常量，
+工作流事件流不会发射它们。独立授权结果由 `ExtensionSender` 的返回值处理，订阅事件由
+`NotificationSubscription` 回调处理。
 
 ---
 
-## 8. 依赖
+## 8. 交互序列
 
-**本 SDK：** `org.a2aproject.sdk:a2a-java-sdk-client`（A2A 协议）、
-`net.openan.a2at.sdk:a2a-t-client`（A2A-T 扩展）、Jackson、SLF4J、Lombok。
+```mermaid
+sequenceDiagram
+    participant H as Host callbacks + A2A-T client
+    participant E as Workflow engine
+    participant A as Remote agent
+    E->>H: onTask(TaskRequest + upstream window)
+    H->>H: Generate/validate final content
+    H-->>E: MessageContent
+    E->>A: A2A envelope + unchanged content
+    opt INPUT_REQUIRED with valid Propose
+        A-->>E: Task status + Negotiation-T Propose
+        E->>H: onNegotiation(originalSubmission, received, history)
+        H->>H: Validate proposal; generate reply
+        H-->>E: Send(MessageContent) or local Stop
+        E->>A: Same task/context; final reply content
+    end
+    A-->>E: Task result / artifacts
+    E->>H: onSelfTask(selected complete upstream results)
+    H-->>E: TaskResult
+```
 
-SDK 是独立的：不依赖编排中心。
+```mermaid
+sequenceDiagram
+    participant H as Host + A2A-T client
+    participant ES as Independent ExtensionSender
+    participant A as OMC
+    H->>H: Generate final authorization content
+    H->>ES: sendAuthorization(agent, content)
+    ES->>A: One-shot authorization
+    A-->>H: Independent result, never gates workflow
+    H->>H: Generate final subscription content
+    H->>ES: openNotification(agent, content, listener)
+    ES-->>H: Registered handle
+    ES->>A: Independent long-lived stream
+    A-->>H: ACK via acknowledgement()
+    A-->>H: listener(handle, ReceivedMessage)
+    H->>ES: handle.close() on recovery/cancel/shutdown
+    ES-->>H: completion() after stream exits
+```
 
----
+## 9. 依赖
 
-## 9. 设计决策总结
+workflow-engine：A2A Java `1.2.0.Final`（REST/JSON-RPC/gRPC）、匹配的 gRPC runtime、
+`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`、Jackson、SLF4J。
+纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或 resources。
+samples／宿主显式依赖 a2a-t-client，需要实现 OMC 接收端时另依赖 a2a-t-server。
+注册中心和编排中心由宿主调用，可选择 RegistryClient/LoadPsop 辅助接口或自己的实现。
+模板和 slot schema 来自锁定 SDK jar，样例不覆盖同名资源。
 
-1. **复用 transport 实现，两个门面** — 通信层机制在 `A2ATransport` 上写一次；
-   `WorkflowEngineClient` 和 `ExtensionSender` 各自拥有一个编排职责，委托通信工作，
-   并可使用任务级或工作台级 transport 生命周期。
-   避免强制门面耦合和通信代码重复。
+## 10. 设计决策总结
 
-2. **工作流内扩展 vs 前置下发扩展** — Task-T 和 Negotiation-T 是 `sendMessage` 链的一部分；
-   Authorization-T 是工作流启动前的一次性请求，Notification-T 是工作流启动前建立的长连接订阅。
-   注册表只自动注册工作流内的一对。
-
-3. **自动协商循环** — 引擎拥有重发循环，宿主只提供澄清文本（`onNegotiation`），
-   不需要关心重发的协议机制。
-
-4. **条件路由语义** — 空条件意味着扇出（并行），条件分支意味着通过 `onRoute` 做 N 选 1。
-   保持路由模型可预测。
+最终内容与协议调度分离，宿主不自行维护 A2A 信封。
+本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。
+独立授权和通知不成为工作流前提，直连与 dev 东信转发继续共享回调。
+协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。

@@ -24,7 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
 import org.a2aproject.sdk.client.transport.spi.interceptors.auth.CredentialService;
-import org.jetbrains.annotations.NotNull;
+import org.a2aproject.sdk.util.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,21 +57,46 @@ class AgentCredentialService implements CredentialService {
 
     private final HttpClient httpClient;
 
+    private final CredentialHttpTransport httpTransport;
+
+    private final String credentialEncryptionKey;
+
     private final Map<String, TokenEntry> tokenCache = new ConcurrentHashMap<>();
 
     public AgentCredentialService(
             String agentName, Map<String, Map<String, Object>> schemeConfigs) {
-        this(agentName, schemeConfigs, null);
+        this(agentName, schemeConfigs, null, null);
     }
 
     public AgentCredentialService(
             String agentName,
             Map<String, Map<String, Object>> schemeConfigs,
             HttpClient httpClient) {
+        this(agentName, schemeConfigs, httpClient, null);
+    }
+
+    AgentCredentialService(
+            String agentName,
+            Map<String, Map<String, Object>> schemeConfigs,
+            HttpClient httpClient,
+            String credentialEncryptionKey) {
+        this(agentName, schemeConfigs, httpClient, null, credentialEncryptionKey);
+    }
+
+    AgentCredentialService(
+            String agentName,
+            Map<String, Map<String, Object>> schemeConfigs,
+            HttpClient httpClient,
+            CredentialHttpTransport httpTransport,
+            String credentialEncryptionKey) {
         this.agentName = agentName;
         this.schemeConfigs = schemeConfigs != null ? schemeConfigs : Map.of();
+        this.credentialEncryptionKey = credentialEncryptionKey;
+        this.httpTransport = httpTransport;
         if (httpClient != null) {
             this.httpClient = httpClient;
+        } else if (httpTransport != null) {
+            this.httpClient = null;
         } else {
             this.httpClient =
                     JdkHttpClientFactory.create(
@@ -98,17 +123,21 @@ class AgentCredentialService implements CredentialService {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> buildLoginBody(Map<String, Object> schemeCfg) {
+    private Map<String, Object> buildLoginBody(Map<String, Object> schemeCfg) {
         Map<String, Object> body = new HashMap<>();
         Object requestFields = schemeCfg.get("request_fields");
         if (requestFields instanceof Map) {
             for (var entry : ((Map<String, Object>) requestFields).entrySet()) {
                 String val = entry.getValue() != null ? entry.getValue().toString() : "";
-                body.put(entry.getKey(), CredentialCrypto.decryptIfNeeded(val));
+                body.put(
+                        entry.getKey(),
+                        CredentialCrypto.decryptIfNeeded(val, credentialEncryptionKey));
             }
         } else {
             String username = (String) schemeCfg.get("username");
-            String password = CredentialCrypto.decryptIfNeeded((String) schemeCfg.get("password"));
+            String password =
+                    CredentialCrypto.decryptIfNeeded(
+                            (String) schemeCfg.get("password"), credentialEncryptionKey);
             if (username == null || password == null) return body;
             body.put(schemeCfg.getOrDefault("username_field", "username").toString(), username);
             body.put(schemeCfg.getOrDefault("password_field", "password").toString(), password);
@@ -191,7 +220,7 @@ class AgentCredentialService implements CredentialService {
                     method,
                     loginUrl,
                     sanitizeBody(body));
-            HttpRequest.BodyPublisher bodyPublisher;
+            String requestBody;
             if ("application/x-www-form-urlencoded".equals(contentType)) {
                 StringBuilder form = new StringBuilder();
                 for (Map.Entry<String, Object> e : body.entrySet()) {
@@ -202,35 +231,25 @@ class AgentCredentialService implements CredentialService {
                             .append("=")
                             .append(encodeForm(String.valueOf(e.getValue())));
                 }
-                bodyPublisher = HttpRequest.BodyPublishers.ofString(form.toString());
+                requestBody = form.toString();
             } else {
-                bodyPublisher =
-                        HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body));
+                requestBody = mapper.writeValueAsString(body);
+            }
+            if (httpTransport != null) {
+                CredentialHttpTransport.Response response =
+                        httpTransport.send(URI.create(loginUrl), method, contentType, requestBody);
+                return parseTokenResponse(tokenField, response.statusCode(), response.body());
             }
             HttpRequest request =
                     HttpRequest.newBuilder()
                             .uri(URI.create(loginUrl))
                             .header("Content-Type", contentType)
-                            .method(method, bodyPublisher)
+                            .method(method, HttpRequest.BodyPublishers.ofString(requestBody))
                             .timeout(Duration.ofSeconds(30))
                             .build();
             HttpResponse<String> resp =
                     httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() >= 400) {
-                log.error("[Auth] Login failed: agent={}, status={}", agentName, resp.statusCode());
-                return null;
-            }
-            Map<String, Object> data =
-                    mapper.readValue(resp.body(), new TypeReference<Map<String, Object>>() {});
-            String token = extractNestedValue(data, tokenField);
-            if (token == null) {
-                token =
-                        (String)
-                                data.getOrDefault(
-                                        "accessSession",
-                                        data.getOrDefault("access_token", data.get("token")));
-            }
-            return token;
+            return parseTokenResponse(tokenField, resp.statusCode(), resp.body());
         } catch (Exception e) {
             log.error(
                     "[Auth] Login failed: agent={}, url={}, error={}",
@@ -239,6 +258,25 @@ class AgentCredentialService implements CredentialService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private String parseTokenResponse(String tokenField, int status, String responseBody)
+            throws Exception {
+        if (status >= 400) {
+            log.error("[Auth] Login failed: agent={}, status={}", agentName, status);
+            return null;
+        }
+        Map<String, Object> data =
+                mapper.readValue(responseBody, new TypeReference<Map<String, Object>>() {});
+            String token = extractNestedValue(data, tokenField);
+            if (token == null) {
+                token =
+                        (String)
+                                data.getOrDefault(
+                                        "accessSession",
+                                        data.getOrDefault("access_token", data.get("token")));
+            }
+        return token;
     }
 
     private static String encodeForm(String value) {

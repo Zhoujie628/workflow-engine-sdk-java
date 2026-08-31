@@ -19,40 +19,41 @@
 
 package dev.openan.workflow.engine.client;
 
+import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
+
 /**
  * A2A-T extension types supported by the workflow execution engine.
  *
  * <p>Each enum constant encapsulates the full extension URI so callers never need to hardcode URI
- * strings. Use these with {@link ExtensionSender#sendExtensionMessage}.
+ * strings. Use these when explicitly activating final message content.
  *
  * <p>The engine handles these extensions automatically:
  *
  * <ul>
- *   <li>{@link #TASK_T} - structured task prompt generation (in-workflow)
+ *   <li>{@link #TASK_T} - host-generated task content (in-workflow)
  *   <li>{@link #NEGOTIATION_T} - negotiation auto-loop (in-workflow)
- *   <li>{@link #AUTHORIZATION_T} - whitelist pre-positioning (before workflow)
- *   <li>{@link #NOTIFICATION_T} - result subscription pre-positioning (before workflow)
+ *   <li>{@link #AUTHORIZATION_T} - independent whitelist authorization operation
+ *   <li>{@link #NOTIFICATION_T} - independent result subscription
  * </ul>
  *
- * <p>{@code DATA-NEGOTIATION-T/v1} is intentionally absent -- it is an SDK-internal metadata key
- * for negotiation context, not a user-declared extension.
  */
 public enum A2ATExtension {
 
-    /** Structured task prompt. Handled automatically during workflow execution. */
-    TASK_T("https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1"),
+    /** Host-generated task content. The engine does not generate it. */
+    TASK_T(ExtensionUriConstants.TASK_T_EXTENSION_URI),
 
     /** Negotiation text exchange. Handled automatically via auto-loop. */
-    NEGOTIATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T"),
+    NEGOTIATION_T(ExtensionUriConstants.NEGOTIATION_T_EXTENSION_URI),
 
     /** Authorization whitelist. Pre-positioned before workflow starts. */
-    AUTHORIZATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1"),
+    AUTHORIZATION_T(ExtensionUriConstants.AUTHORIZATION_T_EXTENSION_URI),
 
     /** Result notification subscription. Pre-positioned before workflow starts. */
-    NOTIFICATION_T(
-            "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1");
+    NOTIFICATION_T(ExtensionUriConstants.NOTIFICATION_T_EXTENSION_URI);
+
+    /** Canonical SDK metadata key carrying id/round/maxRounds/performative. */
+    public static final String NEGOTIATION_CONTEXT_META_KEY =
+            net.openan.a2at.sdk.core.model.MetadataContent.NEGOTIATION_CONTEXT_METADATA_KEY;
 
     private final String uri;
 

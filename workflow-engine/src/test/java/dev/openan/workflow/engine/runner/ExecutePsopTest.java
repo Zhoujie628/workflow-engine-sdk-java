@@ -22,12 +22,13 @@ package dev.openan.workflow.engine.runner;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 
 import dev.openan.workflow.engine.model.*;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.MessageContent;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
@@ -50,21 +51,22 @@ class ExecutePsopTest {
     private ControlPoint autoCp() {
         return new ControlPoint() {
             @Override
-            public CompletableFuture<TaskResponse> onTask(
-                    TaskRequest request, WorkflowEngineClient engineClient) {
-                return engineClient
-                        .sendMessage(request.getAgentName(), request.getMessage())
-                        .thenApply(
-                                r ->
-                                        TaskResponse.builder()
-                                                .success(true)
-                                                .output(r.getText())
-                                                .build());
+            public CompletableFuture<MessageContent> onTask(
+                    TaskRequest request) {
+                return CompletableFuture.completedFuture(
+                        MessageContent.text(
+                                request.getInstruction()));
             }
 
             @Override
-            public CompletableFuture<RouteDecision> onRoute(
-                    String stepName, Map<String, Object> results, List<JumpCondition> conditions) {
+            public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                String stepName = routeRequest.stepName();
+                Map<String, Object> results = java.util.Map.of();
+                List<JumpCondition> conditions =
+                        routeRequest.candidates().stream()
+                                .map(c -> new JumpCondition(c.nextStep(), c.condition()))
+                                .toList();
+
                 return CompletableFuture.completedFuture(
                         RouteDecision.builder()
                                 .nextStep(conditions.get(0).getStep())
@@ -103,25 +105,11 @@ class ExecutePsopTest {
                     }
                 };
         ExecutionResult result =
-                ExecutePsop.execute(
-                                linearWorkflow(),
-                                List.of(),
-                                autoCp(),
-                                stub,
-                                "intent",
-                                "zh",
-                                null,
-                                null,
-                                false,
-                                null,
-                                null,
-                                cb,
-                                (BiFunction<
+                ExecutePsop.execute(linearWorkflow(), List.of(), autoCp(), stub, "intent", "zh", null, false, null, null, cb, (BiFunction<
                                                 ExecutionResult,
                                                 List<Map<String, Object>>,
                                                 CompletableFuture<Void>>)
-                                        null,
-                                null)
+                                        null, null)
                         .join();
         assertTrue(result.isSuccess());
         // Verify lifecycle bracket: start ... complete ... close
@@ -153,21 +141,7 @@ class ExecutePsopTest {
                     return CompletableFuture.completedFuture(null);
                 };
         ExecutionResult result =
-                ExecutePsop.execute(
-                                linearWorkflow(),
-                                List.of(),
-                                autoCp(),
-                                stub,
-                                "intent",
-                                "zh",
-                                null,
-                                null,
-                                false,
-                                null,
-                                null,
-                                new EventCallback(),
-                                onFinish,
-                                null)
+                ExecutePsop.execute(linearWorkflow(), List.of(), autoCp(), stub, "intent", "zh", null, false, null, null, new EventCallback(), onFinish, null)
                         .join();
         assertEquals(1, finishCalls.get());
         assertTrue(capturedResult.get().isSuccess());
@@ -195,21 +169,7 @@ class ExecutePsopTest {
                     }
                     return event;
                 };
-        ExecutePsop.execute(
-                        linearWorkflow(),
-                        List.of(),
-                        autoCp(),
-                        stub,
-                        "intent",
-                        "zh",
-                        null,
-                        null,
-                        false,
-                        null,
-                        null,
-                        cb,
-                        null,
-                        onEvent)
+        ExecutePsop.execute(linearWorkflow(), List.of(), autoCp(), stub, "intent", "zh", null, false, null, null, cb, null, onEvent)
                 .join();
         assertTrue(events.contains("psop_update"));
         int psopIdx = events.indexOf("psop_update");
@@ -238,21 +198,7 @@ class ExecutePsopTest {
                     }
                     return event;
                 };
-        ExecutePsop.execute(
-                        linearWorkflow(),
-                        List.of(),
-                        autoCp(),
-                        stub,
-                        "intent",
-                        "zh",
-                        null,
-                        null,
-                        false,
-                        null,
-                        null,
-                        cb,
-                        null,
-                        onEvent)
+        ExecutePsop.execute(linearWorkflow(), List.of(), autoCp(), stub, "intent", "zh", null, false, null, null, cb, null, onEvent)
                 .join();
         assertFalse(events.contains(EventType.TASK_REQUEST));
     }
@@ -262,21 +208,7 @@ class ExecutePsopTest {
         StubWorkflowEngineClient stub1 = new StubWorkflowEngineClient("A", "B");
         StubWorkflowEngineClient stub2 = new StubWorkflowEngineClient("A", "B");
         ExecutionResult r1 =
-                ExecutePsop.execute(
-                                linearWorkflow(),
-                                List.of(),
-                                autoCp(),
-                                stub1,
-                                "intent",
-                                "zh",
-                                null,
-                                null,
-                                false,
-                                null,
-                                null,
-                                new EventCallback(),
-                                null,
-                                null)
+                ExecutePsop.execute(linearWorkflow(), List.of(), autoCp(), stub1, "intent", "zh", null, false, null, null, new EventCallback(), null, null)
                         .join();
         ExecutionResult r2 =
                 ExecutePsop.builder()
@@ -308,32 +240,54 @@ class ExecutePsopTest {
     }
 
     @Test
+    void injectedClientRemainsCallerOwnedAfterExecution() {
+        AtomicInteger closeCalls = new AtomicInteger();
+        StubWorkflowEngineClient client =
+                new StubWorkflowEngineClient("A", "B") {
+                    @Override
+                    public void close() {
+                        closeCalls.incrementAndGet();
+                    }
+                };
+
+        ExecutionResult result =
+                ExecutePsop.builder()
+                        .psop(linearWorkflow())
+                        .controlPoint(autoCp())
+                        .engineClient(client)
+                        .execute()
+                        .join();
+
+        assertTrue(result.isSuccess());
+        assertEquals(0, closeCalls.get());
+    }
+
+    @Test
     void errorLifecycleOnTaskFailure() {
         StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B");
         ControlPoint failCp =
                 new ControlPoint() {
                     @Override
-                    public CompletableFuture<TaskResponse> onTask(
-                            TaskRequest request, WorkflowEngineClient engineClient) {
+                    public CompletableFuture<MessageContent> onTask(
+                            TaskRequest request) {
                         if (request.getAgentName().equals("A")) {
-                            return CompletableFuture.completedFuture(
-                                    TaskResponse.builder().success(false).error("A broke").build());
+                            return CompletableFuture.failedFuture(
+                                    new IllegalStateException("business preparation failed"));
                         }
-                        return engineClient
-                                .sendMessage(request.getAgentName(), request.getMessage())
-                                .thenApply(
-                                        r ->
-                                                TaskResponse.builder()
-                                                        .success(true)
-                                                        .output(r.getText())
-                                                        .build());
+                        return CompletableFuture.completedFuture(
+                                MessageContent.text(
+                                        request.getInstruction()));
                     }
 
                     @Override
-                    public CompletableFuture<RouteDecision> onRoute(
-                            String stepName,
-                            Map<String, Object> results,
-                            List<JumpCondition> conditions) {
+                    public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+                        String stepName = routeRequest.stepName();
+                        Map<String, Object> results = java.util.Map.of();
+                        List<JumpCondition> conditions =
+                                routeRequest.candidates().stream()
+                                        .map(c -> new JumpCondition(c.nextStep(), c.condition()))
+                                        .toList();
+
                         return CompletableFuture.completedFuture(
                                 RouteDecision.builder()
                                         .nextStep(conditions.get(0).getStep())
@@ -349,21 +303,7 @@ class ExecutePsopTest {
                     }
                 };
         ExecutionResult result =
-                ExecutePsop.execute(
-                                linearWorkflow(),
-                                List.of(),
-                                failCp,
-                                stub,
-                                "intent",
-                                "zh",
-                                null,
-                                null,
-                                false,
-                                null,
-                                null,
-                                cb,
-                                null,
-                                null)
+                ExecutePsop.execute(linearWorkflow(), List.of(), failCp, stub, "intent", "zh", null, false, null, null, cb, null, null)
                         .join();
         assertFalse(result.isSuccess());
         assertEquals(EventType.START, events.get(0));

@@ -29,7 +29,6 @@ Entry point for executing a PSOP workflow. Uses the Builder pattern.
 | `engineClient(WorkflowEngineClient)`    | optional | null        | Pre-configured client (null = auto-create)  |
 | `runtimeIntent(String)`                  | optional | `""`        | Natural-language intent for context assembly |
 | `lang(String)`                           | optional | `"zh"`      | Language hint (`"zh"` or `"en"`)             |
-| `a2atEnvPath(String)`                    | optional | null        | Path to `.env` file for A2A-T SDK            |
 | `credentialsConfigPath(String)`          | optional | null        | Path to credentials JSON file                |
 | `sslVerify(boolean)`                     | optional | `true`      | Whether to verify TLS certificates           |
 | `caCertsPath(String)`                    | optional | null        | Path to CA certificates PEM file             |
@@ -44,7 +43,6 @@ ExecutionResult result = ExecutePsop.builder()
         .agentCards(cards)
         .controlPoint(cp)
         .runtimeIntent("diagnose fault")
-        .a2atEnvPath(".env")
         .sslVerify(false)
         .execute()
         .get(10, TimeUnit.MINUTES);
@@ -58,99 +56,44 @@ ExecutionResult result = ExecutePsop.builder()
 
 ### WorkflowEngineClient
 
-Primary interface for sending A2A messages to agents.
-
 ```java
-public interface WorkflowEngineClient {
-    // Send a message with optional context ID and preset metadata
-    CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message,
-            String contextId, Map<String, Object> metadata);
-
-    // Convenience: no context ID, no metadata
-    CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message);
-
-    void setControlPoint(ControlPoint controlPoint);
-
-    void setEventCallback(EventCallback callback);
-
-    void close();
-}
+CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
+CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+CompletableFuture<SendMessageResult> subscribeToTask(String agentName, String taskId, Consumer<Map<String,Object>> callback);
+long callbackTimeoutSeconds();
+void setControlPoint(ControlPoint callbacks);
+void setEventCallback(EventCallback callback);
+void close();
 ```
 
-> Pre-positioning lives on `ExtensionSender`, not here: Authorization-T is a one-shot request and Notification-T is a
-> long-lived subscription. See the `ExtensionSender` section below.
+The executor calls dispatch; onTask does not send. Content is final parts/metadata/extensions. The engine manages envelopes and interactions, never instantiates A2ATClient or generates content from AgentCard declarations. Template queries and generation belong to the host SDK.
 
-#### sendMessage
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
+Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
+The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
+Use `A2atMessages.contextOf(request.received())` to obtain the received context;
+reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Do not call nextRound for an ending reply or return a new Propose.
 
-| Parameter   | Type                  | Description                                   |
-|-------------|-----------------------|-----------------------------------------------|
-| `agentName` | `String`              | Target agent name (must match AgentCard.name) |
-| `message`   | `String`              | Full assembled message text                   |
-| `contextId` | `String`              | Optional context ID (null = auto-generated)   |
-| `metadata`  | `Map<String, Object>` | Optional preset metadata                      |
-
-**Returns:** `CompletableFuture<SendMessageResult>` containing response text, task, metadata, and task state.
-
-The engine internally handles before sending:
-
-1. Task-T prompt generation (if AgentCard declares Task-T)
-2. Negotiation-T metadata injection (for follow-up messages)
-3. Auth header injection (from credentials or AuthProvider)
-4. A2A-Extensions header (only extensions present in metadata)
-
-After receiving:
-
-1. Response text extraction from SSE events
-2. Metadata extraction (task-level + artifact-level)
-3. Negotiation-T auto-loop (if `INPUT_REQUIRED`)
+Return `new NegotiationReply.Send(content)` to send that exact content.
+Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
+Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
+Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
+Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
+A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
 
 ### ExtensionSender
 
-Pre-positioning facade over the same `A2ATransport`. Sends one-shot Authorization-T requests, establishes long-lived
-Notification-T subscriptions, and sends other one-shot extensions before a workflow starts. It bypasses Task-T prompt
-generation and the Negotiation-T auto-loop; later Notification-T events are delivered through the subscription callback.
-
 ```java
-public interface ExtensionSender {
-    CompletableFuture<SendMessageResult> sendExtensionMessage(
-            String agentName, String instruction,
-            String naturalLanguageInput, A2ATExtension extension);
-
-    // Convenience: Authorization-T
-    CompletableFuture<SendMessageResult> sendAuthorization(
-            String agentName, String instruction, String naturalLanguageInput);
-
-    // Convenience: Notification-T (long-lived SSE)
-    CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction, String naturalLanguageInput);
-
-    // Interface contract: Notification-T (long-lived SSE + event callback)
-    CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction,
-            String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
-}
+CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+NotificationSubscription openNotification(String agentName, MessageContent content,
+    BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-| Parameter              | Type            | Description                                     |
-|------------------------|-----------------|-------------------------------------------------|
-| `agentName`            | `String`        | Target agent name (must match `AgentCard.name`) |
-| `instruction`          | `String`        | Short instruction text; becomes `parts[].text` in the A2A message body |
-| `naturalLanguageInput` | `String`        | Natural-language extension metadata. Task-T is structured by the A2A-T SDK; Authorization-T and Notification-T currently use this value directly |
-| `extension`            | `A2ATExtension` | Extension enum (never hardcode URIs)            |
-| `eventCallback`        | `Consumer<Map<String, Object>>` | Optional SSE event callback (`sendNotification` only). Recovery results pushed by the agent are received here in real time; the Map contains `agent`, `text`, `metadata`, `state`. Null drops subsequent events |
-
-**Wire format**: The resulting A2A message sent to the agent has `parts[].text = instruction` and `metadata = { "<extension-URI>": "<extension value>" }`. For example, Authorization-T produces:
-
-```json
-{
-  "parts": [{"text": "Authorize diagnosis operations"}],
-  "metadata": {
-    "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1": "<structured authorization policy>"
-  }
-}
-```
+Authorization and notification accept host-generated final content. Use separate transport/runtime/context instances; their outcomes do not gate the workflow. openNotification registers a handle before I/O, and passes it plus ReceivedMessage directly to the listener. acknowledgement() is the real ACK; timeout fails. close() requests closure; completion() observes actual stream termination.
 
 ### WorkflowEngineClientConfig
 
@@ -171,10 +114,9 @@ Builder-based configuration for the workflow engine client.
 | `sendExecutorQueueCapacity`     | `int`                    | `256`   | Bounded send executor queue capacity         |
 | `authProvider`                  | `AuthProvider`           | null    | Custom auth provider                         |
 | `credentialsConfigPath`         | `String`                 | null    | Path to credentials JSON; explicit missing or malformed files fail startup |
+| `credentialEncryptionKey` | `String` | null | Host-supplied decryption key; never loaded from LLM .env |
 | `credentialsConfig`             | `Map`                    | null    | Inline credentials config; must match AgentCard security requirements |
-| `a2atEnvPath`                   | `String`                 | null    | Path to `.env` file                          |
-| `maxNegotiationRounds`          | `int`                    | `3`     | Max negotiation auto-loop rounds             |
-| `customHandlers`                | `List<ExtensionHandler>` | null    | Custom extension handlers                    |
+| `maxNegotiationExchanges`          | `int`                    | `3`     | Local interaction budget, independent of SDK maxRounds             |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -183,9 +125,8 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .clientCertPath("client-cert.pem")
         .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
-        .a2atEnvPath(".env")
         .credentialsConfigPath("creds.json")
-        .maxNegotiationRounds(5)
+        .maxNegotiationExchanges(5)
         .authProvider(myProvider)
         .build();
 ```
@@ -203,28 +144,9 @@ public interface AuthProvider {
 
 Called for every message send. The `headers` map is mutable; add `Authorization`, custom headers, etc. `AuthProvider` can be the sole authentication source, including when `securityRequirements` is non-empty and credentials are not configured. When credentials are also configured, both sets are computed independently and merged; different values for the same header name throw `SecurityException` instead of silently overwriting either value.
 
-### ExtensionHandler
+### A2atMessages
 
-Extension handler for custom A2A-T extensions.
-
-```java
-public interface ExtensionHandler {
-    String extensionKeyword();
-
-    CompletableFuture<Map<String, Object>> beforeSend(
-            AgentCard agentCard, String messageText,
-            Map<String, Object> metadata,
-            A2ATClient a2atClient, ControlPoint controlPoint);
-
-    CompletableFuture<SendMessageResult> afterReceive(
-            AgentCard agentCard, SendMessageResult result,
-            A2ATClient a2atClient, ControlPoint controlPoint,
-            EventCallback eventCallback);
-}
-```
-
-Built-in: Task-T and Negotiation-T are handled automatically. You can register custom handlers via customHandlers in the
-config.
+Submit custom extensions via MessageContent(parts, metadata, extensions); no engine content-handler registration. A2atMessages.from(MetadataContent, List<Part<?>>) preserves SDK metadata and activates the corresponding URI; contextOf(ReceivedMessage) or contextOf(Map<String,Object>) reads/checks canonical negotiation context. This adapter uses a2a-t-core only, never content generation or semantic validation.
 
 ### A2AJavaClientRuntime
 
@@ -299,46 +221,19 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 
 ### ControlPoint
 
-User-facing decision interface. Each method has a single responsibility.
-
 ```java
-public interface ControlPoint {
-    // Send a Task-T message to an agent. Just call sendMessage.
-    CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
-
-    // Self-loop step: handled locally, no A2A-T message to self.
-    default CompletableFuture<TaskResponse> onSelfTask(TaskRequest request);
-
-    // Conditional branch decision. Only decide which step to go to.
-    CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results,
-            List<JumpCondition> conditions);
-
-    // Provide clarification for negotiation. Default: generic text.
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult);
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```
 
-| Method            | When Called                                | Return                            |
-|-------------------|--------------------------------------------|-----------------------------------|
-| `onTask`          | A step dispatches a task to another agent  | `TaskResponse` (success + output) |
-| `onSelfTask`      | A `SELF_LOOP` step runs locally (no A2A-T) | `TaskResponse` (success + output) |
-| `onRoute`         | After step completes, before next step     | `RouteDecision` (nextStep)        |
-| `onNegotiation`   | When agent returns `INPUT_REQUIRED`        | `String` clarification text       |
-
-### DefaultControlPoint
-
-Default implementation with sensible defaults:
-
-- `onTask`: calls `sendMessage()`, returns success/output
-- `onSelfTask`: echoes the task message back (override for local logic)
-- `onRoute`: picks first non-terminal branch
-- `onNegotiation`: returns generic clarification
-
-Extend this class and override only the methods you need.
+onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
+onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
+Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ### EventCallback
 
@@ -436,7 +331,7 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 
 ### WorkflowExecutor
 
-Mid-layer DAG traversal engine. Walks the workflow steps, assembles upstream context via `ContextBuilder`, dispatches subtasks in parallel, applies step success policies (`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`), and routes to the next step.
+Mid-layer DAG traversal engine. Walks workflow steps, selects typed upstream execution results through `ContextBuilder`, dispatches subtasks in parallel, applies step success policies (`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`), and routes to the next step.
 
 Not typically instantiated directly by SDK users — `ExecutePsop` wraps it internally. Exposed for advanced integrations that need to run the traversal layer without the runner's lifecycle management.
 
@@ -449,7 +344,7 @@ ExecutionResult result = executor.run().join();
 
 ### ContextBuilder
 
-Package-private helper that assembles the context message for each step by folding upstream step outputs according to `contextFrom` rules (`"*"` = all ancestors, specific names = selective inheritance). Not part of the public API surface.
+Package-private helper that selects upstream step results and creates a `WorkflowInput` according to `contextFrom` (omitted = direct predecessors, `[]` = no upstream input, `"*"` = all ancestors, explicit names = selective inheritance). It does not render prompts and is not part of the public API surface.
 
 ---
 
@@ -473,8 +368,8 @@ Static factory: `Workflow.fromMap(Map<String, Object>)` parses from orchestratio
 | `name`        | `String`              | -             | Step name (unique within workflow)                       |
 | `subtasks`    | `List<Task>`          | `List.of()`   | Subtasks dispatched in this step                         |
 | `next`        | `List<JumpCondition>` | `List.of()`   | Conditional next steps                                   |
-| `layer`       | `int`                 | `0`           | Context layer (0 = runtime intent only)                  |
-| `contextFrom` | `List<String>`        | null          | Steps to inherit context from (`"*"` = all predecessors) |
+| `layer`       | `int`                 | `0`           | Design-time hint; dependency graph selects context                  |
+| `contextFrom` | `List<String>`        | null          | Aggregation source: omitted = direct predecessors, `[]` = none, `"*"` = all ancestors, or explicit ancestor names |
 | `stepType`    | `StepType`            | `ALL_SUCCESS` | Execution mode                                           |
 
 ### StepType
@@ -511,35 +406,73 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 | `step`      | `String` | Next step name (`"end"` for terminal)              |
 | `condition` | `String` | Condition expression (`"success"`, `"fail"`, etc.) |
 
-### TaskRequest
+### TaskRequest / BusinessInput
 
-| Field          | Type     | Description               |
-|----------------|----------|---------------------------|
-| `agentName`    | `String` | Target agent              |
-| `skill`        | `String` | Agent skill               |
-| `message`      | `String` | Full message text         |
-| `description`  | `String` | Task description          |
-| `context`      | `String` | Context message           |
-| `stepName`     | `String` | Source step name          |
-| `subtaskIndex` | `int`    | Subtask index within step |
+TaskRequest uses getXxx() accessors:
 
-### TaskResponse
+| Field | Meaning |
+|---|---|
+| executionId / taskId | Local execution/logical task identities, not remote protocol IDs |
+| stepName / agentName / skill | Current workflow step, destination and skill |
+| instruction / language | Current instruction only; no appended history |
+| input | BusinessInput: exactly one of text or arbitrary JSON-serializable data; no schema |
+| workflowInput | WorkflowInput(runtimeIntent, upstreamResults), separate from current input |
 
-| Field      | Type      | Description                |
-|------------|-----------|----------------------------|
-| `success`  | `boolean` | Whether the task succeeded |
-| `output`   | `String`  | Response text              |
-| `error`    | `String`  | Error message (if failed)  |
-| `metadata` | `Map`     | Response metadata          |
+BusinessInput.text(value) / BusinessInput.data(value) create input snapshots.
+WorkflowInput, UpstreamStepResult, ReceivedMessage and NegotiationRequest use record field() accessors.
+
+| contextFrom | Upstream selection |
+|---|---|
+| absent / null | Available direct predecessors |
+| [] | No upstream results; runtimeIntent remains |
+| ["*"] | Available ancestors |
+| explicit ancestor names | Available named results in declaration order |
+
+contextFrom selects evidence, not scheduling edges; define dependencies with next.
+Unknown/non-ancestor names or mixing "*" with names is invalid. Unselected/inactive branches are not fabricated.
+The engine never appends upstream results to instruction/parts or invokes an LLM to map them.
+The host decides how to consume the window or map it to the next agent's input.
+
+The window is stepName → taskResults[] → outputs[] / receivedMessages[].
+TaskExecutionResult also retains agentName, skill, logical taskId, taskDescription, status,
+error, errorCode and errorDetails. Multiple subtasks remain distinguishable.
+Nested arrays remain one output value; there is no requirement that outputs originated from an LLM.
+
+### MessageContent / ReceivedMessage
+
+```java
+record MessageContent(List<Part<?>> parts, Map<String,Object> metadata, Set<String> extensions) {}
+record ReceivedMessage(MessageContent message, Map<String,Object> taskMetadata, List<Artifact> artifacts) {}
+```
+
+MessageContent.text(text), MessageContent.parts(parts), or the canonical constructor create snapshots.
+TextPart, DataPart and FilePart preserve order and part metadata. File references are not fetched.
+MessageContent has no role, target, messageId, taskId, contextId or auth headers.
+A business metadata key named contextId does not override the A2A envelope.
+
+ReceivedMessage preserves message metadata, task metadata and each artifact's identity/parts/metadata separately.
+message can be null; metadata-only results remain accessible through the complete view.
+For convenience, outputs projects TextPart values and DataPart data from artifacts in order;
+if there are no artifacts, a successful final/standalone message can supply these values.
+FilePart remains available only in the complete view. No text parsing, adjacent-part concatenation or nested-array flattening.
+Failed task status messages are evidence, not outputs; valid partial artifacts are retained.
+Streaming append/replace is assembled per artifact; terminal snapshots do not duplicate earlier chunks.
+
+TaskResult.success(List<Object>) represents local output, including an empty list.
+TaskResult.failure(code, message) separates failure from output; its builder can retain valid partial outputs.
+TaskResult includes receivedMessages for remote evidence; remote convenience outputs derive from that view.
+A remote task succeeds only in COMPLETED, or a standalone A2A Message can complete the interaction.
+Progress and negotiation are never a successful workflow task merely because they have text.
+
+
+
+### NegotiationRequest / NegotiationReply
+
+See [BUSINESS_CALLBACKS](BUSINESS_CALLBACKS.md).
 
 ### SendMessageResult
 
-| Field       | Type     | Description                                    |
-|-------------|----------|------------------------------------------------|
-| `text`      | `String` | Extracted response text                        |
-| `task`      | `Task`   | SDK Task object                                |
-| `metadata`  | `Map`    | Response metadata (merged task + artifact)     |
-| `taskState` | `String` | Final task state (e.g. `TASK_STATE_COMPLETED`) |
+getReceivedMessages() preserves response levels; getOutputs() is a convenience projection. getTask()/getTaskState() retain actual remote state; failureCode/failureMessage describe independent local interaction failure. text and flattened metadata are transport diagnostics, not substitutes for the complete business response.
 
 ### ExecutionResult
 
@@ -579,16 +512,12 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 | Extension       | URI                                                                                       |
 |-----------------|-------------------------------------------------------------------------------------------|
 | Task-T          | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1`          |
-| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T`      |
+| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1`  |
 | Authorization-T | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1` |
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
 
-> **Note:** `DATA-NEGOTIATION-T/v1` is **not** an A2A-T extension. It is an
-> SDK-internal metadata key used by the A2A-T SDK negotiation module to carry
-> structured context (`negotiationType`, `round`, `negotiationId`,
-> `status`) alongside the Negotiation-T text. It is not declared on
-> AgentCard, not handled by ExtensionHandler, and not advertised in the
-> `A2A-Extensions` header.
+Canonical negotiation metadata is `templateUri` plus
+`negotiationContext={id,round,maxRounds,performative}`. Legacy state-machine keys are not accepted.
 
 ---
 
@@ -600,10 +529,11 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 
 ## Error Handling
 
-- Agent call failures throw `RuntimeException` wrapping the cause.
-- Negotiation failures fall through after `maxNegotiationRounds`.
-- Auth failures (401) are logged as `ERROR` and auth headers are not set; the request proceeds without auth.
-- SSE stream errors after terminal events are logged at `DEBUG` level (expected behavior).
+- Missing/null/exceptional/timed-out callbacks fail explicitly. Host SDK errors may be mapped to BusinessFailure with safe code/details.
+- Exhausted maxNegotiationExchanges or local Stop does not generate Abort. Business Send(Abort) is never diagnosis success.
+- Remote state/errors stay separate from outputs; failed status text is evidence, while partial artifacts remain available.
+- Missing required credentials reject the request; the engine never silently sends unauthenticated.
+- Stream-exit/transport-error observations do not independently define workflow outcome; inspect ExecutionResult and remote task state.
 
 ---
 

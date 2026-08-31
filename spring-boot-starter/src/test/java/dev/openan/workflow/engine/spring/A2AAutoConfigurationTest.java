@@ -17,11 +17,55 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 
 class A2AAutoConfigurationTest {
+
+    @Test
+    void everyTaskRouteUsesConfiguredA2aPathPrefix() throws Exception {
+        String placeholder = "${a2at.server.path-prefix}";
+
+        assertEquals(
+                placeholder + "/tasks/{id}",
+                A2AController.class
+                        .getMethod(
+                                "getTask",
+                                jakarta.servlet.http.HttpServletRequest.class,
+                                String.class)
+                        .getAnnotation(GetMapping.class)
+                        .value()[0]);
+        assertEquals(
+                placeholder + "/tasks/{id}:cancel",
+                A2AController.class
+                        .getMethod(
+                                "cancelTask",
+                                jakarta.servlet.http.HttpServletRequest.class,
+                                String.class,
+                                String.class)
+                        .getAnnotation(PostMapping.class)
+                        .value()[0]);
+        var subscribeMethod =
+                A2AController.class.getMethod(
+                        "subscribeToTask",
+                        jakarta.servlet.http.HttpServletRequest.class,
+                        String.class);
+        assertEquals(
+                placeholder + "/tasks/{id}:subscribe",
+                subscribeMethod.getAnnotation(PostMapping.class).value()[0]);
+        assertEquals(SseEmitter.class, subscribeMethod.getReturnType());
+
+        var streamMethod =
+                A2AController.class.getMethod(
+                        "streamMessage",
+                        jakarta.servlet.http.HttpServletRequest.class,
+                        String.class);
+        assertEquals(SseEmitter.class, streamMethod.getReturnType());
+    }
 
     @Test
     void blockingTimeoutsComeFromProperties() {

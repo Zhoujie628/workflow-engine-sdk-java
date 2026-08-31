@@ -19,15 +19,17 @@
 
 package dev.openan.workflow.engine.control;
 
-import java.util.Map;
+import dev.openan.workflow.engine.model.NegotiationReply;
+import dev.openan.workflow.engine.model.NegotiationRequest;
+
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Strategy for generating negotiation clarifications.
+ * Strategy for making typed negotiation decisions.
  *
  * <p>Single responsibility: when an agent returns INPUT_REQUIRED (Negotiation-T), produce the
- * clarification text to send back. This is a <b>separate concern</b> from workflow orchestration
- * (task dispatch, routing). Users who need custom negotiation logic (LLM-based clarification,
+ * typed decision to send back. This is a <b>separate concern</b> from workflow orchestration
+ * (task dispatch, routing). Users who need custom negotiation logic (LLM-based decisions,
  * DAG-predecessor forwarding, etc.) implement this interface and inject it into {@link
  * DefaultControlPoint} rather than mixing negotiation policy into their ControlPoint class.
  *
@@ -38,13 +40,10 @@ import java.util.concurrent.CompletableFuture;
 public interface NegotiationStrategy {
 
     /**
-     * Generate a clarification for the given negotiation request.
+     * Make a business decision for the given negotiation request.
      *
-     * @param agentName the agent requesting negotiation
-     * @param negotiationText the concern/question raised by the agent
-     * @param receiveResult the raw negotiation context (may be null/empty)
-     * @return future completing with the clarification text
+     * @param request typed business view of the received negotiation request
+     * @return future completing with final content to send, or a local stop
      */
-    CompletableFuture<String> resolve(
-            String agentName, String negotiationText, Map<String, Object> receiveResult);
+    CompletableFuture<NegotiationReply> resolve(NegotiationRequest request);
 }

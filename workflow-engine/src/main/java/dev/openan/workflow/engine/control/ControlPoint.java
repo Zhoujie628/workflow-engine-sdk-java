@@ -19,68 +19,93 @@
 
 package dev.openan.workflow.engine.control;
 
-import dev.openan.workflow.engine.core.WorkflowExecutor;
-import dev.openan.workflow.engine.model.JumpCondition;
-import dev.openan.workflow.engine.model.RouteDecision;
-import dev.openan.workflow.engine.model.TaskRequest;
-import dev.openan.workflow.engine.model.TaskResponse;
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
-
-import java.util.List;
-import java.util.Map;
+import dev.openan.workflow.engine.model.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
-/**
- * Workflow-control decision interface.
- *
- * <p>Each method drives the workflow forward and is called by the {@link
- * WorkflowExecutor} (onTask / onSelfTask / onRoute) or the client
- * auto-negotiate loop (onNegotiation). ControlPoint methods make business decisions; the SDK owns
- * all A2A-T protocol mechanics.
- */
+/** Business-only callbacks. Implementations must support concurrent calls from different tasks. */
 public interface ControlPoint {
-
-    /**
-     * Send a task to an agent. Call {@code engineClient.sendMessage(...)}.
-     *
-     * <p>The SDK handles Task-T prompt generation, the Negotiation-T auto-loop (calling {@link
-     * #onNegotiation} on INPUT_REQUIRED), auth, and extension header injection. Just send the
-     * message.
-     */
-    CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
-
-    /**
-     * Handle a self-loop task locally. Called when a workflow step is marked SELF_LOOP: the agent
-     * executing the workflow processes the task itself, WITHOUT sending an A2A-T message to itself.
-     * Only steps that dispatch to OTHER agents go through {@link #onTask} and the A2A-T protocol.
-     *
-     * <p>No {@code engineClient} is passed on purpose: self-loop tasks must not send A2A-T
-     * messages. Implement this to handle local aggregation, merge, or any business logic the
-     * workflow-executing agent owns.
-     *
-     * <p>Default: echoes the task message back as the output.
-     */
-    default CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
-        return CompletableFuture.completedFuture(
-                TaskResponse.builder().success(true).output(request.getMessage()).build());
+    /** Prepares content; the engine sends after completion. No transport is exposed. */
+    default CompletableFuture<MessageContent> onTask(
+            TaskRequest request) {
+        return CompletableFuture.failedFuture(
+                new IllegalStateException("onTask handler is required for " + request.getStepName()));
     }
 
-    /**
-     * Branch decision at a conditional step. Return the next step to take. Only decide which
-     * branch; do not send messages here.
-     */
-    CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results, List<JumpCondition> conditions);
+    /** Runs a local task. Missing implementation is an error, never an echo-success. */
+    default CompletableFuture<TaskResult> onSelfTask(TaskRequest request) {
+        return CompletableFuture.failedFuture(
+                new IllegalStateException(
+                        "onSelfTask handler is required for " + request.getStepName()));
+    }
 
-    /**
-     * Provide supplementary data when an agent returns INPUT_REQUIRED (Negotiation-T). Return the
-     * clarification text - the SDK internally resends the follow-up message. Do NOT send messages
-     * here. Default: returns a generic clarification.
-     */
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
-        return CompletableFuture.completedFuture(
-                "Please proceed with the original task using available information.");
+    /** Selects a permitted branch. Unconditional edges bypass this callback. */
+    default CompletableFuture<RouteDecision> onRoute(RouteRequest request) {
+        return CompletableFuture.failedFuture(
+                new IllegalStateException("onRoute handler is required for " + request.stepName()));
+    }
+
+    /** Answers the proposal. Missing handlers never implicitly consent. */
+    default CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
+        return CompletableFuture.failedFuture(
+                new IllegalStateException("onNegotiation handler is required"));
+    }
+
+    /** Registers only the capabilities the host needs. */
+    static Builder builder() {
+        return new Builder();
+    }
+
+    /** Independent registration; omitted callbacks retain the documented defaults. */
+    final class Builder {
+        private Function<TaskRequest, CompletableFuture<MessageContent>> task;
+        private Function<TaskRequest, CompletableFuture<TaskResult>> self;
+        private Function<RouteRequest, CompletableFuture<RouteDecision>> route;
+        private Function<NegotiationRequest, CompletableFuture<NegotiationReply>> negotiation;
+
+        public Builder onTask(Function<TaskRequest, CompletableFuture<MessageContent>> handler) {
+            task = handler;
+            return this;
+        }
+
+        public Builder onSelfTask(Function<TaskRequest, CompletableFuture<TaskResult>> handler) {
+            self = handler;
+            return this;
+        }
+
+        public Builder onRoute(Function<RouteRequest, CompletableFuture<RouteDecision>> handler) {
+            route = handler;
+            return this;
+        }
+
+        public Builder onNegotiation(
+                Function<NegotiationRequest, CompletableFuture<NegotiationReply>> handler) {
+            negotiation = handler;
+            return this;
+        }
+
+        public ControlPoint build() {
+            var t = task;
+            var s = self;
+            var r = route;
+            var n = negotiation;
+            return new ControlPoint() {
+                public CompletableFuture<MessageContent> onTask(TaskRequest q) {
+                    return t == null ? ControlPoint.super.onTask(q) : t.apply(q);
+                }
+
+                public CompletableFuture<TaskResult> onSelfTask(TaskRequest q) {
+                    return s == null ? ControlPoint.super.onSelfTask(q) : s.apply(q);
+                }
+
+                public CompletableFuture<RouteDecision> onRoute(RouteRequest q) {
+                    return r == null ? ControlPoint.super.onRoute(q) : r.apply(q);
+                }
+
+                public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest q) {
+                    return n == null ? ControlPoint.super.onNegotiation(q) : n.apply(q);
+                }
+            };
+        }
     }
 }

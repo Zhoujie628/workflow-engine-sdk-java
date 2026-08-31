@@ -5,8 +5,8 @@
 The A2A-T Workflow Execution Engine is a Java SDK for orchestrating multi-agent workflows using the A2A protocol with
 A2A-T telecom extensions.
 
-The engine handles all protocol mechanics automatically (message transport, SSE streaming, Task-T prompt generation,
-Negotiation-T auto-loop, authentication, TLS). You focus on business decisions only.
+The engine schedules A2A tasks, envelopes final content, manages authentication/transport and waits for results.
+Host callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
 
 ## 2. Prerequisites
 
@@ -88,71 +88,33 @@ List<Map<String, Object>> cards = registry.fetchAgentCards();
 
 ### 4.3 Implement ControlPoint
 
-Extend `DefaultControlPoint` and override the methods you need:
-
 ```java
-public class MyControlPoint extends DefaultControlPoint {
-    @Override
-    public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
-        return engineClient.sendMessage(
-                        request.getAgentName(), request.getMessage())
-                .thenApply(r -> {
-                    String state = r.getTaskState();
-                    boolean success = state == null || state.isBlank()
-                            ? r.getText() != null && !r.getText().isBlank()
-                            : state.endsWith("COMPLETED");
-                    return TaskResponse.builder()
-                            .success(success)
-                            .output(r.getText())
-                            .build();
-                });
-    }
-
-    @Override
-    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
-        // SELF_LOOP step: handled locally, no engineClient, no A2A-T message.
-        // request.getMessage() already carries upstream step results as context.
-        String summary = summarizeLocally(request.getMessage());
-        return CompletableFuture.completedFuture(
-                TaskResponse.builder().success(true).output(summary).build());
-    }
-
-    @Override
-    public CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results,
-            List<JumpCondition> conditions) {
-        return CompletableFuture.completedFuture(
-                RouteDecision.builder()
-                        .nextStep(conditions.get(0).getStep())
-                        .build());
-    }
-
-    @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult) {
-        return CompletableFuture.completedFuture(
-                "Please proceed with available information.");
-    }
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```
 
-| Method            | When Called                               | What You Do                                      |
-|-------------------|-------------------------------------------|--------------------------------------------------|
-| `onTask`          | A step dispatches a task to another agent | Call `engineClient.sendMessage()`, return result |
-| `onSelfTask`      | A `SELF_LOOP` step runs locally           | Handle locally, return result (no A2A-T message) |
-| `onRoute`         | After step completes, before next step    | Pick the next step from candidates               |
-| `onNegotiation`   | Agent returns `INPUT_REQUIRED`            | Return clarification text                        |
+onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
+onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
+Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
-`onNegotiation` defaults to a generic clarification. Override only what you need.
-
-**Pre-positioning (Authorization-T / Notification-T)**: Both are established through `ExtensionSender` before a workflow starts, but they have different lifecycles. Authorization-T is a one-shot request that ends after its response. Notification-T is a long-lived subscription on a transport independent of any single workflow; its first event or acknowledgement is returned as `SendMessageResult`, and later events are delivered to the callback until that subscription transport is explicitly closed.
-
-**Self-loop steps (SelfLoop)**: When a step is the workflow-executing agent's own task (e.g. merging multiple agents'
-diagnostic results), set `stepType` to `SELF_LOOP`. The engine calls `onSelfTask` locally instead of sending an A2A-T
-message to the agent itself. `onSelfTask` takes no `engineClient` parameter — this enforces at the API level that
-self-loop tasks never send A2A-T. Only steps targeting other agents go through `onTask` + A2A-T.
+```java
+ControlPoint callbacks = ControlPoint.builder()
+    .onTask(request -> CompletableFuture.completedFuture(
+        MessageContent.text(request.getInstruction())))
+    .onSelfTask(request -> CompletableFuture.completedFuture(
+        TaskResult.success(List.of(Map.of(
+            "sourceResults", request.getWorkflowInput().upstreamResults())))))
+    .onRoute(request -> CompletableFuture.failedFuture(
+        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onNegotiation(request -> CompletableFuture.completedFuture(
+        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+    .build();
+```
 
 ### 4.4 Execute
 
@@ -163,7 +125,6 @@ ExecutionResult result = ExecutePsop.builder()
         .controlPoint(new MyControlPoint())
         .runtimeIntent("SPN cross-city fault diagnosis")
         .lang("zh")
-        .a2atEnvPath(".env")
         .credentialsConfigPath("credentials.json")
         .sslVerify(true)
         .onFinish((r, history) -> {
@@ -179,21 +140,13 @@ Required: `psop`, `controlPoint`. All other config items have defaults.
 
 ### 5.1 .env File
 
-Configures the LLM and prompt runtime:
-
-```ini
-A2AT_LANGUAGE=zh-CN
-A2AT_LLM_PROVIDER=openai
-A2AT_LLM_MODEL=deepseek-v4-flash
-A2AT_LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
-A2AT_LLM_BASE_URL=https://api.deepseek.com
-A2AT_LLM_MAX_TOKENS=2000
-A2AT_LLM_TEMPERATURE=0
-A2AT_LLM_TIMEOUT_SECONDS=60
-A2AT_CRED_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-```
-
-When `.env` is not configured, Task-T prompt generation is unavailable. All other features work normally.
+The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T,
+initialize A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL
+and A2AT_LANGUAGE. The sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option.
+Do not put OMC credential decryption ownership in LLM configuration: pass the secret explicitly through
+WorkflowEngineClientConfig.builder().credentialEncryptionKey(key) when using encrypted built-in credentials,
+then pass that configured engineClient to ExecutePsop. Custom AuthProvider owns its own token/configuration.
+Tests use the current SDK SPI with an offline provider, not template overrides or production fallbacks.
 
 ### 5.2 Credentials File
 
@@ -304,7 +257,6 @@ public class SsoAuthProvider implements AuthProvider {
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .authProvider(new SsoAuthProvider(mySsoClient))
         .sslVerify(true)
-        .a2atEnvPath(".env")
         .build();
 ```
 
@@ -353,7 +305,7 @@ AgentCards declare extensions via `capabilities.extensions`:
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
         "description": "Negotiation text exchange",
         "required": false
       },
@@ -398,68 +350,28 @@ Both `securitySchemes` and `securityRequirements` are optional. The former lists
 
 ## 7. A2A-T Extensions
 
-The engine handles four A2A-T extensions automatically. You do not need to deal with protocol details:
+Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`.
+Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly.
+The host validates/interprets the proposal and generates the final Accept/Reject/Abort with its own A2A-T client.
+Use `A2atMessages.contextOf(request.received())` to obtain the received context;
+reply with the same id, round and maxRounds. The last allowed round can still be answered.
+Do not call nextRound for an ending reply or return a new Propose.
 
-### Task-T (automatic)
-
-When sending a message to an agent, the engine generates a structured task prompt and places it in the message metadata.
-In `onTask`, you just call
-`sendMessage()` -- prompt generation is transparent.
-
-### Negotiation-T (automatic)
-
-When an agent returns `INPUT_REQUIRED`, the engine extracts the negotiation text, calls your `onNegotiation()` for a
-clarification, and sends it back. Auto-loops up to `maxNegotiationRounds` (default 3).
-
-### Authorization-T (pre-positioning)
-
-Before the workflow starts, send a whitelist authorization strategy to SPN agents. Pre-positioning uses the
-`ExtensionSender` facade over the same transport, not the workflow client:
+Return `new NegotiationReply.Send(content)` to send that exact content.
+Return `new NegotiationReply.Stop(code, reason)` to stop locally without a generated Abort.
+Repeated task/session/round events do not repeat the callback or submission. Unchanged waiting state is observed with getTask.
+`maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds.
+Timeout, exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort.
+Accept/Reject ACKs in SUBMITTED/WORKING remain pending and are observed without resending the command.
+A business-sent Abort is never diagnosis success, even if the remote acknowledges it with COMPLETED.
 
 ```java
-ExtensionSender sender = new DefaultExtensionSender(transport);
-sender.sendAuthorization(
-    "SPN Domain Agent",
-    "Authorization-T pre-positioning",
-    "Task type: new authorization, operation: service recovery, ..."
-);
+CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+NotificationSubscription openNotification(String agentName, MessageContent content,
+    BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-`A2ATExtension.AUTHORIZATION_T` is used internally; never hardcode the URI. The SPN agent stores the strategy and
-compares subsequent operations against the whitelist. Operations within the whitelist are executed; others are rejected.
-
-### Notification-T (pre-positioning)
-
-Before the workflow starts, subscribe to recovery result notifications:
-
-```java
-sender.sendNotification(
-    "SPN Domain Agent",
-            "Notification-T subscription",
-            "Topic: service-recovery-execution-result, ..."
-);
-```
-
-`A2ATExtension.NOTIFICATION_T` opens a long-lived SSE stream. To receive subsequent recovery results, pass a
-`Consumer<Map<String, Object>>` callback as the fourth parameter:
-
-```java
-sender.sendNotification(
-    "SPN Domain Agent",
-            "Notification-T subscription",
-            "Topic: service-recovery-execution-result, ...",
-    event -> {
-        // event contains agent, text, metadata, state
-        Object text = event.get("text");
-        if (text != null) {
-            System.out.println("Recovery result: " + text);
-        }
-    }
-);
-```
-
-Without a callback (null), subsequent events are dropped. The SPN agent reports recovery results through the
-notification channel.
+The host generates final Authorization-T/Notification-T content and calls these methods on separate transport/runtime/context instances. The listener receives handle and complete ReceivedMessage and closes on the business recovery event. acknowledgement() and completion() separately represent ACK and actual stream exit, never workflow prerequisites.
 
 ## 8. HTTPS Configuration
 
@@ -485,24 +397,55 @@ so mTLS and `crlPath` cannot be combined with that mode and fail fast instead of
 
 ## 9. Logging
 
-The dedicated `PROTOCOL` logger emits protocol requests and responses. Bodies are enabled by default and truncated to a configurable size. Sensitive headers such as Authorization, cookies, API keys, tokens, and secrets are redacted by default. Configure the logger in `log4j2.properties`:
+The `PROTOCOL` logger at DEBUG records observations at the actual transport boundary.
+HTTP/JSON-RPC logs preserve the serialized body and application headers after A2A SDK processing,
+including A2A-Version when actually present. gRPC records actual metadata and a protobuf JSON view;
+that view is not an HTTP JSON body. The engine never adds a missing header just to make logs look uniform.
+Automatic network headers, HTTP/2 frames, TLS records and server-side bytes are not captured.
+
+On dev, `ORDER_FORWARD_REQUEST` records the vendor SDK input and `ORDER_SDK_RESPONSE` records
+the status, multi-value headers and text delivered by the SDK. `sdk-sse-text` assembles available SSE
+framing from SDK string chunks; original byte encoding and the platform-to-OMC wire remain unobserved.
+It is not OMC packet-capture evidence. `MODEL_PREVIEW` is optional, disabled by default, and never wire proof.
 
 ```properties
-logger.PROTOCOL.name=PROTOCOL
-logger.PROTOCOL.level=info
-logger.PROTOCOL.additivity=false
-logger.PROTOCOL.appenderRef=console
-```
-
-Control the content with environment variables or same-named JVM system properties:
-
-```properties
+logger.protocol.name=PROTOCOL
+logger.protocol.level=DEBUG
+logger.protocol.additivity=true
 WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
 WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
-WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS=false
 ```
 
-Enable sensitive headers only for isolated, controlled local diagnostics; the engine emits a security warning when this opt-in is active.
+Body observation defaults to enabled when DEBUG is enabled; disable it explicitly for sensitive deployments.
+JVM properties take precedence over same-named environment variables.
+Header credentials/cookies/tokens and recognized secret body fields are always redacted; this cannot be disabled.
+This is field-based redaction, not a classifier for all personal/business-sensitive content.
+Bodies are bounded (raw collectors use the configured numeric limit as bytes; emitted text uses characters).
+Oversized SSE frames are dropped whole until the next delimiter and marked `dropped-capacity`;
+disabled, truncated and interrupted observations are labeled. UTF-8 is decoded after assembling chunks.
+Observers cannot fail delivery. File references are recorded as references and are never downloaded for logging.
+requestId correlates each call; workflow calls additionally carry executionId/logicalTaskId/attempt,
+agent/contextId/channel and remoteTaskId when known. These are local log fields, not wire metadata.
+
+### Inspect negotiation in the local Demo
+
+Running the local SpringSpnDemo without VM options now negotiates missing City1 input; City2 diagnoses directly.
+This is a local sample scenario, not an engine default. To use complete inputs in both cities, add this IDEA **VM option**:
+
+```text
+-Da2at.samples.negotiation=false
+```
+
+By default only City1 loses its Task-T task object. Add `-Da2at.samples.negotiation.city=city2` or `both`
+to exercise City2 or both cities. The host retains city-scoped authoritative input and the complaint context is preserved.
+Expect DEMO_NEGOTIATION → INPUT_REQUIRED/PROPOSE → onNegotiation → ACCEPT → both diagnoses → one aggregate.
+External-OMC mode defaults to no injection and rejects an explicit true switch.
+The Demo passes its setting into the current Spring application context without modifying JVM-wide properties.
+Protocol observations are in the console and `logs/spn-demo.log` relative to the run directory.
+
+Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially.
+Each tests the no-VM-option single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM provider.
+This is local protocol E2E evidence, not real model/platform/OMC validation.
 
 ## 10. Event Callback
 
@@ -546,41 +489,7 @@ Workflow workflow = LoadPsop.load(
 
 ## 12. Custom Extensions
 
-To add a new A2A-T extension, implement `ExtensionHandler`:
-
-```java
-public class MyExtensionHandler implements ExtensionHandler {
-    @Override
-    public String extensionKeyword() {
-        return "My-Extension";
-    }
-
-    @Override
-    public CompletableFuture<Map<String, Object>> beforeSend(
-            AgentCard agentCard, String messageText,
-            Map<String, Object> metadata,
-            A2ATClient a2atClient, ControlPoint controlPoint) {
-        metadata.put("https://example.com/extensions/My-Extension/v1", "value");
-        return CompletableFuture.completedFuture(metadata);
-    }
-
-    @Override
-    public CompletableFuture<SendMessageResult> afterReceive(
-            AgentCard agentCard, SendMessageResult result,
-            A2ATClient a2atClient, ControlPoint controlPoint,
-            EventCallback eventCallback) {
-        return CompletableFuture.completedFuture(result);
-    }
-}
-```
-
-Register via config:
-
-```java
-WorkflowEngineClientConfig.builder()
-    .customHandlers(List.of(new MyExtensionHandler()))
-    .build();
-```
+Construct final MessageContent(parts, metadata, extensions), with host-owned content generation/validation. No engine handler or SDK instance registration. A2atMessages.from copies A2A-T metadata; other extensions can directly supply metadata and activation URIs. AgentCard declarations never cause implicit generation.
 
 ## 13. Interface Reference
 
@@ -589,13 +498,12 @@ WorkflowEngineClientConfig.builder()
 | `ExecutePsop.Builder`                                  | Workflow execution entry point                                        |
 | `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.) |
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                         |
-| `ExtensionSender` / `DefaultExtensionSender`           | One-shot pre-positioning (sendAuthorization, sendNotification)        |
-| `A2ATransport`                                         | Shared wire layer (httpx runtime, auth, SSE consumer)                 |
+| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)       |
 | `WorkflowEngineClientConfig`                           | Configuration (SSL, auth, A2A-T, negotiation rounds, custom handlers) |
 | `AuthProvider`                                         | Custom authentication                                                 |
-| `ExtensionHandler`                                     | Custom extension handler                                              |
 | `EventCallback` / `EventType`                          | Event callback                                                        |
 | `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                 |
 | `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                   |
 | `ExecutionResult`                                      | Execution result                                                      |
-| `SendMessageResult` / `TaskResponse`                   | Message/task response                                                 |
+| `SendMessageResult` / `TaskResult`                   | Message/task response                                                 |

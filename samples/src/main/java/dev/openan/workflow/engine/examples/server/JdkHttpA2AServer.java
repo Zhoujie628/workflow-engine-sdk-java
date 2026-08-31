@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.LinkedHashMap;
@@ -356,14 +357,15 @@ public class JdkHttpA2AServer implements AutoCloseable {
                 new MainEventBusProcessor(mainEventBus, taskStore, pushSender, queueManager);
         startEventBus(eventBusProc);
         RequestHandler requestHandler =
-                DefaultRequestHandler.create(
-                        agentExecutor,
-                        taskStore,
-                        queueManager,
-                        pushStore,
-                        eventBusProc,
-                        agentExecutorService,
-                        agentExecutorService);
+                DefaultRequestHandler.builder()
+                        .agentExecutor(agentExecutor)
+                        .taskStore(taskStore)
+                        .queueManager(queueManager)
+                        .pushConfigStore(pushStore)
+                        .mainEventBusProcessor(eventBusProc)
+                        .executor(agentExecutorService)
+                        .eventConsumerExecutor(agentExecutorService)
+                        .build();
         return new RestHandler(
                 typedCard,
                 new AgentCardCacheMetadata(typedCard, null),
@@ -372,7 +374,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
     }
 
     private void handleExchange(HttpExchange exchange, RestHandler restHandler) throws IOException {
-        String fullPath = exchange.getRequestURI().getPath();
+        String fullPath = exchange.getRequestURI().getRawPath();
         String method = exchange.getRequestMethod();
         String path =
                 pathPrefix.isEmpty() || !fullPath.startsWith(pathPrefix)
@@ -397,13 +399,60 @@ public class JdkHttpA2AServer implements AutoCloseable {
                 handleStream(exchange, restHandler, readBody(exchange));
                 return;
             }
+            // Task routes (?? A2A: ??/??/??)
+            String taskId = taskIdFromPath(path, null);
+            if ("GET".equalsIgnoreCase(method) && taskId != null) {
+                var resp = restHandler.getTask(buildCallContext(exchange), "", taskId, null);
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+                return;
+            }
+            taskId = taskIdFromPath(path, ":cancel");
+            if ("POST".equalsIgnoreCase(method) && taskId != null) {
+                var resp = restHandler.cancelTask(buildCallContext(exchange), "", readBody(exchange), taskId);
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+                return;
+            }
+            taskId = taskIdFromPath(path, ":subscribe");
+            if ("POST".equalsIgnoreCase(method) && taskId != null) {
+                handleSubscribe(exchange, restHandler, taskId);
+                return;
+            }
             exchange.sendResponseHeaders(404, -1);
+        } catch (IllegalArgumentException e) {
+            sendJson(exchange, 400, Map.of("error", Map.of("code", 400, "message", e.getMessage())));
         } catch (Exception e) {
             log.error("[{}] Handler error: {}", agentName, e.getMessage(), e);
             sendJson(
                     exchange, 500, Map.of("error", Map.of("code", 500, "message", e.getMessage())));
         } finally {
             exchange.close();
+        }
+    }
+
+    /** Parses exactly one encoded task-id path segment and rejects ambiguous task routes. */
+    static String taskIdFromPath(String path, String operationSuffix) {
+        String prefix = "/tasks/";
+        if (path == null || !path.startsWith(prefix)) {
+            return null;
+        }
+        String encoded = path.substring(prefix.length());
+        if (operationSuffix != null) {
+            if (!encoded.endsWith(operationSuffix)) {
+                return null;
+            }
+            encoded = encoded.substring(0, encoded.length() - operationSuffix.length());
+        } else if (encoded.contains(":")) {
+            return null;
+        }
+        if (encoded.isEmpty() || encoded.contains("/")) {
+            return null;
+        }
+        try {
+            // URLDecoder follows form semantics where '+' means space. In a URI path segment an
+            // unescaped '+' is literal, so protect it before decoding percent escapes.
+            return URLDecoder.decode(encoded.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid encoded task id", e);
         }
     }
 
@@ -440,6 +489,44 @@ public class JdkHttpA2AServer implements AutoCloseable {
     }
 
     @SuppressWarnings("unchecked")
+    private void handleSubscribe(HttpExchange exchange, RestHandler restHandler, String taskId)
+            throws IOException {
+        try {
+            var resp = restHandler.subscribeToTask(buildCallContext(exchange), "", taskId);
+            if (resp instanceof RestHandler.HTTPRestStreamingResponse streaming) {
+                exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, 0);
+                AtomicLong seq = new AtomicLong(0);
+                CountDownLatch done = new CountDownLatch(1);
+                OutputStream os = exchange.getResponseBody();
+                streaming.getPublisher().subscribe(new Flow.Subscriber<String>() {
+                    private Flow.Subscription sub;
+                    public void onSubscribe(Flow.Subscription s) { sub = s; s.request(1); }
+                    public void onNext(String item) {
+                        try {
+                            String sse = String.format(Locale.ROOT, "id:%d%n", seq.incrementAndGet())
+                                    + "data:" + item + "\n\n";
+                            os.write(sse.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                            sub.request(1);
+                        } catch (IOException e) {
+                            sub.cancel(); done.countDown();
+                        }
+                    }
+                    public void onError(Throwable t) { done.countDown(); }
+                    public void onComplete() { done.countDown(); }
+                });
+                try { done.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                finally { os.close(); }
+            } else {
+                sendJson(exchange, resp.getStatusCode(), resp.getBody());
+            }
+        } catch (A2AError e) {
+            sendJson(exchange, 500, Map.of("error", e.getMessage()));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     private void handleStream(HttpExchange exchange, RestHandler restHandler, String requestBody)
             throws IOException {
         try {
@@ -447,7 +534,6 @@ public class JdkHttpA2AServer implements AutoCloseable {
             SendMessageRequest.Builder builder = SendMessageRequest.newBuilder();
             JsonFormat.parser().merge(requestBody, builder);
             var request = ProtoUtils.FromProto.messageSendParams(builder.build());
-            inner.validateRequestedTask(request.message().taskId());
             Flow.Publisher<StreamingEventKind> publisher =
                     inner.onMessageSendStream(request, buildCallContext(exchange));
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");

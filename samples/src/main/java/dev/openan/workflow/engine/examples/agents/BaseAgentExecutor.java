@@ -45,7 +45,7 @@ public abstract class BaseAgentExecutor implements AgentExecutor {
         return sb.toString();
     }
 
-    protected static Message buildStatusMessage(String contextId, String taskId, String text) {
+    public static Message buildStatusMessage(String contextId, String taskId, String text) {
         return Message.builder()
                 .messageId(UUID.randomUUID().toString())
                 .contextId(contextId)

@@ -22,6 +22,11 @@ package dev.openan.workflow.engine.client;
 import io.grpc.ManagedChannelBuilder;
 
 import org.a2aproject.sdk.client.Client;
+import dev.openan.workflow.engine.model.SendMessageResult;
+import org.a2aproject.sdk.spec.TaskQueryParams;
+import org.a2aproject.sdk.spec.TaskIdParams;
+import org.a2aproject.sdk.spec.Task;
+import org.a2aproject.sdk.spec.CancelTaskParams;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.MessageEvent;
 import org.a2aproject.sdk.client.TaskEvent;
@@ -73,7 +78,8 @@ import java.util.function.Consumer;
  * for clients created by this runtime. Hostname verification remains enabled and no JVM-wide TLS
  * property is changed.
  */
-public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
+public class DefaultA2AJavaClientRuntime
+        implements A2AJavaClientRuntime, ConversationScopedA2AJavaClientRuntime {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultA2AJavaClientRuntime.class);
 
@@ -87,6 +93,8 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
     private final String preferredProtocol;
     private final java.util.concurrent.ExecutorService httpClientExecutor;
     private final Map<ClientCacheKey, Client> clientCache = new ConcurrentHashMap<>();
+    /** Notification-T streams need a client that can be closed without disrupting task traffic. */
+    private final Map<StreamClientKey, Client> streamClients = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     /**
@@ -315,7 +323,12 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
             Consumer<String> logSink) {
         if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
         String agentUrl = extractAgentUrl(agentCard);
-        Client client = getOrCreateClient(agentCard, agentUrl);
+        Client client =
+                isNotificationStream(params)
+                        ? getOrCreateStreamClient(
+                                agentCard,
+                                params.message() != null ? params.message().contextId() : null)
+                        : getOrCreateClient(agentCard, agentUrl);
         List<ClientEvent> events = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
@@ -394,6 +407,57 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                 });
     }
 
+    private Client getOrCreateStreamClient(AgentCard agentCard, String contextId) {
+        if (contextId == null || contextId.isBlank()) {
+            throw new IllegalArgumentException("Notification-T contextId must not be blank");
+        }
+        StreamClientKey key = new StreamClientKey(agentCard.name(), contextId);
+        return streamClients.computeIfAbsent(
+                key,
+                ignored -> {
+                    AgentInterface selected = selectInterface(agentCard);
+                    try {
+                        Client client =
+                                buildClientWithTransport(
+                                        agentCard, selected.protocolBinding(), createHttpClient());
+                        log.info(
+                                "[A2ARuntime] Created conversation-scoped Notification-T transport for '{}' (contextId={})",
+                                agentCard.name(),
+                                contextId);
+                        return client;
+                    } catch (A2AClientException e) {
+                        throw new IllegalStateException(
+                                "Failed to create Notification-T client for "
+                                        + agentCard.name()
+                                        + " context "
+                                        + contextId,
+                                e);
+                    }
+                });
+    }
+
+    private static boolean isNotificationStream(
+            org.a2aproject.sdk.spec.MessageSendParams params) {
+        return params.message() != null
+                && params.message().metadata() != null
+                && params.message().metadata().containsKey(A2ATExtension.NOTIFICATION_T.uri());
+    }
+
+    @Override
+    public void closeConversation(AgentCard agentCard, String contextId) {
+        if (agentCard == null || contextId == null || contextId.isBlank()) {
+            return;
+        }
+        Client client = streamClients.remove(new StreamClientKey(agentCard.name(), contextId));
+        if (client != null) {
+            client.close();
+            log.info(
+                    "[A2ARuntime] Closed conversation-scoped Notification-T transport for '{}' (contextId={})",
+                    agentCard.name(),
+                    contextId);
+        }
+    }
+
     /** Select the best AgentInterface based on preferredProtocol or first available. */
     private AgentInterface selectInterface(AgentCard agentCard) {
         List<AgentInterface> interfaces = agentCard.supportedInterfaces();
@@ -466,6 +530,77 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
     }
 
     @Override
+    public Task getTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+        if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        try {
+            return client.getTask(new TaskQueryParams(taskId), callContext);
+        } catch (A2AClientException e) {
+            throw new RuntimeException("A2A getTask failed for " + agentCard.name() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public Task cancelTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
+        if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        try {
+            return client.cancelTask(CancelTaskParams.builder().id(taskId).build(), callContext);
+        } catch (A2AClientException e) {
+            throw new RuntimeException("A2A cancelTask failed for " + agentCard.name() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<SendMessageResult> subscribeToTask(
+            AgentCard agentCard,
+            String taskId,
+            ClientCallContext callContext,
+            java.util.function.Consumer<ClientEvent> eventSink) {
+        if (closed.get()) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("A2A client runtime is closed"));
+        }
+        java.util.concurrent.CompletableFuture<SendMessageResult> future = new java.util.concurrent.CompletableFuture<>();
+        Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+        List<ClientEvent> events = Collections.synchronizedList(new ArrayList<>());
+        try {
+            client.subscribeToTask(
+                    new TaskIdParams(taskId),
+                    List.of((event, card) -> {
+                        events.add(event);
+                        if (eventSink != null) {
+                            try { eventSink.accept(event); } catch (Exception ignored) {}
+                        }
+                        if (isTerminal(event) && !future.isDone()) {
+                            List<ClientEvent> snapshot;
+                            synchronized (events) {
+                                snapshot = List.copyOf(events);
+                            }
+                            future.complete(SendMessageResult.builder()
+                                    .text(A2ATransport.extractResponseText(snapshot))
+                                    .task(A2ATransport.extractResponseTask(snapshot))
+                                    .taskState(A2ATransport.extractResponseTaskState(snapshot))
+                                    .metadata(A2ATransport.extractResponseMetadata(snapshot))
+                                    .receivedMessages(ProtocolResponses.assemble(snapshot))
+                                    .build());
+                        }
+                    }),
+                    error -> future.completeExceptionally(
+                            new RuntimeException(
+                                    "A2A subscribeToTask stream failed for "
+                                            + agentCard.name()
+                                            + ": "
+                                            + error.getMessage(),
+                                    error)),
+                    callContext);
+        } catch (A2AClientException e) {
+            return java.util.concurrent.CompletableFuture.failedFuture(
+                    new RuntimeException("A2A subscribeToTask failed for " + agentCard.name() + ": " + e.getMessage(), e));
+        }
+        return future;
+    }
+
+    @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         clientCache.values().forEach(
@@ -477,9 +612,22 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                     }
                 });
         clientCache.clear();
+        streamClients.values().forEach(
+                client -> {
+                    try {
+                        client.close();
+                    } catch (RuntimeException e) {
+                        log.warn(
+                                "[A2ARuntime] Failed to close Notification-T client: {}",
+                                e.getMessage());
+                    }
+                });
+        streamClients.clear();
         httpClientExecutor.shutdownNow();
         log.info("[A2ARuntime] Closed cached clients and HTTP executor");
     }
+
+    private record StreamClientKey(String agentName, String contextId) {}
 
     /**
      * Create a gRPC channel with SSL settings matching the engine config.
@@ -498,7 +646,7 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                 throw new IllegalArgumentException(
                         "sslVerify=false uses plaintext gRPC and cannot check a CRL");
             }
-            return ManagedChannelBuilder.forTarget(url).usePlaintext().build();
+            return ManagedChannelBuilder.forTarget(url).usePlaintext().intercept(new WireGrpcInterceptor()).build();
         }
         if (crlPath != null && !crlPath.isBlank()) {
             throw new IllegalArgumentException(
@@ -526,7 +674,7 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                             clientKeyPassword);
                 }
             }
-            return io.grpc.Grpc.newChannelBuilder(url, credentials.build()).build();
+            return io.grpc.Grpc.newChannelBuilder(url, credentials.build()).intercept(new WireGrpcInterceptor()).build();
         } catch (java.io.IOException e) {
             throw new IllegalStateException("Failed to configure gRPC TLS", e);
         }
@@ -543,7 +691,7 @@ public class DefaultA2AJavaClientRuntime implements A2AJavaClientRuntime {
                         crlPath,
                         Duration.ofSeconds(60),
                         httpClientExecutor);
-        return new JdkA2AHttpClient(httpClient);
+        return new JdkA2AHttpClient(new ObservedHttpClient(httpClient));
     }
 
     private record ClientCacheKey(

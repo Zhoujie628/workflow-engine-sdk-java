@@ -19,121 +19,25 @@
 
 package dev.openan.workflow.engine.control;
 
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
-
-import dev.openan.workflow.engine.model.JumpCondition;
-import dev.openan.workflow.engine.model.RouteDecision;
-import dev.openan.workflow.engine.model.TaskRequest;
-import dev.openan.workflow.engine.model.TaskResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Map;
+import dev.openan.workflow.engine.model.*;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Default ControlPoint with single-responsibility methods.
- *
- * <p>Negotiation-T auto-loop delegates to an injected {@link NegotiationStrategy} (or returns a
- * generic clarification if none is provided). Override onNegotiation directly when a full strategy
- * object is unnecessary.
- */
+/** Explicit business callbacks, with no implicit local success, branch selection or consent. */
 public class DefaultControlPoint implements ControlPoint {
-    private static final Logger log = LoggerFactory.getLogger(DefaultControlPoint.class);
-
-    private final NegotiationStrategy negotiationStrategy;
+    private final NegotiationStrategy strategy;
 
     public DefaultControlPoint() {
-        this.negotiationStrategy = null;
+        this(null);
     }
 
-    public DefaultControlPoint(NegotiationStrategy negotiationStrategy) {
-        this.negotiationStrategy = negotiationStrategy;
-    }
-
-    @Override
-    public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient) {
-        log.info(
-                "[DefaultCP] onTask: agent={}, step={}",
-                request.getAgentName(),
-                request.getStepName());
-        return engineClient
-                .sendMessage(request.getAgentName(), request.getMessage())
-                .thenApply(
-                        r -> {
-                            boolean success = isSuccessful(r);
-                            log.info(
-                                    "[DefaultCP] Response from {}: {} chars, state={}, success={}",
-                                    request.getAgentName(),
-                                    r.getText() != null ? r.getText().length() : 0,
-                                    r.getTaskState(),
-                                    success);
-                            return TaskResponse.builder()
-                                    .success(success)
-                                    .output(r.getText())
-                                    .build();
-                        })
-                .exceptionally(
-                        e -> {
-                            log.error(
-                                    "[DefaultCP] Task failed for {}: {}",
-                                    request.getAgentName(),
-                                    e.getMessage());
-                            return TaskResponse.builder()
-                                    .success(false)
-                                    .error("Agent call failed: " + e.getMessage())
-                                    .build();
-                });
-    }
-
-    private static boolean isSuccessful(
-            dev.openan.workflow.engine.model.SendMessageResult result) {
-        String state = result.getTaskState();
-        if (state == null || state.isBlank() || state.endsWith("UNSPECIFIED")) {
-            return result.getText() != null && !result.getText().isBlank();
-        }
-        return state.endsWith("COMPLETED");
+    public DefaultControlPoint(NegotiationStrategy strategy) {
+        this.strategy = strategy;
     }
 
     @Override
-    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
-        log.info(
-                "[DefaultCP] onSelfTask: step={}, agent={} (local, no A2A-T)",
-                request.getStepName(),
-                request.getAgentName());
-        return CompletableFuture.completedFuture(
-                TaskResponse.builder().success(true).output(request.getMessage()).build());
-    }
-
-    @Override
-    public CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results, List<JumpCondition> conditions) {
-        String nextStep = conditions.get(0).getStep();
-        for (JumpCondition jc : conditions) {
-            String step = jc.getStep();
-            if (!"end".equals(step) && !"retry".equals(step) && !"endNode".equals(step)) {
-                nextStep = step;
-                break;
-            }
-        }
-        log.info("[DefaultCP] onRoute: {} -> {}", stepName, nextStep);
-        return CompletableFuture.completedFuture(
-                RouteDecision.builder()
-                        .nextStep(nextStep)
-                        .reason("default: first non-terminal branch")
-                        .build());
-    }
-
-    @Override
-    public CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText, Map<String, Object> receiveResult) {
-        if (negotiationStrategy != null) {
-            return negotiationStrategy.resolve(agentName, negotiationText, receiveResult);
-        }
-        log.info("[DefaultCP] onNegotiation: agent={}, concern={}", agentName, negotiationText);
-        return CompletableFuture.completedFuture(
-                "Please proceed with the original task using available information.");
+    public CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request) {
+        return strategy == null
+                ? ControlPoint.super.onNegotiation(request)
+                : strategy.resolve(request);
     }
 }

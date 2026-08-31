@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — business callback boundary
+
+- Use published A2A-T 1.1.0 from Maven Central; remove SDK source checkout/install from CI; move content generation, validation, templates and SDK initialization to the host.
+- onTask returns final MessageContent; onNegotiation returns Send/Stop. Remove engine profiles and content handlers.
+- Preserve complete ReceivedMessage and metadata layers alongside deterministic convenience outputs; keep local nested multi-output values.
+- Deduplicate negotiation rounds, separate resource budgets from protocol rounds, and suppress late sends after timeout/cancellation.
+- Separate authorization/notification lifecycle from workflow outcomes; never synthesize a subscription ACK.
+- Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and bounded SSE.
+- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation remains separate.
+- Refresh bilingual callback, architecture and integration contracts. No older SDK compatibility layer.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
@@ -7,11 +18,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+> Entries below older release headings describe those releases and are not current API contracts.
+
 ### Added
 
 - Client TLS options for custom CA, mTLS client certificate/private key, encrypted PKCS#8 keys, and CRL checking
 - Configurable bounded executors for client sends and Spring Boot server request handling
 - Configurable Notification-T acknowledgement timeout and protocol-log body controls
+- Pinned, unreleased A2A-T SDK revision with real offline SDK end-to-end coverage
+- Explicit `NotificationSubscription` lifecycle/heartbeat handle and stable SDK-event mapper
+- Structured Authorization-T and Notification-T generation, server validation, and whitelist/recovery sample callbacks
+- WAIMO Task-T parsing plus two-city parallel diagnosis and exact-once merged workbench result
 
 ### Changed
 
@@ -24,6 +41,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Workflow execution validates graph targets and cycles up front and waits only for activated predecessors at joins
 - Protocol headers are redacted by default; sensitive values require an explicit diagnostic opt-in
 - Agent clients and transport executors are reused and closed through their owning runtime
+- Task-T, Authorization-T, and Notification-T use independent transport/runtime/context instances
+- Negotiation-T uses the latest stateless content APIs and canonical `negotiationContext`; removed SDK state-machine APIs are not used
+- SDK `.env` paths remain instance-local instead of being copied into JVM-wide system properties
+- Extension subscription and task-control capabilities are explicit interface contracts instead of
+  default methods that fail at runtime
 
 ### Fixed
 
@@ -32,6 +54,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Extension URI matching now uses exact URI path segments instead of substring matching
 - Notification callback implementations can no longer silently discard the supplied callback
 - Header construction is split into isolated auth, credential, and extension contributors with conflict detection
+- Protocol generation/validation failures now fail closed instead of sending raw text under an A2A-T URI
+- Authorization-T rejection stops the independent authorization operation; add/modify/delete/query operations follow the SDK template contract
+- Notification-T failed/canceled/rejected acknowledgements fail the subscription and callback failures cannot prevent cleanup
+- Workflow joins merge all predecessor outputs deterministically and execute exactly once after active predecessors complete
 
 ## [1.0.0] - 2026-07-28
 

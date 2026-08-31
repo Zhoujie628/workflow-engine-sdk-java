@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     name: Build and Test (workflow-engine, spring-boot-starter)
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,11 +39,11 @@ jobs:
             spring-boot-starter/target/surefire-reports/
           retention-days: 7
 
-  samples-compileilation-check:
+  samples-compilation-check:
     runs-on: ubuntu-latest
     name: Samples Compilation Check (optional)
     continue-on-error: true
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,7 +55,5 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Check samples compilation
-        run: |
-          echo "::notice::Samples module depends on Eastcom SDK (not on Maven Central). Skipping compilation check in CI."
-          echo "::notice::Local verification: mvn -pl samples -am compile"
+      - name: Build and test samples
+        run: mvn -B -pl samples -am verify

@@ -29,7 +29,6 @@
 | `controlPoint(ControlPoint)`             | 必填 | -           | 用户决策实现                      |
 | `runtimeIntent(String)`                  | 可选 | `""`        | 自然语言意图，用于上下文组装      |
 | `lang(String)`                           | 可选 | `"zh"`      | 语言提示（`"zh"` 或 `"en"`）      |
-| `a2atEnvPath(String)`                    | 可选 | null        | `.env` 文件路径（A2A-T SDK 配置） |
 | `credentialsConfigPath(String)`          | 可选 | null        | 凭证 JSON 文件路径                |
 | `sslVerify(boolean)`                     | 可选 | `true`      | 是否验证 TLS 证书                 |
 | `caCertsPath(String)`                    | 可选 | null        | CA 证书 PEM 文件路径              |
@@ -44,7 +43,6 @@ ExecutionResult result = ExecutePsop.builder()
         .agentCards(cards)
         .controlPoint(cp)
         .runtimeIntent("诊断故障")
-        .a2atEnvPath(".env")
         .sslVerify(false)
         .execute()
         .get(10, TimeUnit.MINUTES);
@@ -58,98 +56,43 @@ ExecutionResult result = ExecutePsop.builder()
 
 ### WorkflowEngineClient
 
-发送 A2A 消息的核心接口。
-
 ```java
-public interface WorkflowEngineClient {
-    // 发送消息（可选 contextId 和预设 metadata）
-    CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message,
-            String contextId, Map<String, Object> metadata);
-
-    // 便捷方法：无 contextId，无 metadata
-    CompletableFuture<SendMessageResult> sendMessage(
-            String agentName, String message);
-
-    void setControlPoint(ControlPoint controlPoint);
-
-
-    void setEventCallback(EventCallback callback);
-
-    void close();
-}
+CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
+CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
+CompletableFuture<SendMessageResult> subscribeToTask(String agentName, String taskId, Consumer<Map<String,Object>> callback);
+long callbackTimeoutSeconds();
+void setControlPoint(ControlPoint callbacks);
+void setEventCallback(EventCallback callback);
+void close();
 ```
 
-> 前置操作位于 `ExtensionSender`，不在本接口：Authorization-T 是一次性请求，Notification-T 是长连接订阅。见下方 `ExtensionSender` 章节。
+执行器内部调用 dispatch；onTask 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建 A2ATClient，不按 AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 SDK。
 
-#### sendMessage
+只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。
+终态不会重启协商，普通 INPUT_REQUIRED 明确报告不支持的交互。
+宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。
+通过 `A2atMessages.contextOf(request.received())` 取得收到的上下文；
+结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行 nextRound 或返回新 Propose。
 
-| 参数        | 类型                  | 说明                                    |
-|-------------|-----------------------|-----------------------------------------|
-| `agentName` | `String`              | 目标智能体名称（须匹配 AgentCard.name） |
-| `message`   | `String`              | 完整组装后的消息文本                    |
-| `contextId` | `String`              | 可选上下文 ID（null = 自动生成）        |
-| `metadata`  | `Map<String, Object>` | 可选预设 metadata                       |
-
-**返回：** `CompletableFuture<SendMessageResult>`，包含响应文本、Task 对象、metadata、任务状态。
-
-引擎内部在发送前自动处理：
-
-1. Task-T 提示词生成（如果 AgentCard 声明了 Task-T）
-2. Negotiation-T metadata 注入（后续协商消息）
-3. 认证头注入（来自凭证文件或 AuthProvider）
-4. A2A-Extensions 头（仅 metadata 中实际存在的扩展）
-
-接收后自动处理：
-
-1. 从 SSE 事件提取响应文本
-2. 提取 metadata（task 级 + artifact 级合并）
-3. Negotiation-T 自动循环（如果 `INPUT_REQUIRED`）
+返回 `new NegotiationReply.Send(content)` 发送最终内容；
+返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成 Abort。
+同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+`maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。
+超时、预算耗尽、回调缺失均明确失败，不默认 Accept，也不自动生成 Abort。
+Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。
+业务发送 Abort 后，即使远端用 COMPLETED 确认，也不能判为诊断成功。
 
 ### ExtensionSender
 
-基于同一 `A2ATransport` 的前置操作门面。在工作流开始前发送一次性 Authorization-T 请求、建立长连接 Notification-T 订阅，或发送其他一次性扩展。跳过
-Task-T 提示词生成和 Negotiation-T 自动循环；Notification-T 后续事件通过订阅回调交付。
-
 ```java
-public interface ExtensionSender {
-    CompletableFuture<SendMessageResult> sendExtensionMessage(
-            String agentName, String instruction,
-            String naturalLanguageInput, A2ATExtension extension);
-
-    // 便捷方法：Authorization-T
-    CompletableFuture<SendMessageResult> sendAuthorization(
-            String agentName, String instruction, String naturalLanguageInput);
-
-    // 便捷方法：Notification-T（长连接 SSE）
-    CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction, String naturalLanguageInput);
-
-    // 接口契约：Notification-T（长连接 SSE + 事件回调）
-    CompletableFuture<SendMessageResult> sendNotification(
-            String agentName, String instruction,
-            String naturalLanguageInput, Consumer<Map<String, Object>> eventCallback);
-}
+CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+NotificationSubscription openNotification(String agentName, MessageContent content,
+    BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-| 参数                   | 类型            | 说明                                |
-|------------------------|-----------------|-------------------------------------|
-| `agentName`            | `String`        | 目标智能体名称（须匹配 `AgentCard.name`） |
-| `instruction`          | `String`        | 简短指令文本；成为 A2A 消息体的 `parts[].text` |
-| `naturalLanguageInput` | `String`        | 扩展 metadata 的自然语言输入。Task-T 由 A2A-T SDK 生成结构化提示词；Authorization-T / Notification-T 当前直接使用此值 |
-| `extension`            | `A2ATExtension` | 扩展枚举（勿硬编码 URI）            |
-| `eventCallback`        | `Consumer<Map<String, Object>>` | 可选 SSE 事件回调（`sendNotification` 专用）。OMC 后续推送的抢通结果通过此回调实时接收，回调 Map 含 `agent`、`text`、`metadata`、`state`。不传（null）时后续事件被丢弃 |
-
-**报文格式**：发送给智能体的 A2A 消息结构为 `parts[].text = instruction`，`metadata = { "<扩展URI>": "<扩展值>" }`。以 Authorization-T 为例：
-
-```json
-{
-  "parts": [{"text": "授权诊断操作"}],
-  "metadata": {
-    "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1": "<结构化授权策略>"
-  }
-}
-```
+授权和订阅接收宿主生成的最终内容。三类操作使用独立 transport/runtime/context，成功与否不阻断工作流。openNotification 先注册 handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。acknowledgement() 是实际 ACK；超时失败。close() 请求关闭，completion() 在流真正退出后完成。
 
 ### WorkflowEngineClientConfig
 
@@ -170,10 +113,9 @@ public interface ExtensionSender {
 | `sendExecutorQueueCapacity`     | `int`                    | `256`  | 发送线程池有界队列容量                    |
 | `authProvider`                  | `AuthProvider`           | null   | 自定义认证提供器                          |
 | `credentialsConfigPath`         | `String`                 | null   | 凭证 JSON 文件路径；显式配置缺失或损坏时启动失败 |
+| `credentialEncryptionKey` | `String` | null | 宿主显式传入凭据解密密钥，不从 LLM .env 加载 |
 | `credentialsConfig`             | `Map`                    | null   | 内联凭证配置；AgentCard 声明安全要求时必须匹配 |
-| `a2atEnvPath`                   | `String`                 | null   | `.env` 文件路径                           |
-| `maxNegotiationRounds`          | `int`                    | `3`    | 协商自动循环最大轮数                      |
-| `customHandlers`                | `List<ExtensionHandler>` | null   | 自定义扩展处理器                          |
+| `maxNegotiationExchanges`          | `int`                    | `3`    | 本地交互预算，独立于 SDK maxRounds；耗尽仅本地失败 |
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -182,9 +124,8 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .clientCertPath("client-cert.pem")
         .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
-        .a2atEnvPath(".env")
         .credentialsConfigPath("creds.json")
-        .maxNegotiationRounds(5)
+        .maxNegotiationExchanges(5)
         .authProvider(myProvider)
         .build();
 ```
@@ -202,27 +143,9 @@ public interface AuthProvider {
 
 每次消息发送时调用。`headers` 是可变 Map；直接添加 `Authorization`、自定义头等。`AuthProvider` 可作为唯一认证来源，包括 AgentCard 的 `securityRequirements` 非空但未配置 credentials 的场景。若同时配置 credentials，两者分别计算后合并；若同名 Header 生成不同值，引擎会抛出 `SecurityException`，不会静默覆盖。
 
-### ExtensionHandler
+### A2atMessages
 
-自定义 A2A-T 扩展的处理器接口。
-
-```java
-public interface ExtensionHandler {
-    String extensionKeyword();
-
-    CompletableFuture<Map<String, Object>> beforeSend(
-            AgentCard agentCard, String messageText,
-            Map<String, Object> metadata,
-            A2ATClient a2atClient, ControlPoint controlPoint);
-
-    CompletableFuture<SendMessageResult> afterReceive(
-            AgentCard agentCard, SendMessageResult result,
-            A2ATClient a2atClient, ControlPoint controlPoint,
-            EventCallback eventCallback);
-}
-```
-
-内置：Task-T 和 Negotiation-T 自动处理。可通过配置的 customHandlers 注册自定义处理器。
+通过 MessageContent(parts, metadata, extensions) 提交自定义扩展内容，不注册引擎内容处理器。A2atMessages.from(MetadataContent, List<Part<?>>) 保留 SDK metadata 原位置并激活对应 URI；contextOf(ReceivedMessage) 或 contextOf(Map<String,Object>) 读取并检查规范协商上下文。只有 a2a-t-core 依赖，没有内容生成或语义校验。
 
 ### A2AJavaClientRuntime
 
@@ -297,46 +220,19 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 
 ### ControlPoint
 
-用户决策接口。每个方法单一职责。
-
 ```java
-public interface ControlPoint {
-    // 向智能体发送 Task-T 消息。直接调用 sendMessage。
-    CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, WorkflowEngineClient engineClient);
-
-    // 自环节点：本地处理，不发 A2A-T 消息给自己。
-    default CompletableFuture<TaskResponse> onSelfTask(TaskRequest request);
-
-    // 条件分支决策。只决定下一步去哪个 step。
-    CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results,
-            List<JumpCondition> conditions);
-
-    // 提供协商补充信息。默认：返回通用文本。
-    default CompletableFuture<String> onNegotiation(
-            String agentName, String negotiationText,
-            Map<String, Object> receiveResult);
+interface ControlPoint {
+    CompletableFuture<MessageContent> onTask(TaskRequest request);
+    CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+    CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+    CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```
 
-| 方法              | 触发时机                               | 返回值                        |
-|-------------------|----------------------------------------|-------------------------------|
-| `onTask`          | 步骤向其他智能体分派任务时             | `TaskResponse`（成功 + 输出） |
-| `onSelfTask`      | `SELF_LOOP` 步骤本地执行（不走 A2A-T） | `TaskResponse`（成功 + 输出） |
-| `onRoute`         | 步骤完成后、下一步前                   | `RouteDecision`（nextStep）   |
-| `onNegotiation`   | 智能体返回 `INPUT_REQUIRED` 时         | `String` 补充信息文本         |
-
-### DefaultControlPoint
-
-默认实现，提供合理默认值：
-
-- `onTask`：调用 `sendMessage()`，返回 success/output
-- `onSelfTask`：原样回传任务消息（本地逻辑请覆盖实现）
-- `onRoute`：选第一个非终止分支
-- `onNegotiation`：返回通用补充信息
-
-继承此类，只需覆盖需要自定义的方法。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。
+onSelfTask 返回本地 TaskResult；onRoute 选择允许的候选；onNegotiation 返回 Send 或 Stop。
+未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ### EventCallback
 
@@ -434,7 +330,7 @@ Map<String, Object> registerAgentCard(Map<String, Object> agentCard)
 
 ### WorkflowExecutor
 
-中层 DAG 遍历引擎。遍历工作流步骤，通过 `ContextBuilder` 组装上游上下文，并行分派子任务，应用步骤成功策略（`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`），并路由到下一步。
+中层 DAG 遍历引擎。遍历工作流步骤，通过 `ContextBuilder` 选择强类型上游执行结果，并行分派子任务，应用步骤成功策略（`ALL_SUCCESS` / `ANY_SUCCESS` / `SELF_LOOP`），并路由到下一步。
 
 SDK 用户通常不直接实例化——`ExecutePsop` 内部封装了它。供需要在不含 runner 生命周期管理的情况下运行遍历层的高级集成使用。
 
@@ -447,7 +343,7 @@ ExecutionResult result = executor.run().join();
 
 ### ContextBuilder
 
-包级私有辅助类，按 `contextFrom` 规则折叠上游步骤输出，为每个步骤组装上下文消息（`"*"` = 所有前驱步骤，指定名称 = 选择性继承）。不属于公共 API 接口。
+包级私有辅助类，按 `contextFrom` 规则选择上游步骤结果并构造 `WorkflowInput`（省略 = 直接前驱，`[]` = 不聚合上游，`"*"` = 所有祖先，指定名称 = 选择性聚合）。它不生成提示词，也不属于公共 API 接口。
 
 ---
 
@@ -472,7 +368,7 @@ ExecutionResult result = executor.run().join();
 | `subtasks`    | `List<Task>`          | `List.of()`   | 此步骤分派的子任务                       |
 | `next`        | `List<JumpCondition>` | `List.of()`   | 条件后续步骤                             |
 | `layer`       | `int`                 | `0`           | 上下文层（0 = 仅运行时意图）             |
-| `contextFrom` | `List<String>`        | null          | 继承上下文的步骤（`"*"` = 所有前驱步骤） |
+| `contextFrom` | `List<String>`        | null          | 聚合来源；省略 = 直接前驱，`[]` = 不聚合，`"*"` = 所有祖先，或指定祖先名称 |
 | `stepType`    | `StepType`            | `ALL_SUCCESS` | 执行模式                                 |
 
 ### StepType
@@ -509,35 +405,72 @@ ExecutionResult result = executor.run().join();
 | `step`      | `String` | 下一步名称（`"end"` 表示终止）         |
 | `condition` | `String` | 条件表达式（`"success"`、`"fail"` 等） |
 
-### TaskRequest
+### TaskRequest / BusinessInput
 
-| 字段           | 类型     | 说明             |
-|----------------|----------|------------------|
-| `agentName`    | `String` | 目标智能体       |
-| `skill`        | `String` | 智能体技能       |
-| `message`      | `String` | 完整消息文本     |
-| `description`  | `String` | 任务描述         |
-| `context`      | `String` | 上下文消息       |
-| `stepName`     | `String` | 源步骤名         |
-| `subtaskIndex` | `int`    | 步骤内子任务索引 |
+TaskRequest 使用 getXxx() 访问器：
 
-### TaskResponse
+| 字段 | 含义 |
+|---|---|
+| executionId / taskId | 本地执行／逻辑任务标识，不是远端协议 ID |
+| stepName / agentName / skill | 当前步骤、目标智能体和技能 |
+| instruction / language | 当前指令，不含引擎拼接的历史 |
+| input | BusinessInput：文本或任意 JSON 可序列化数据，二选一，不含 schema |
+| workflowInput | WorkflowInput(runtimeIntent, upstreamResults)，与当前输入分离 |
 
-| 字段       | 类型      | 说明               |
-|------------|-----------|--------------------|
-| `success`  | `boolean` | 任务是否成功       |
-| `output`   | `String`  | 响应文本           |
-| `error`    | `String`  | 错误信息（失败时） |
-| `metadata` | `Map`     | 响应 metadata      |
+BusinessInput.text(value) / BusinessInput.data(value) 创建输入快照。
+WorkflowInput、UpstreamStepResult、ReceivedMessage、NegotiationRequest 等 record 使用 field() 访问器。
+
+| contextFrom | 上游选择 |
+|---|---|
+| 未指定 / null | 已产生结果的直接前驱 |
+| [] | 不聚合上游，runtimeIntent 仍保留 |
+| ["*"] | 已产生结果的全部祖先 |
+| 显式祖先名称 | 按声明顺序选取对应结果 |
+
+contextFrom 只选择证据，不建立执行依赖；依赖由 next 定义。
+未知或非祖先名称、通配符与名称混用均非法；未激活分支不虚构结果。
+引擎不把窗口附加到 instruction/parts，也不调用 LLM 映射上游；由宿主决定怎么消费或映射下游输入。
+
+窗口结构：stepName → taskResults[] → outputs[] / receivedMessages[]。
+TaskExecutionResult 还保留 agentName、skill、逻辑 taskId、taskDescription、status、
+error、errorCode、errorDetails。多子任务不混合，嵌套数组仍作为一个输出项。
+输出不要求来自 LLM，也不要求符合投诉模板。
+
+### MessageContent / ReceivedMessage
+
+```java
+record MessageContent(List<Part<?>> parts, Map<String,Object> metadata, Set<String> extensions) {}
+record ReceivedMessage(MessageContent message, Map<String,Object> taskMetadata, List<Artifact> artifacts) {}
+```
+
+通过 MessageContent.text(text)、MessageContent.parts(parts) 或构造器创建快照。
+TextPart、DataPart、FilePart 保留顺序及各自 metadata，文件引用不会自动下载。
+MessageContent 不提供 role、目标、messageId、taskId、contextId 或认证头。
+业务 metadata 中即使存在 contextId 字段，也不能覆盖真实 A2A 信封。
+
+ReceivedMessage 分别保留消息 metadata、任务 metadata、artifact 身份及 parts/metadata，不互相覆盖。
+message 可以为空；只有 metadata 的业务结果仍可从完整视图读取。
+便利 outputs 按 artifact 与 part 顺序提取 TextPart 文本和 DataPart 数据；
+没有 artifact 时，可提取成功终态或独立 Message 的正文。
+FilePart 仅在完整视图提供。不解析文本、不拼接相邻文本、不拍平嵌套业务数组。
+失败状态消息只保留作证据，不进入 outputs；已返回的有效部分 artifact 仍保留。
+SSE append/replace 按 artifact 组装，最终快照不重复累加。
+
+本地 onSelfTask 返回 TaskResult.success(List<Object>)，允许空列表；
+TaskResult.failure(code, message) 将错误与输出分开，builder 可保留有效部分输出。
+远端 TaskResult 的 receivedMessages 是完整证据，便利输出由它派生。
+远端 Task 只有 COMPLETED 才成功，独立 A2A Message 也可完成交互。
+进度／协商提示不会因为含文本就变成工作流成功。
+
+
+
+### NegotiationRequest / NegotiationReply
+
+参见 [BUSINESS_CALLBACKS](BUSINESS_CALLBACKS.md).
 
 ### SendMessageResult
 
-| 字段        | 类型     | 说明                                      |
-|-------------|----------|-------------------------------------------|
-| `text`      | `String` | 提取的响应文本                            |
-| `task`      | `Task`   | SDK Task 对象                             |
-| `metadata`  | `Map`    | 响应 metadata（task + artifact 合并）     |
-| `taskState` | `String` | 最终任务状态（如 `TASK_STATE_COMPLETED`） |
+getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投影；getTask()/getTaskState() 保留实际远端状态，failureCode/failureMessage 为独立本地交互失败。text 和扁平 metadata 仅用于传输诊断，不用它们代替完整业务响应。
 
 ### ExecutionResult
 
@@ -577,15 +510,17 @@ ExecutionResult result = executor.run().join();
 | 扩展            | URI                                                                                       |
 |-----------------|-------------------------------------------------------------------------------------------|
 | Task-T          | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1`          |
-| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T`      |
+| Negotiation-T   | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1`  |
 | Authorization-T | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1` |
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
 
-> **注意：** `DATA-NEGOTIATION-T/v1` **不是** A2A-T 扩展。它是 A2A-T SDK
-> 协商模块内部使用的 metadata key，用于携带结构化协商上下文
-> （`negotiationType`、`round`、`negotiationId`、`status`）。
-> 不在 AgentCard 上声明，不被 ExtensionHandler 处理，也不出现在
-> `A2A-Extensions` 头中。
+> **协商相关 metadata key 约定：**
+>
+> - `negotiationContext`（SDK 契约）：SDK 生成协商消息时写入，携带 `{id, round, maxRounds, performative}`。
+>   validate API 依赖它区分协商消息与普通消息。
+> - `templateUri`（SDK 契约）：SDK 生成消息时写入，标识渲染所用模板。
+> - `negotiation_message` / `negotiation_params`（引擎内部）：接收校验后供自动循环和
+>   业务控制点读取，绝不作为线上的协议兼容键。
 
 ---
 
@@ -597,10 +532,11 @@ ExecutionResult result = executor.run().join();
 
 ## 错误处理
 
-- 智能体调用失败抛出 `RuntimeException`（包装原始异常）。
-- 协商失败在 `maxNegotiationRounds` 轮后终止。
-- 认证失败（401）记为 `ERROR` 日志，认证头不设置，请求继续发出。
-- SSE 流在终态事件后的连接关闭日志为 `DEBUG` 级别（预期行为）。
+- 回调异常／空值／超时明确失败；SDK 内容错误由宿主转换为 BusinessFailure，必要时保留安全的 code/details。
+- maxNegotiationExchanges 耗尽或本地 Stop 只结束本地交互，不自动发送 Abort。业务 Send(Abort) 不算诊断成功。
+- 远端状态和错误与业务输出分开，失败状态消息不成为 outputs，已有部分 artifact 保留。
+- 缺失必需认证信息时拒绝发送，不静默匿名访问。
+- SDK 流退出／传输错误日志是传输观察，不等同于工作流最终状态；以 ExecutionResult 和远端任务状态判断结果。
 
 ---
 

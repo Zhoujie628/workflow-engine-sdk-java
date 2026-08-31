@@ -25,15 +25,18 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Loads key-value pairs from a {@code .env} file and sets them as system properties (only if not
- * already present in the OS environment).
+ * Explicit application-bootstrap utility that copies key-value pairs from a {@code .env} file to
+ * system properties (only if not already present in the OS environment or JVM).
  *
- * <p>This bridges the gap between the A2A-T SDK's internal {@code .env} loading and engine
- * components that use {@link System#getenv} or {@link System#getProperty} to read configuration
- * values like {@code A2AT_CRED_KEY}.
+ * <p>{@link A2ATransport} deliberately does not call this utility: SDK clients read their explicit
+ * env path per instance, preserving channel isolation. Applications may call it once, before
+ * creating any clients, only when a separate application component must read a value such as
+ * {@code A2AT_CRED_KEY} through {@link System#getenv} or {@link System#getProperty}.
  */
 public final class EnvFileLoader {
 
@@ -48,21 +51,41 @@ public final class EnvFileLoader {
      * @param envFilePath path to the {@code .env} file
      */
     public static void loadToSystemProperties(Path envFilePath) {
+        Map<String, String> values = read(envFilePath);
+        int count = 0;
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String key = entry.getKey();
+            if (System.getenv(key) != null || System.getProperty(key) != null) {
+                continue;
+            }
+            System.setProperty(key, entry.getValue());
+            count++;
+        }
+        if (count > 0) {
+            log.info(
+                    "[EnvLoader] Loaded {} property(ies) from {} into system properties",
+                    count,
+                    envFilePath);
+        }
+    }
+
+    /** Reads an env file without mutating process-global state. */
+    static Map<String, String> read(Path envFilePath) {
         if (envFilePath == null) {
-            return;
+            return Map.of();
         }
         if (!Files.exists(envFilePath)) {
             log.debug("[EnvLoader] File not found: {}", envFilePath);
-            return;
+            return Map.of();
         }
         List<String> lines;
         try {
             lines = Files.readAllLines(envFilePath);
         } catch (IOException e) {
             log.warn("[EnvLoader] Failed to read {}: {}", envFilePath, e.getMessage());
-            return;
+            return Map.of();
         }
-        int count = 0;
+        Map<String, String> values = new LinkedHashMap<>();
         for (String line : lines) {
             String trimmed = line.trim();
             if (trimmed.isEmpty() || trimmed.startsWith("#")) {
@@ -77,20 +100,8 @@ public final class EnvFileLoader {
             if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
                 value = value.substring(1, value.length() - 1);
             }
-            if (System.getenv(key) != null) {
-                continue;
-            }
-            if (System.getProperty(key) != null) {
-                continue;
-            }
-            System.setProperty(key, value);
-            count++;
+            values.putIfAbsent(key, value);
         }
-        if (count > 0) {
-            log.info(
-                    "[EnvLoader] Loaded {} property(ies) from {} into system properties",
-                    count,
-                    envFilePath);
-        }
+        return java.util.Collections.unmodifiableMap(values);
     }
 }

@@ -21,6 +21,9 @@ package dev.openan.workflow.engine.client;
 
 import lombok.Getter;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -46,10 +49,9 @@ public class WorkflowEngineClientConfig {
     private final int sendExecutorQueueCapacity;
     private final AuthProvider authProvider;
     private final String credentialsConfigPath;
+    private final String credentialEncryptionKey;
     private final Map<String, Map<String, Map<String, Object>>> credentialsConfig;
-    private final String a2atEnvPath;
-    private final int maxNegotiationRounds;
-    private final List<ExtensionHandler> customHandlers;
+    private final int maxNegotiationExchanges;
     private final String preferredProtocol;
 
     private WorkflowEngineClientConfig(Builder b) {
@@ -66,11 +68,51 @@ public class WorkflowEngineClientConfig {
         this.sendExecutorQueueCapacity = b.sendExecutorQueueCapacity;
         this.authProvider = b.authProvider;
         this.credentialsConfigPath = b.credentialsConfigPath;
-        this.credentialsConfig = b.credentialsConfig;
-        this.a2atEnvPath = b.a2atEnvPath;
-        this.maxNegotiationRounds = b.maxNegotiationRounds;
-        this.customHandlers = b.customHandlers;
+        this.credentialEncryptionKey = b.credentialEncryptionKey;
+        this.credentialsConfig =
+                b.credentialsConfig != null ? copyCredentials(b.credentialsConfig) : null;
+        this.maxNegotiationExchanges = b.maxNegotiationExchanges;
         this.preferredProtocol = b.preferredProtocol;
+    }
+
+    private static Map<String, Map<String, Map<String, Object>>> copyCredentials(
+            Map<String, Map<String, Map<String, Object>>> source) {
+        Map<String, Map<String, Map<String, Object>>> top = new LinkedHashMap<>();
+        source.forEach(
+                (agent, schemes) -> {
+                    Map<String, Map<String, Object>> schemeCopy = new LinkedHashMap<>();
+                    if (schemes != null) {
+                        schemes.forEach(
+                                (scheme, values) ->
+                                        schemeCopy.put(
+                                                scheme,
+                                                values != null
+                                                        ? immutableObjectMap(values)
+                                                        : Map.of()));
+                    }
+                    top.put(agent, Collections.unmodifiableMap(schemeCopy));
+                });
+        return Collections.unmodifiableMap(top);
+    }
+
+    private static Map<String, Object> immutableObjectMap(Map<String, Object> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> copy.put(key, immutableValue(value)));
+        return Collections.unmodifiableMap(copy);
+    }
+
+    private static Object immutableValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, nested) -> copy.put(key, immutableValue(nested)));
+            return Collections.unmodifiableMap(copy);
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            list.forEach(item -> copy.add(immutableValue(item)));
+            return Collections.unmodifiableList(copy);
+        }
+        return value;
     }
 
     public static Builder builder() {
@@ -91,10 +133,9 @@ public class WorkflowEngineClientConfig {
         private int sendExecutorQueueCapacity = 256;
         private AuthProvider authProvider;
         private String credentialsConfigPath = null;
+        private String credentialEncryptionKey;
         private Map<String, Map<String, Map<String, Object>>> credentialsConfig = null;
-        private String a2atEnvPath = null;
-        private int maxNegotiationRounds = 3;
-        private List<ExtensionHandler> customHandlers = null;
+        private int maxNegotiationExchanges = 3;
         private String preferredProtocol = null;
 
         public Builder sslVerify(boolean v) {
@@ -157,6 +198,12 @@ public class WorkflowEngineClientConfig {
             return this;
         }
 
+        /** Optional credential decryption key supplied by the host, not loaded from LLM config. */
+        public Builder credentialEncryptionKey(String key) {
+            this.credentialEncryptionKey = key;
+            return this;
+        }
+
         public Builder credentialsConfigPath(String v) {
             this.credentialsConfigPath = v;
             return this;
@@ -167,23 +214,13 @@ public class WorkflowEngineClientConfig {
             return this;
         }
 
-        public Builder a2atEnvPath(String v) {
-            this.a2atEnvPath = v;
-            return this;
-        }
-
-        public Builder maxNegotiationRounds(int v) {
-            this.maxNegotiationRounds = v;
+        public Builder maxNegotiationExchanges(int v) {
+            this.maxNegotiationExchanges = v;
             return this;
         }
 
         public Builder preferredProtocol(String v) {
             this.preferredProtocol = v;
-            return this;
-        }
-
-        public Builder customHandlers(List<ExtensionHandler> v) {
-            this.customHandlers = v;
             return this;
         }
 
@@ -195,6 +232,9 @@ public class WorkflowEngineClientConfig {
                     || sendExecutorMaxSize < sendExecutorCoreSize
                     || sendExecutorQueueCapacity <= 0) {
                 throw new IllegalArgumentException("Invalid send executor configuration");
+            }
+            if (maxNegotiationExchanges <= 0) {
+                throw new IllegalArgumentException("maxNegotiationExchanges must be positive");
             }
             return new WorkflowEngineClientConfig(this);
         }
