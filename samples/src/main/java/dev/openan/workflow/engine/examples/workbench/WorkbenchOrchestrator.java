@@ -119,12 +119,29 @@ public class WorkbenchOrchestrator {
             .append(", Status: ")
             .append(h.get("status"))
             .append("\n");
+        appendFailureDetails(sb, h);
       }
     }
     if (result.getError() != null) {
       sb.append("Error: ").append(result.getError());
     }
     return sb.toString();
+  }
+
+  // The host renders safe engine failure facts, never treats them as diagnosis output or LLM input.
+  private static void appendFailureDetails(StringBuilder text, Map<String, Object> history) {
+    for (String field : List.of("errorCode", "error", "errorDetails")) {
+      Object value = history.get(field);
+      if (value == null || value instanceof Map<?, ?> map && map.isEmpty()) continue;
+      String rendered = renderOutput(value);
+      if (!rendered.isBlank()) {
+        text.append("  ")
+            .append(field)
+            .append(": ")
+            .append(dev.openan.workflow.engine.client.WireLog.redact(rendered))
+            .append("\n");
+      }
+    }
   }
 
   private static String outputText(Map<String, Object> output) {
@@ -295,7 +312,7 @@ public class WorkbenchOrchestrator {
               .lang("zh")
               .sslVerify(sslVerify)
               .credentialsConfigPath(credentialsPath)
-              .eventCallback(createLogCallback())
+              .eventCallback(createLogCallback(transport.getContextId()))
               .onFinish(
                   (r, events) -> {
                     log.info(
@@ -363,7 +380,7 @@ public class WorkbenchOrchestrator {
     return new ResolvedWorkflow(FALLBACK_PSOP_ID, fallbackWorkflow());
   }
 
-  private EventCallback createLogCallback() {
+  private EventCallback createLogCallback(String contextId) {
     return new EventCallback() {
       @Override
       public void onEvent(String type, Map<String, Object> data) {
@@ -371,7 +388,16 @@ public class WorkbenchOrchestrator {
           case EventType.START -> log.info("  [START] {}", data.get("workflow"));
           case EventType.STEP_START -> log.info("  [STEP_START] {}", data.get("step"));
           case EventType.TASK_REQUEST -> log.info("  [TASK_REQUEST] agent={}", data.get("agent"));
-          case EventType.TASK_RESPONSE -> log.info("  [TASK_RESPONSE] agent={}", data.get("agent"));
+          case EventType.TASK_RESPONSE ->
+              log.info(
+                  "  [TASK_RESPONSE] contextId={}, executionId={}, step={}, taskId={}, agent={}, success={}, errorCode={}",
+                  contextId,
+                  data.get("executionId"),
+                  data.get("step"),
+                  data.get("taskId"),
+                  data.get("agent"),
+                  data.get("success"),
+                  data.get("errorCode"));
           case EventType.AGENT_STATUS_UPDATE ->
               log.info(
                   "  [STATUS_UPDATE] agent={}, state={}, final={}",
@@ -392,7 +418,13 @@ public class WorkbenchOrchestrator {
           case EventType.ROUTE_DECISION ->
               log.info("  [ROUTE] {} -> {}", data.get("step"), data.get("next"));
           case EventType.COMPLETE -> log.info("  [COMPLETE]");
-          case EventType.ERROR -> log.error("  [ERROR] {}", data.get("error"));
+          case EventType.ERROR ->
+              log.error(
+                  "  [ERROR] contextId={}, step={}, reason={}",
+                  contextId,
+                  data.getOrDefault("step", "(workflow)"),
+                  dev.openan.workflow.engine.client.WireLog.redact(
+                      String.valueOf(data.getOrDefault("error", "Execution failed"))));
           case EventType.CLOSE -> log.info("  [CLOSE]");
           default -> {}
         }
