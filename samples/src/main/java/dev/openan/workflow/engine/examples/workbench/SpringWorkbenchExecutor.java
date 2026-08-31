@@ -20,6 +20,7 @@
 package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.client.A2ATExtension;
+import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
@@ -38,6 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
+
 /**
  * Spring-managed Workbench AgentExecutor.
  *
@@ -49,10 +52,13 @@ import java.util.concurrent.TimeUnit;
 public class SpringWorkbenchExecutor extends BaseAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
 
+    private final ClientRuntimeFactory runtimeFactory;
     private final WorkbenchClientProperties properties;
     private volatile WorkbenchTaskInputParser taskInputParser;
 
-    public SpringWorkbenchExecutor(WorkbenchClientProperties properties) {
+    public SpringWorkbenchExecutor(
+            ClientRuntimeFactory runtimeFactory, WorkbenchClientProperties properties) {
+        this.runtimeFactory = runtimeFactory;
         this.properties = properties;
     }
 
@@ -73,12 +79,22 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                 : null;
     }
 
+    private A2AJavaClientRuntime createClientRuntime() {
+        A2AJavaClientRuntime runtime = runtimeFactory.create();
+        log.info(
+                "[SpringWorkbench] TRANSPORT_MODE mode={}, runtime={}",
+                runtimeFactory.mode(),
+                runtime != null ? runtime.getClass().getSimpleName() : "DefaultA2AJavaClientRuntime");
+        return runtime;
+    }
+
     @Override
     public void execute(RequestContext ctx, AgentEmitter emitter) throws A2AError {
         String taskId = ctx.getTaskId();
         String contextId = ctx.getContextId();
         String userText = extractText(ctx.getMessage());
         long started = System.nanoTime();
+
         emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
         emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
 
@@ -101,14 +117,18 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                     taskInput.templateUri().uri(),
                     taskInput.parameters().keySet(),
                     properties.getOrchUrl(),
-                    "direct",
+                    runtimeFactory.mode(),
                     properties.isSslVerify());
             String result =
                     new WorkbenchOrchestrator(
                             properties.getOrchUrl(),
-                            resolveCredentialsPath(),
+                            runtimeFactory.mode() == ClientRuntimeFactory.Mode.ORDER
+                                    ? null
+                                    : resolveCredentialsPath(),
                             properties.isSslVerify(),
-                            resolveEnvPath())
+                            resolveEnvPath(),
+                            createClientRuntime(),
+                            runtimeFactory.authProvider())
                             .run(input, properties.isDemoNegotiationEnabled());
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put(A2ATExtension.TASK_T.uri(), result);

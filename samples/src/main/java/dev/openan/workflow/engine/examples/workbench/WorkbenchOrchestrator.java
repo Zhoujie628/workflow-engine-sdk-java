@@ -201,7 +201,6 @@ public class WorkbenchOrchestrator {
                         clientRuntime,
                         WorkflowEngineClientConfig.builder()
                                 .sslVerify(sslVerify)
-
                                 .credentialsConfigPath(credentialsPath)
                                 .authProvider(authProvider)
                                 .build());
@@ -231,7 +230,6 @@ public class WorkbenchOrchestrator {
                             .lang("zh")
                             .sslVerify(sslVerify)
                             .credentialsConfigPath(credentialsPath)
-
                             .eventCallback(createLogCallback())
                             .onFinish(
                                     (r, events) -> {
