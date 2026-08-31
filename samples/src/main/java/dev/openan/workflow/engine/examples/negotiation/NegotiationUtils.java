@@ -34,7 +34,6 @@ public final class NegotiationUtils {
 
   /** Standard Task-T extension URI (spec §2). */
   public static final String TASK_PROMPT_KEY = A2ATExtension.TASK_T.uri();
-
   /**
    * Metadata key carrying the negotiation session context map ({@code id} / {@code round} / {@code
    * maxRounds} / {@code performative}).
