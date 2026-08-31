@@ -120,21 +120,6 @@ class AgentAuthManager {
     return loaded;
   }
 
-  private static List<String> extractExtensionUris(AgentCard agentCard) {
-    List<String> uris = new ArrayList<>();
-    var extensions = agentCard.capabilities().extensions();
-    if (extensions == null) {
-      return uris;
-    }
-    for (var ext : extensions) {
-      String uri = ext.uri();
-      if (!uri.isEmpty()) {
-        uris.add(uri);
-      }
-    }
-    return uris;
-  }
-
   /** Get or create a credential service for the given agent. */
   public AgentCredentialService getService(String agentName) {
     return services.computeIfAbsent(

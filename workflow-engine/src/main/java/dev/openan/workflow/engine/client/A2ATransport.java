@@ -347,21 +347,11 @@ public class A2ATransport implements AutoCloseable {
         return cardMap.get(agentName);
     }
 
-    public List<String> getAgentNames() {
-        return new ArrayList<>(cardMap.keySet());
-    }
-
     /** Time budget shared by sending and business interaction callbacks. */
     public long sendTimeoutSeconds() { return sendTimeoutSeconds; }
 
     public String getContextId() {
         return contextId;
-    }
-
-    public void updateAgentCards(List<AgentCard> agentCards) {
-        Map<String, AgentCard> validatedCards = validateAgentCards(agentCards);
-        cardMap = java.util.Collections.unmodifiableMap(validatedCards);
-        log.info("[Transport] Updated agent cards: {} agent(s)", cardMap.size());
     }
 
     private static Map<String, AgentCard> validateAgentCards(List<AgentCard> agentCards) {
