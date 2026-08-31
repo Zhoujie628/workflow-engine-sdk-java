@@ -142,3 +142,12 @@ Every Java file must start with the Apache 2.0 license header:
 - Record the tested commit and Surefire reports. Offline providers and local OMC simulators are not live acceptance.
 - Live model/OMC validation requires authorized endpoints and a separate acceptance record. Never commit customer integration notes.
 - Do not publish, tag, or push as a side effect of running tests.
+
+### Eastcom release gate (dev)
+
+The `eastcom-sdk` self-hosted runner must be provisioned with the licensed
+`com.eastcom.apollo:order-shaded-client:1.1.18` artifact and JDK/Maven.
+Restrict that runner to trusted repositories/branch pushes and manual runs; it must never execute untrusted fork PR code.
+The CI sample job runs the full reactor, including direct and Order simulator tests, without `continue-on-error`.
+A missing/offline runner is an unmet release prerequisite, not permission to skip the gate.
+Configuring runner access and branch protection is a repository-administration step, separate from this source change.

@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
+
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -40,9 +42,10 @@ jobs:
           retention-days: 7
 
   samples-compilation-check:
-    runs-on: ubuntu-latest
-    name: Samples Compilation Check (optional)
-    continue-on-error: true
+    # This runner must be restricted to trusted branch pushes/manual runs, never fork PR code.
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, eastcom-sdk]
+    name: Direct and Order release gate
 
     steps:
       - name: Checkout code
@@ -55,5 +58,15 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build and test samples when Eastcom SDK is available
-        run: mvn -B -pl samples -am verify
+      - name: Verify vendor dependency is provisioned
+        run: mvn -B -o dependency:get "-Dartifact=com.eastcom.apollo:order-shaded-client:1.1.18" "-Dtransitive=false"
+
+      - name: Verify direct and Order scenarios
+        run: mvn -B clean verify
+
+      - name: Upload sample release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-release-test-reports
+          path: '**/target/surefire-reports/'
