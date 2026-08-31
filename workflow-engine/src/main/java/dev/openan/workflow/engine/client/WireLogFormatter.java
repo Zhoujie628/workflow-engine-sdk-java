@@ -70,17 +70,20 @@ final class WireLogFormatter {
    * so that tooling parsing {@code requestId=<id>} keeps working.
    */
   private static String formatFrame(WireLog.Entry entry, boolean pretty) {
-    return "["
-        + entry.boundary()
-        + "] "
-        + entry.direction()
-        + " requestId="
-        + entry.requestId()
-        + "\n(envelope logged in the preceding entry; target/status/headers/correlation not repeated)"
-        + "\nVisibility: "
-        + entry.visibility()
-        + "\n=== Body ===\n"
-        + (pretty ? prettyBody(entry.body(), entry.representation()) : entry.body());
+    return new StringBuilder()
+        .append("[")
+        .append(entry.boundary())
+        .append("] ")
+        .append(entry.direction())
+        .append(" requestId=")
+        .append(entry.requestId())
+        .append(
+            "\n(envelope logged in the preceding entry; target/status/headers/correlation not repeated)")
+        .append("\nVisibility: ")
+        .append(entry.visibility())
+        .append("\n=== Body ===\n")
+        .append(pretty ? prettyBody(entry.body(), entry.representation()) : entry.body())
+        .toString();
   }
 
   static String prettyBody(String body, String representation) {
