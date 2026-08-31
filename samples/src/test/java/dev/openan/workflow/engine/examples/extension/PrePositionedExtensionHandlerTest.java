@@ -80,7 +80,7 @@ class PrePositionedExtensionHandlerTest {
                 "## 授权策略的操作类型\n"
                         + "新增授权策略\n\n"
                         + "## 动网操作的授权策略列表\n"
-                        + "业务投诉诊断，业务抢通，隧道调优，2026-06-01~2030-06-18\n";
+                        + "1. 业务场景是业务投诉诊断，处置类型是业务抢通，操作名称是隧道调优，有效期是2026-06-01~2030-06-18\n";
         Map<String, Object> exact = SpnCasePrompts.addAuthorizationData();
 
         PrePositionedExtensionHandler.requireExtractedSectionsMatch(
@@ -144,7 +144,7 @@ class PrePositionedExtensionHandlerTest {
                         AuthorizationPolicy.OPERATION_TYPE_FIELD,
                         AuthorizationPolicy.DELETE,
                         AuthorizationPolicy.POLICY_LIST_FIELD,
-                        "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"),
+                        "1. 策略标识是7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3"),
                 "template",
                 "test");
         assertNull(handler.getAuthorizationPolicy());
@@ -180,9 +180,49 @@ class PrePositionedExtensionHandlerTest {
                                 AuthorizationPolicy.OPERATION_TYPE_FIELD,
                                 AuthorizationPolicy.DELETE,
                                 AuthorizationPolicy.POLICY_LIST_FIELD,
-                                "different-policy-id"),
+                                "1. 策略标识是7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c4"),
                         "template",
                         "test"));
+        assertSame(existing, handler.getAuthorizationPolicy());
+    }
+
+    @Test
+    void aMalformedSecondRuleCannotPartiallyReplaceTheExistingWhitelist() {
+        PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
+        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        AuthorizationPolicy existing = handler.getAuthorizationPolicy();
+        String rules = SpnCasePrompts.addAuthorizationData().get(AuthorizationPolicy.POLICY_LIST_FIELD)
+                + "\n2. 业务场景是其他，处置类型是业务抢通，操作名称是任意操作，有效期是2026-02-30~2030-06-18";
+        assertThrows(IllegalArgumentException.class, () -> handler.applyAuthorization(
+                Map.of(AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.ADD,
+                        AuthorizationPolicy.POLICY_LIST_FIELD, rules), "template", "test"));
+        assertSame(existing, handler.getAuthorizationPolicy());
+    }
+
+    @Test
+    void unsupportedQueryConditionsAreNotSilentlyIgnored() {
+        PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
+        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        AuthorizationPolicy existing = handler.getAuthorizationPolicy();
+        assertThrows(UnsupportedOperationException.class, () -> handler.applyAuthorization(
+                Map.of(AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.QUERY,
+                        AuthorizationPolicy.POLICY_LIST_FIELD, "1. 业务场景是其他"),
+                "template", "test"));
+        assertSame(existing, handler.getAuthorizationPolicy());
+    }
+
+    @Test
+    void deleteCannotTreatBareIdsOrMultipleSelectorsAsTheActiveIdentifier() {
+        PrePositionedExtensionHandler handler = new PrePositionedExtensionHandler();
+        handler.applyAuthorization(SpnCasePrompts.addAuthorizationData(), "template", "test");
+        AuthorizationPolicy existing = handler.getAuthorizationPolicy();
+        String id = "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3";
+        for (String selector : List.of(id, "1. 业务场景是业务投诉诊断",
+                "1. 策略标识是" + id + "\n2. 策略标识是" + id)) {
+            assertThrows(IllegalArgumentException.class, () -> handler.applyAuthorization(
+                    Map.of(AuthorizationPolicy.OPERATION_TYPE_FIELD, AuthorizationPolicy.DELETE,
+                            AuthorizationPolicy.POLICY_LIST_FIELD, selector), "template", "test"));
+        }
         assertSame(existing, handler.getAuthorizationPolicy());
     }
 
@@ -199,7 +239,7 @@ class PrePositionedExtensionHandlerTest {
                                 AuthorizationPolicy.OPERATION_TYPE_FIELD,
                                 AuthorizationPolicy.MODIFY,
                                 AuthorizationPolicy.POLICY_LIST_FIELD,
-                                "7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3，永久生效"),
+                                "1. 策略标识是7d8c7b00-3c8c-4f8e-9b1e-9b17b6a3e5c3，有效期是永久生效"),
                         "template",
                         "test"));
         assertSame(existing, handler.getAuthorizationPolicy());

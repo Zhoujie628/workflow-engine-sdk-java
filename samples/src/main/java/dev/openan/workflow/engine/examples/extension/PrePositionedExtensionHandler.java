@@ -270,7 +270,7 @@ public class PrePositionedExtensionHandler {
                     "The SPN sample has no persisted policy identifiers; Authorization-T modify "
                             + "must be implemented by the integrating policy store");
             case AuthorizationPolicy.DELETE -> {
-                String selector = AuthorizationPolicy.requirePolicyList(validatedData);
+                String selector = AuthorizationPolicy.policyIdSelector(validatedData);
                 if (authorizationPolicy == null || !selector.equals(authorizationPolicyId)) {
                     throw new IllegalArgumentException(
                             "Authorization policy identifier does not match the active policy");
@@ -289,6 +289,11 @@ public class PrePositionedExtensionHandler {
                         "## 授权操作执行结果\n授权操作执行结果：成功");
             }
             case AuthorizationPolicy.QUERY -> {
+                Object selector = validatedData.get(AuthorizationPolicy.POLICY_LIST_FIELD);
+                if (selector != null && (!(selector instanceof String text) || !text.isBlank())) {
+                    throw new UnsupportedOperationException(
+                            "The sample supports unfiltered queries only; implement conditions in the integrating policy store");
+                }
                 log.info(
                         "[{}] Authorization-T accepted, templateUri={}, operation={}, activeRules={}",
                         agentTag,
@@ -412,10 +417,16 @@ public class PrePositionedExtensionHandler {
             if (server == null) {
                 throw new IllegalStateException("A2A-T server validator is unavailable");
             }
-            filled = server.validateNotificationPromptAndDataFilling(
-                    prompt,
-                    validationSchema(StandardTemplates.SERVICE_RECOVERY),
-                    StandardTemplates.SERVICE_RECOVERY.uri());
+            try {
+                filled = server.validateNotificationPromptAndDataFilling(
+                        prompt,
+                        validationSchema(StandardTemplates.SERVICE_RECOVERY),
+                        StandardTemplates.SERVICE_RECOVERY.uri());
+            } catch (ContentValidationException error) {
+                log.warn("[{}] Notification-T SDK validation failed: {}",
+                        agentTag, validationFailureSummary(error));
+                throw error;
+            }
         }
         requireExtractedSectionsMatch(
                 prompt,

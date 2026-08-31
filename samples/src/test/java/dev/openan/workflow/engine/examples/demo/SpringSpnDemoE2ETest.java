@@ -46,6 +46,13 @@ class SpringSpnDemoE2ETest {
                 org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("[SpnDomainAgentCity2Executor] NEGOTIATION_APPLIED"));
                 org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("[SpnDomainAgentCity2Executor] Parameters sufficient, skipping negotiation"));
                 assertNegotiationWireEvidence(evidence);
+                for (String cityName : java.util.List.of("City1", "City2")) {
+                    org.junit.jupiter.api.Assertions.assertTrue(evidence.contains(
+                            "[SpnDomainAgent" + cityName + "Executor] Authorization-T accepted"));
+                    org.junit.jupiter.api.Assertions.assertTrue(evidence.contains(
+                            "[SpnDomainAgent" + cityName + "Executor] NOTIFICATION_SUBSCRIBED"));
+                }
+                org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("OPERATION_FAILED extension="));
                 org.junit.jupiter.api.Assertions.assertFalse(evidence.matches("(?s).*\\ndata: +\\\"performative\\\".*"));
             }
             org.junit.jupiter.api.Assertions.assertNull(System.getProperty("a2at.samples.negotiation"));

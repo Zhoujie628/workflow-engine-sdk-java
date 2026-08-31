@@ -65,6 +65,26 @@ class NegotiationStrategyTest {
         assertTrue(reply.content().metadata().get(A2ATExtension.NEGOTIATION_T.uri()).toString().contains("业务策略不允许提供"));
     }
 
+    @Test void llmDescriptionParaphraseCannotRenameTheRequestedField() {
+        var reply = assertInstanceOf(NegotiationReply.Send.class,
+                new NegotiationStrategy(env).resolve(request(SpnCasePrompts.privateLineComplaintData(),
+                        List.of(new NegotiationItem("任务对象", "请提供本地市实际接入端口名称")))).join());
+        assertEquals(NegotiationPerformative.ACCEPT,
+                A2atMessages.contextOf(new ReceivedMessage(reply.content(), Map.of(), List.of())).performative());
+        String prompt = reply.content().metadata().get(A2ATExtension.NEGOTIATION_T.uri()).toString();
+        assertTrue(prompt.contains("任务对象："));
+        assertTrue(prompt.contains("P781-"));
+        assertFalse(prompt.contains("任务上下文："));
+    }
+
+    @Test void unknownLiteralItemCannotBeReplacedByARecognizableDescription() {
+        var reply = assertInstanceOf(NegotiationReply.Send.class,
+                new NegotiationStrategy(env).resolve(request(SpnCasePrompts.privateLineComplaintData(),
+                        List.of(new NegotiationItem("其他用户的信息", "本地市实际接入端口名称")))).join());
+        assertEquals(NegotiationPerformative.ABORT,
+                A2atMessages.contextOf(new ReceivedMessage(reply.content(), Map.of(), List.of())).performative());
+    }
+
     private String answer(Map<String, Object> input) {
         var reply = assertInstanceOf(NegotiationReply.Send.class,
                 new NegotiationStrategy(env).resolve(request(input)).join());
@@ -72,11 +92,15 @@ class NegotiationStrategyTest {
     }
 
     private NegotiationRequest request(Map<String, Object> input) {
+        return request(input, List.of(new NegotiationItem("接入端口名称", "补充实际端口"),
+                new NegotiationItem("投诉分类", "补充实际分类")));
+    }
+
+    private NegotiationRequest request(Map<String, Object> input, List<NegotiationItem> items) {
         var sdk = A2ATInitialization.create(() -> new A2ATClient(java.nio.file.Path.of(env)));
         var generated = sdk.generateNegotiationProposePromptFromData(new NegotiationProposeData(
                 new NegotiationContext(UUID.randomUUID().toString(), 1, 3, NegotiationPerformative.PROPOSE),
-                new InformationProposeContent(List.of(new NegotiationItem("接入端口名称", "补充实际端口"),
-                        new NegotiationItem("投诉分类", "补充实际分类")), "AND")),
+                new InformationProposeContent(items, "AND")),
                 StandardTemplates.INFORMATION_NEGOTIATION_PROPOSE.uri());
         var received = new ReceivedMessage(A2atMessages.from(generated, List.of()), Map.of(), List.of());
         return new NegotiationRequest(TaskRequest.builder().taskId(UUID.randomUUID().toString()).agentName("city")
