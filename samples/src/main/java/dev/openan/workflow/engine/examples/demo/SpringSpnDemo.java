@@ -90,29 +90,33 @@ public class SpringSpnDemo {
     long demoStarted = System.nanoTime();
     ConfigurableApplicationContext ctx = null;
     boolean success = false;
-    boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(true);
+    boolean embeddedOmc = EmbeddedOmcSupport.enabled(applicationArgs, true);
+    List<AgentCard> embeddedCards = EmbeddedOmcSupport.prepare(embeddedOmc);
+    boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(embeddedOmc);
     log.info(
         "[Demo] NEGOTIATION_DEMO enabled={}, city={} (local default: City1 negotiates, City2 diagnoses directly; "
             + "disable with -Da2at.samples.negotiation=false)",
         demoNegotiation,
         System.getProperty("a2at.samples.negotiation.city", "city1"));
     log.info(
-        "[Demo] START mode=direct, "
-            + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]");
+        "[Demo] START mode=direct, embeddedOmc={}, workbench=https://127.0.0.1:26337/a2a/json",
+        embeddedOmc);
     try {
       long stageStarted;
-      stageStarted = System.nanoTime();
-      log.info("[Demo] STAGE_START stage=start-omc-agents");
-      omc.startFromResource(
-          "agentcard/spn_domain_agent_city1.json", new SpnDomainAgentCity1Executor());
-      omc.startFromResource(
-          "agentcard/spn_domain_agent_city2.json", new SpnDomainAgentCity2Executor());
-      log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
-      TimeUnit.SECONDS.sleep(STARTUP_WAIT);
-      log.info(
-          "[Demo] STAGE_DONE stage=start-omc-agents, count={}, elapsedMs={}",
-          omc.servers().size(),
-          elapsedMillis(stageStarted));
+      if (embeddedOmc) {
+        stageStarted = System.nanoTime();
+        log.info("[Demo] STAGE_START stage=start-omc-agents");
+        omc.startFromCard(embeddedCards.get(0), new SpnDomainAgentCity1Executor());
+        omc.startFromCard(embeddedCards.get(1), new SpnDomainAgentCity2Executor());
+        log.info("[Demo] Waiting {}s for agent ports to bind", STARTUP_WAIT);
+        TimeUnit.SECONDS.sleep(STARTUP_WAIT);
+        log.info(
+            "[Demo] STAGE_DONE stage=start-omc-agents, count={}, elapsedMs={}",
+            omc.servers().size(),
+            elapsedMillis(stageStarted));
+      } else {
+        log.info("[Demo] STAGE_SKIP stage=start-omc-agents, reason=external-omc, mode=direct");
+      }
 
       stageStarted = System.nanoTime();
       log.info("[Demo] STAGE_START stage=start-spring-workbench");
@@ -152,7 +156,7 @@ public class SpringSpnDemo {
       success = true;
       // Task result is already final. This bounded observation only keeps the local
       // demonstration alive long enough to show its independent recovery notification.
-      {
+      if (embeddedOmc) {
         boolean observed =
             ctx.getBean(SpringWorkbenchExtensionLifecycle.class)
                 .awaitFirstRecovery(java.time.Duration.ofSeconds(10));
