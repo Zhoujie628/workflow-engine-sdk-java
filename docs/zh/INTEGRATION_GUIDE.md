@@ -519,6 +519,67 @@ Workflow workflow = LoadPsop.load(
 实例。A2atMessages.from 是 A2A-T metadata 复制辅助；非 A2A-T 扩展也可直接提供 metadata 和激活 URI。引擎不会仅因 AgentCard
 声明而自动生成内容。
 
+## 远端 OMC 联调与启动校验
+
+### 编排中心 HTTPS 联调
+
+Demo 将 `A2A_SSL_VERIFY`（Spring 属性 `a2a.ssl-verify`）传给 LoadPsop.search/load。
+受控开发环境可设置 `A2A_SSL_VERIFY=false` 或启动参数 `--a2a.ssl-verify=false`：
+执行引擎端不用下载或配置编排中心证书，搜索与加载连接均跳过证书链及主机名校验，
+包括自签名、缺少 SAN 或 SAN 不匹配的开发证书，并打印 `[Registry] INSECURE_TLS` 警告。
+
+“免配本地证书”不表示 HTTPS 服务端不需要证书，也不能绕过要求客户端证书的 mTLS。
+该非验证模式不能确认服务端身份，存在中间人风险，仅用于受控联调。
+生产保持 `true`，给服务端配置匹配实际 URL 的 SAN，并让运行 JVM 信任其 CA；
+引擎南向 `caCertsPath` 不会自动传给 LoadPsop。
+LoadPsop 不修改 JVM 全局 SSLContext、默认 SocketFactory 或 HostnameVerifier；
+引擎南向 HTTP/JSON-RPC 的 `false` 仍仅跳过证书链校验，自定义转发适配器的 TLS 由其 SDK/平台管理。
+
+### 下游 OMC 启动
+
+在 IDEA 环境变量或本地 .env 中设置 `A2A_AGENT_CARD_LOCATIONS`，以逗号分隔外部 AgentCard 文件路径。 运行 SpringSpnDemo 对接外部
+OMC 时，显式设置 `A2A_EMBEDDED_OMC_ENABLED=false`， 或使用 Program arguments `--a2a.embedded-omc-enabled=false`
+；不会为这些下游节点创建本地 JDK Server。 持续接收任务和保持订阅应运行 SpringWorkbenchApplication，而不是执行一次后退出的
+Demo。
+
+启用内嵌 OMC 时，Demo 在启动任意 OMC 前校验两张实际加载的地市卡片，并使用其地址启动。 非本机地址、缺失卡片或非法 URL
+会提前失败；回环地址和本机网卡地址都可绑定， 不以“是否 127.0.0.1”判断远端。校验不探测 OMC，也不能判定本机某端口是否已有真实服务：
+即使外部 OMC 恰好部署在本机，也必须显式关闭内嵌服务。 真实地址与凭据应放在本地外部文件，不覆盖仓库示例，不提交。
+
+## 远端错误响应
+
+响应头成功不代表任务成功。HTTP 200 的 SSE data 也可能返回顶层错误对象，例如：
+
+```json
+{"status":429,"detail":"Current active tasks have reached the maximum limit 10.","type":""}
+```
+
+通信层识别顶层数字 status 为 400–599 且携带 title/detail 的错误对象， 以 `RemoteProblemException` 保留
+status、title、detail、type、timestamp。 同步响应和流式响应均检查；普通任务内容或 artifact 内嵌的同名字段不被当成协议错误。
+该识别以 SDK 实际交付的正文为限：真实 HTTP 非 2xx 可能先被 SDK/适配器作为 HTTP 或认证错误拒绝， 不保证可取得 problem
+正文；没有该正文时仍走原有通用失败路径，不伪造 errorDetails。 错误不生成成功结果、不触发 onNegotiation，也不自动重新提交请求。400
+应核对业务参数； 429 应检查 OMC 活跃任务配额及已有任务/订阅，再由业务决定是否重试。 只有合法 Negotiation-T Propose 才进入协商回调。
+
+直接调用客户端时可用 `RemoteProblemException.findIn(error)` 检查 cause 链（没有则返回 null）； 工作流执行时沿现有失败路径报告错误：
+任务结果及执行 history / TASK_RESPONSE 事件中的 errorCode 为 `remote.problem.400`、
+`remote.problem.429` 等，error 包含原因，errorDetails 包含上述五个字段，outputs 为空。 错误内容中的已知凭据字段按协议日志的规则脱敏；未识别的
+SDK 异常仍只暴露异常类型。 预置授权、通知订阅的错误仍由其独立生命周期处理，不决定工作流执行结果。 协议 pretty
+日志仅用于展示，不改写原始收到的错误对象。
+
+**当前双地市示例的失败流程**：两个诊断并行下发，一方失败后记录该方错误； 已经下发的另一方继续等待结果或超时。当前批次结束后返回
+`success=false`， 不进入 `merge_analysis`，也不调用该节点的 onSelfTask/LLM。成功地市的结果留在 history 中，
+不冒充整体诊断结论。此处没有自动重试、排队或“部分成功后汇总”策略； 通用引擎的 AnySuccess 节点仍按原有任一成功规则执行。
+
+集成方通过 TASK_RESPONSE 事件及时观察任务失败，或在 `onFinish(result, events)`
+检查 `result.history`；onTask 是发送前准备消息的回调，不是失败重试回调。 引擎节点事件带 executionId；TASK_RESPONSE 和
+history 还带逻辑 taskId。 Demo 的北向 A2A 任务返回 FAILED，状态消息包含失败地市的 errorCode、error 和 errorDetails， 不产生成功汇总
+artifact。整个演示退出时会关闭订阅；常驻宿主中的订阅由独立生命周期管理。
+
+**日志职责**：PROTOCOL 记录已观察到的请求/响应，按 requestId 关联并发报文； REMOTE_PROBLEM 记录通信层识别的远端拒绝，TASK_FAILED
+记录执行 ID、节点、逻辑任务 ID、 智能体、错误码和原因，WORKFLOW_STOPPED 列出未执行节点。示例 TASK_RESPONSE 日志同时包含
+contextId 与 executionId，供跨层定位。已识别的远端问题使用 WARN 摘要， 未知异常保留 ERROR 堆栈；错误详情中的已知凭据及
+Bearer/Basic 值脱敏。 日志开关、pretty 展示和观察回调不会改变任务结果。
+
 ## 13. 你需要使用的接口一览
 
 | 接口/类                                                | 用途                                                          |

@@ -645,6 +645,74 @@ HTTP read timeout.
 4. Confirm session reuse: `SESSION_REUSE` in logs, not `SESSION_OPEN` every time
 5. Confirm singleton: `ClientRuntimeFactory.create()` returns singleton in ORDER mode
 
+## External OMC startup checks
+
+### Orchestration-center HTTPS development
+
+The demo passes `A2A_SSL_VERIFY` (Spring property `a2a.ssl-verify`) to LoadPsop.search/load.
+For controlled development, set `A2A_SSL_VERIFY=false` or `--a2a.ssl-verify=false`.
+No local orchestration CA file is required: both calls skip chain and hostname checks, including
+self-signed certificates, missing SANs and mismatched SANs, and emit a `[Registry] INSECURE_TLS` warning.
+
+The HTTPS server must still present a certificate, and client-certificate requirements (mTLS) still apply.
+This mode cannot authenticate the server and is vulnerable to interception; do not use it in production.
+Keep verification enabled in production, configure matching server SANs and trust its CA in the running JVM.
+The southbound `caCertsPath` setting is not forwarded to LoadPsop.
+LoadPsop never changes JVM-wide SSLContext, SocketFactory or HostnameVerifier defaults.
+Southbound HTTP/JSON-RPC retains hostname checks when chain verification is disabled; vendor forwarding TLS
+remains managed by the vendor SDK/platform.
+
+### Downstream OMC startup
+
+Set `A2A_AGENT_CARD_LOCATIONS` in the environment or local .env to comma-separated external AgentCard file locations.
+For SpringSpnDemo, set `A2A_EMBEDDED_OMC_ENABLED=false` or pass
+`--a2a.embedded-omc-enabled=false` when using externally managed OMCs. Use SpringWorkbenchApplication for a persistent
+host; the demo exits after its task.
+
+Embedded startup validates both effective city cards before starting either OMC, then uses those cards to bind. Missing
+cards, invalid URLs and non-local addresses fail early. Loopback and local network-interface addresses are accepted;
+non-loopback does not automatically mean remote. This does not probe OMCs or detect existing services. Disable embedded
+startup even when an externally managed OMC runs on this same machine. Keep real cards and credentials outside tracked
+sample resources.
+
+## Remote problem responses
+
+A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level problem object such as
+`{"status":429,"detail":"Active task limit reached","type":""}`. Top-level numeric status 400–599 with title/detail
+becomes `RemoteProblemException`, preserving status, title, detail, type and timestamp. Both synchronous and streaming
+responses are checked. Nested business data is not classified as a protocol error. Detection is limited to bodies
+actually delivered by the SDK. A non-2xx HTTP response may be rejected first as an HTTP/authentication error by the SDK
+or adapter, without exposing its problem body; such failures retain the generic failure path rather than fabricating
+errorDetails.
+
+The error fails the call without fabricating a successful task, invoking onNegotiation, or automatically resubmitting
+it. For 400, inspect business inputs; for 429, inspect OMC capacity and existing tasks or subscriptions before deciding
+whether to retry. Negotiation still requires a valid Negotiation-T Propose. Use `RemoteProblemException.findIn(error)`
+to inspect the cause chain (null means no problem found); workflow execution follows its existing failure path. Task
+results and execution history / TASK_RESPONSE events expose `remote.problem.400`,
+`remote.problem.429`, etc. as errorCode, the reason as error, the five fields above as errorDetails, and empty outputs.
+Known credential fields use the protocol logger's redaction rules; unrecognized SDK exceptions still expose only the
+exception type. Independent authorization/subscription failures do not determine the workflow result. Pretty logging
+does not modify the received problem payload.
+
+In the two-city sample, one failed diagnosis does not interrupt the other already dispatched call:
+its result or timeout is collected before the workflow returns `success=false`. The merge_analysis onSelfTask/LLM is not
+invoked; successful peer results remain in history, not in a fabricated overall diagnosis. There is no automatic retry,
+queuing or partial-success merge. Generic AnySuccess nodes retain their existing first-success semantics.
+
+Observe failures through TASK_RESPONSE or inspect result.history in `onFinish(result, events)`; onTask prepares outbound
+content and is not an error-retry callback. Executor node events include executionId; TASK_RESPONSE and history also
+include the logical taskId. The sample's northbound A2A task returns FAILED with per-agent errorCode, error and
+errorDetails in its status message, without a success-summary artifact. Demo shutdown closes subscriptions; a persistent
+host owns them independently of workflow results.
+
+Logging responsibilities: PROTOCOL captures observed traffic, correlated by requestId rather than adjacent log entries;
+REMOTE_PROBLEM reports transport rejection; TASK_FAILED identifies the execution, step, logical task, agent, code and
+reason; WORKFLOW_STOPPED lists unexecuted steps. Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized
+remote problems use WARN summaries, while unexpected exceptions retain ERROR stack traces. Known credentials and
+Bearer/Basic values are redacted. Logging configuration, pretty display and observer callbacks do not determine task
+outcomes.
+
 ## 13. Interface Reference
 
 | Interface/Class                                        | Purpose                                                                 |
