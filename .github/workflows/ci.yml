@@ -55,5 +55,5 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build and test samples
+      - name: Build and test samples when Eastcom SDK is available
         run: mvn -B -pl samples -am verify
