@@ -21,6 +21,7 @@ package dev.openan.workflow.engine.model;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,7 +63,11 @@ public record MessageContent(
   }
 
   static List<Part<?>> snapshotParts(List<Part<?>> parts) {
-    return parts.stream().map(MessageContent::snapshotPart).toList();
+    List<Part<?>> snapshot = new ArrayList<>(parts.size());
+    for (Part<?> part : parts) {
+      snapshot.add(snapshotPart(part));
+    }
+    return List.copyOf(snapshot);
   }
 
   private static Part<?> snapshotPart(Part<?> part) {
