@@ -42,6 +42,10 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code load} -- GET /api/v1/orchestrate/psop/{psop_id} (full workflow)
  *   <li>{@code search} -- POST /api/v1/orchestrate/search (summary list by intent)
  * </ul>
+ *
+ * <p>Defaults verify the server using JVM trust and hostname checks. Explicit {@code sslVerify=false}
+ * skips both checks for this connection only, for controlled development without local trust files.
+ * It does not remove the server's HTTPS certificate or satisfy a server requirement for mTLS.
  */
 public class LoadPsop {
   private static final Logger log = LoggerFactory.getLogger(LoadPsop.class);
@@ -126,9 +130,14 @@ public class LoadPsop {
       throws Exception {
     HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
     if (!sslVerify && connection instanceof HttpsURLConnection https) {
-      // Trust policy and hostname policy remain independent: this accepts an untrusted
-      // development CA, but still rejects a certificate issued for another host.
-      https.setSSLSocketFactory(SslContextFactory.createTrustAll().getSocketFactory());
+      // Development opt-out is connection-local: never replace JVM-wide TLS defaults.
+      https.setSSLSocketFactory(
+          SslContextFactory.create(false, null).orElseThrow().getSocketFactory());
+      https.setHostnameVerifier((hostname, session) -> true);
+      log.warn(
+          "[Registry] INSECURE_TLS host={}, port={}: certificate and hostname verification disabled; development only",
+          https.getURL().getHost(),
+          https.getURL().getPort());
     }
     try {
       connection.setInstanceFollowRedirects(true);
