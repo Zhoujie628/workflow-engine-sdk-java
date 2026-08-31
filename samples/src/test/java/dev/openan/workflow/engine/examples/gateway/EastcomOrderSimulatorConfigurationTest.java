@@ -13,6 +13,33 @@ import org.junit.jupiter.api.Test;
 class EastcomOrderSimulatorConfigurationTest {
 
   @Test
+  void mapsCredentialsByNeAndRejectsConflictingSharedNeCredentials() {
+    OrderGatewayProperties properties = new OrderGatewayProperties();
+    properties.setSimulatorCity1Username("omc-one");
+    properties.setSimulatorCity1Password("one-secret");
+    properties.setSimulatorCity2Username("omc-two");
+    properties.setSimulatorCity2Password("two-secret");
+    var credentials = EastcomOrderSimulatorConfiguration.simulatorCredentials(properties);
+    assertEquals("omc-one", credentials.get(properties.getCity1Ne()).username());
+    assertEquals("two-secret", credentials.get(properties.getCity2Ne()).password());
+    properties.setCity2Ne(properties.getCity1Ne());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> EastcomOrderSimulatorConfiguration.simulatorCredentials(properties));
+  }
+
+  @Test
+  void rejectsPartialCredentialsAndAllowsIdenticalSharedNeCredentials() {
+    OrderGatewayProperties properties = new OrderGatewayProperties();
+    properties.setCity2Ne(properties.getCity1Ne());
+    assertEquals(1, EastcomOrderSimulatorConfiguration.simulatorCredentials(properties).size());
+    properties.setSimulatorCity2Password("");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> EastcomOrderSimulatorConfiguration.simulatorCredentials(properties));
+  }
+
+  @Test
   void mapsEachNeToItsConfiguredTarget() {
     OrderGatewayProperties properties = new OrderGatewayProperties();
     properties.setCity1Ne("city-one");

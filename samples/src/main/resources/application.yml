@@ -39,6 +39,10 @@ a2a:
     city2-ne: ${EASTCOM_ORDER_CITY2_NE:}
     simulator-city1-target-url: ${EASTCOM_ORDER_SIMULATOR_CITY1_TARGET_URL:https://127.0.0.1:26335}
     simulator-city2-target-url: ${EASTCOM_ORDER_SIMULATOR_CITY2_TARGET_URL:https://127.0.0.1:26336}
+    simulator-city1-username: ${EASTCOM_ORDER_SIMULATOR_CITY1_USERNAME:admin}
+    simulator-city1-password: ${EASTCOM_ORDER_SIMULATOR_CITY1_PASSWORD:Admin@123}
+    simulator-city2-username: ${EASTCOM_ORDER_SIMULATOR_CITY2_USERNAME:admin}
+    simulator-city2-password: ${EASTCOM_ORDER_SIMULATOR_CITY2_PASSWORD:Admin@123}
     simulator-connect-timeout-seconds: ${EASTCOM_ORDER_SIMULATOR_CONNECT_TIMEOUT_SECONDS:30}
     simulator-read-timeout-seconds: ${EASTCOM_ORDER_SIMULATOR_READ_TIMEOUT_SECONDS:30}
     login-timeout-seconds: ${EASTCOM_ORDER_LOGIN_TIMEOUT_SECONDS:15}
@@ -49,7 +53,7 @@ a2a:
     omc-credentials-path: ${EASTCOM_ORDER_OMC_CREDENTIALS_PATH:classpath:spn_agent_credentials.json}
     omc-login-path: ${EASTCOM_ORDER_OMC_LOGIN_PATH:/rest/plat/smapp/v1/oauth/token}
     omc-login-method: ${EASTCOM_ORDER_OMC_LOGIN_METHOD:PUT}
-    omc-token-response-header: ${EASTCOM_ORDER_OMC_TOKEN_RESPONSE_HEADER:bearToken}
+    omc-token-response-header: ${EASTCOM_ORDER_OMC_TOKEN_RESPONSE_HEADER:accessSession}
     omc-request-auth-header: ${EASTCOM_ORDER_OMC_REQUEST_AUTH_HEADER:Authorization}
     omc-request-auth-scheme: ${EASTCOM_ORDER_OMC_REQUEST_AUTH_SCHEME:Bearer}
     omc-token-ttl-seconds: ${EASTCOM_ORDER_OMC_TOKEN_TTL_SECONDS:3600}

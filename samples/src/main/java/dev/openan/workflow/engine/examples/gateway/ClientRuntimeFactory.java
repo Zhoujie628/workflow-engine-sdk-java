@@ -47,6 +47,12 @@ public final class ClientRuntimeFactory {
       OrderGatewayProperties order,
       @Qualifier(OMC_AUTH_PROVIDER_BEAN_NAME) Optional<AuthProvider> hostAuthProvider) {
     Mode parsedMode = Mode.parse(workbench.getTransportMode());
+    if (parsedMode == Mode.ORDER && order.isSimulatorEnabled()) {
+      dev.openan.workflow.engine.examples.server.LocalServerAddress.requireLocalHost(
+          order.getHost(), "a2a.order.host (simulator bind address)");
+      EastcomOrderSimulatorConfiguration.simulatorTargets(order);
+      EastcomOrderSimulatorConfiguration.simulatorCredentials(order);
+    }
     this.mockGatewayUrl = workbench.getMockGatewayUrl();
     if (parsedMode == Mode.ORDER
         && !order.isSimulatorEnabled()

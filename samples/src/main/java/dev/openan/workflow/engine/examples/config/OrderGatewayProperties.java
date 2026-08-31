@@ -23,6 +23,10 @@ public class OrderGatewayProperties {
   private String city2Ne = "sim-city2";
   private String simulatorCity1TargetUrl = "https://127.0.0.1:26335";
   private String simulatorCity2TargetUrl = "https://127.0.0.1:26336";
+  private String simulatorCity1Username = "admin";
+  private String simulatorCity1Password = "Admin@123";
+  private String simulatorCity2Username = "admin";
+  private String simulatorCity2Password = "Admin@123";
   private int simulatorConnectTimeoutSeconds = 30;
   private int simulatorReadTimeoutSeconds = 30;
   private int loginTimeoutSeconds = 15;
@@ -31,7 +35,7 @@ public class OrderGatewayProperties {
   private String omcCredentialsPath = "classpath:spn_agent_credentials.json";
   private String omcLoginPath = "/rest/plat/smapp/v1/oauth/token";
   private String omcLoginMethod = "PUT";
-  private String omcTokenResponseHeader = "bearToken";
+  private String omcTokenResponseHeader = "accessSession";
   private String omcRequestAuthHeader = "Authorization";
   private String omcRequestAuthScheme = "Bearer";
   private int omcTokenTtlSeconds = 3600;
@@ -136,6 +140,38 @@ public class OrderGatewayProperties {
 
   public int getSimulatorConnectTimeoutSeconds() {
     return simulatorConnectTimeoutSeconds;
+  }
+
+  public String getSimulatorCity1Username() {
+    return simulatorCity1Username;
+  }
+
+  public void setSimulatorCity1Username(String value) {
+    simulatorCity1Username = value;
+  }
+
+  public String getSimulatorCity1Password() {
+    return simulatorCity1Password;
+  }
+
+  public void setSimulatorCity1Password(String value) {
+    simulatorCity1Password = value;
+  }
+
+  public String getSimulatorCity2Username() {
+    return simulatorCity2Username;
+  }
+
+  public void setSimulatorCity2Username(String value) {
+    simulatorCity2Username = value;
+  }
+
+  public String getSimulatorCity2Password() {
+    return simulatorCity2Password;
+  }
+
+  public void setSimulatorCity2Password(String value) {
+    simulatorCity2Password = value;
   }
 
   public void setSimulatorConnectTimeoutSeconds(int value) {

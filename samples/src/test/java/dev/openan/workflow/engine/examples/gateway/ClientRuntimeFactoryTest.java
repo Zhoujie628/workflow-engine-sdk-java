@@ -21,6 +21,29 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 
 class ClientRuntimeFactoryTest {
 
+  @Test
+  void rejectsRemoteSimulatorBindButAllowsTheSameHostForARealPlatform() {
+    WorkbenchClientProperties workbench = new WorkbenchClientProperties();
+    workbench.setTransportMode("order");
+    OrderGatewayProperties order = configuredOrder();
+    order.setHost("192.0.2.17");
+    order.setOmcAuthEnabled(false);
+    order.setSimulatorEnabled(true);
+    assertThrows(IllegalArgumentException.class, () -> new ClientRuntimeFactory(workbench, order));
+    order.setSimulatorEnabled(false);
+    assertNotNull(new ClientRuntimeFactory(workbench, order));
+  }
+
+  @Test
+  void directModeDoesNotReadSimulatorCredentialsEvenWhenItsFlagIsLeftEnabled() {
+    WorkbenchClientProperties workbench = new WorkbenchClientProperties();
+    workbench.setTransportMode("direct");
+    OrderGatewayProperties order = configuredOrder();
+    order.setSimulatorEnabled(true);
+    order.setSimulatorCity1Password("enc:invalid-do-not-read");
+    assertNull(new ClientRuntimeFactory(workbench, order).create());
+  }
+
   private static OrderGatewayProperties configuredOrder() {
     OrderGatewayProperties order = new OrderGatewayProperties();
     order.setHost("instruction-platform.example");

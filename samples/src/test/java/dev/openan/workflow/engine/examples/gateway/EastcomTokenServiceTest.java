@@ -18,6 +18,31 @@ import org.junit.jupiter.api.Test;
 class EastcomTokenServiceTest {
 
   @Test
+  void defaultTokenHeaderMatchesPackagedConfigurationAndProfiles() throws Exception {
+    assertEquals(
+        "accessSession",
+        new dev.openan.workflow.engine.examples.config.OrderGatewayProperties()
+            .getOmcTokenResponseHeader());
+    var sources = new org.springframework.core.env.MutablePropertySources();
+    new org.springframework.boot.env.YamlPropertySourceLoader()
+        .load("sample", new org.springframework.core.io.ClassPathResource("application.yml"))
+        .forEach(sources::addLast);
+    assertEquals(
+        "accessSession",
+        new org.springframework.core.env.PropertySourcesPropertyResolver(sources)
+            .getProperty("a2a.order.omc-token-response-header"));
+    var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    for (String path :
+        new String[] {"/spn_agent_credentials.json", "/test-order-credentials.json"}) {
+      try (var input = getClass().getResourceAsStream(path)) {
+        var headers = mapper.readTree(input).findValues("order_token_header");
+        assertEquals(1, headers.size(), path);
+        assertEquals("accessSession", headers.get(0).asText(), path);
+      }
+    }
+  }
+
+  @Test
   void resolvesAgentRouteAndCachesTokenUntilInvalidated() {
     AtomicInteger fetches = new AtomicInteger();
     EastcomTokenService service =

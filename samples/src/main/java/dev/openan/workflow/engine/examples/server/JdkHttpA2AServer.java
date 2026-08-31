@@ -471,7 +471,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
     }
     if ("admin".equals(userName) && "Admin@123".equals(password)) {
       String token = UUID.randomUUID().toString();
-      exchange.getResponseHeaders().set("bearToken", token);
+      exchange.getResponseHeaders().set("accessSession", token);
       log.info("[{}] Login succeeded, token issued", agentName);
       sendJson(exchange, 200, Map.of("accessSession", token));
     } else {

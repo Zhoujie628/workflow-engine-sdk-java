@@ -26,6 +26,38 @@ public class EastcomOrderSimulatorConfiguration {
     return targets;
   }
 
+  static Map<String, EastcomOrderSimulatorServer.NeCredentials> simulatorCredentials(
+      OrderGatewayProperties properties) {
+    Map<String, EastcomOrderSimulatorServer.NeCredentials> credentials = new LinkedHashMap<>();
+    putCredentials(
+        credentials,
+        properties.getCity1Ne(),
+        properties.getSimulatorCity1Username(),
+        properties.getSimulatorCity1Password());
+    putCredentials(
+        credentials,
+        properties.getCity2Ne(),
+        properties.getSimulatorCity2Username(),
+        properties.getSimulatorCity2Password());
+    return Map.copyOf(credentials);
+  }
+
+  private static void putCredentials(
+      Map<String, EastcomOrderSimulatorServer.NeCredentials> credentials,
+      String ne,
+      String username,
+      String password) {
+    if (ne == null || ne.isBlank()) {
+      throw new IllegalArgumentException("Simulator NE must not be blank");
+    }
+    var configured = new EastcomOrderSimulatorServer.NeCredentials(username, password);
+    var previous = credentials.putIfAbsent(ne.trim(), configured);
+    if (previous != null && !previous.equals(configured)) {
+      throw new IllegalArgumentException(
+          "The same simulator NE cannot have different credentials: " + ne);
+    }
+  }
+
   private static void putTarget(
       Map<String, String> targets, String ne, String targetUrl, String city) {
     if (ne == null || ne.isBlank()) {
@@ -71,7 +103,8 @@ public class EastcomOrderSimulatorConfiguration {
             properties.getClientSecret(),
             simulatorTargets(properties),
             Math.multiplyExact(properties.getSimulatorConnectTimeoutSeconds(), 1_000),
-            Math.multiplyExact(properties.getSimulatorReadTimeoutSeconds(), 1_000));
+            Math.multiplyExact(properties.getSimulatorReadTimeoutSeconds(), 1_000),
+            simulatorCredentials(properties));
     server.start();
     return server;
   }

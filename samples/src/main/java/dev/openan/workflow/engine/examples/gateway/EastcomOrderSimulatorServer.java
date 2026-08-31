@@ -120,6 +120,35 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       Map<String, String> neTargets,
       int connectTimeoutMillis,
       int readTimeoutMillis) {
+    this(
+        host,
+        port,
+        username,
+        password,
+        clientId,
+        clientSecret,
+        neTargets,
+        connectTimeoutMillis,
+        readTimeoutMillis,
+        Map.of());
+  }
+
+  /**
+   * Configures simulator-managed OMC credentials by NE, separately from platform authentication.
+   */
+  public EastcomOrderSimulatorServer(
+      String host,
+      int port,
+      String username,
+      String password,
+      String clientId,
+      String clientSecret,
+      Map<String, String> neTargets,
+      int connectTimeoutMillis,
+      int readTimeoutMillis,
+      Map<String, NeCredentials> neCredentials) {
+    dev.openan.workflow.engine.examples.server.LocalServerAddress.requireLocalHost(
+        host, "a2a.order.host (simulator bind address)");
     this.host = Objects.requireNonNull(host, "host");
     if (port <= 0 || port > 65535) {
       throw new IllegalArgumentException("port must be between 1 and 65535");
@@ -132,6 +161,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             emptyToNull(clientId),
             emptyToNull(clientSecret),
             normalizeTargets(neTargets),
+            resolveCredentials(neTargets, neCredentials),
             positiveTimeout(connectTimeoutMillis, "connectTimeoutMillis"),
             positiveTimeout(readTimeoutMillis, "readTimeoutMillis"));
   }
@@ -153,6 +183,33 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
               normalized.put(ne, withoutTrailingSlash(target));
             });
     return Map.copyOf(normalized);
+  }
+
+  private static Map<String, NeCredentials> resolveCredentials(
+      Map<String, String> targets, Map<String, NeCredentials> configured) {
+    if (!targets.keySet().containsAll(configured.keySet())) {
+      throw new IllegalArgumentException("Simulator credentials reference an unconfigured NE");
+    }
+    Map<String, NeCredentials> result = new LinkedHashMap<>();
+    targets
+        .keySet()
+        .forEach(
+            ne ->
+                result.put(
+                    ne, configured.getOrDefault(ne, new NeCredentials("admin", "Admin@123"))));
+    return Map.copyOf(result);
+  }
+
+  static String substituteCredentials(String body, NeCredentials credentials) {
+    if (!body.contains("${ne:")) return body;
+    try {
+      var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+      var json = mapper.readTree(body);
+      return mapper.writeValueAsString(substituteNode(json, credentials));
+    } catch (Exception e) {
+      // Never attach the parser exception: its source excerpt may contain a login password.
+      throw new IllegalArgumentException("Simulator NE placeholders require a valid JSON body");
+    }
   }
 
   private static String withoutTrailingSlash(String value) {
@@ -187,6 +244,46 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             "[EastcomSimulator] REQUEST_ENCODING_FALLBACK charset=GB18030, reason=invalid_utf8");
       }
       return new String(data.toByteArray(), Charset.forName("GB18030"));
+    }
+  }
+
+  private static com.fasterxml.jackson.databind.JsonNode substituteNode(
+      com.fasterxml.jackson.databind.JsonNode node, NeCredentials credentials) {
+    if (node.isTextual()) {
+      return com.fasterxml.jackson.databind.node.TextNode.valueOf(
+          node.textValue()
+              .replace("${ne:grantType}", "password")
+              .replace("${ne:username}", credentials.username())
+              .replace("${ne:password}", credentials.password()));
+    }
+    if (node instanceof com.fasterxml.jackson.databind.node.ObjectNode object) {
+      object
+          .properties()
+          .forEach(
+              entry -> object.set(entry.getKey(), substituteNode(entry.getValue(), credentials)));
+    } else if (node instanceof com.fasterxml.jackson.databind.node.ArrayNode array) {
+      for (int i = 0; i < array.size(); i++)
+        array.set(i, substituteNode(array.get(i), credentials));
+    }
+    return node;
+  }
+
+  /** Simulator-only managed credentials. Passwords may use the existing enc: credential format. */
+  public record NeCredentials(String username, String password) {
+    public NeCredentials {
+      if (username == null || username.isBlank() || password == null || password.isBlank()) {
+        throw new IllegalArgumentException(
+            "Simulator NE username and password must both be non-blank");
+      }
+      password = dev.openan.workflow.engine.client.CredentialCrypto.decryptIfNeeded(password);
+      if (password.isBlank()) {
+        throw new IllegalArgumentException("Simulator NE password must not be blank");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "NeCredentials[username=***, password=***]";
     }
   }
 
@@ -283,6 +380,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     private final String clientId;
     private final String clientSecret;
     private final Map<String, String> neTargets;
+    private final Map<String, NeCredentials> neCredentials;
     private final AtomicBoolean shuttingDown = new AtomicBoolean();
     private final java.util.Set<HttpURLConnection> activeForwardConnections =
         ConcurrentHashMap.newKeySet();
@@ -291,7 +389,6 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     private final SSLContext sslContext = SslContextFactory.createTrustAll();
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
-    private volatile String lastResolvedTarget;
 
     private SimulatorService(
         String username,
@@ -299,6 +396,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         String clientId,
         String clientSecret,
         Map<String, String> neTargets,
+        Map<String, NeCredentials> neCredentials,
         int connectTimeoutMillis,
         int readTimeoutMillis) {
       this.username = Objects.requireNonNull(username, "username");
@@ -306,6 +404,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       this.clientId = clientId;
       this.clientSecret = clientSecret;
       this.neTargets = neTargets;
+      this.neCredentials = neCredentials;
       this.connectTimeoutMillis = connectTimeoutMillis;
       this.readTimeoutMillis = readTimeoutMillis;
     }
@@ -321,20 +420,6 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       if (connection.getRequestProperty("Content-Type") == null) {
         connection.setRequestProperty("Content-Type", "application/json");
       }
-    }
-
-    /** Case-insensitive header lookup (HTTP header names are case-insensitive). */
-    private static String findHeader(Map<String, String> headers, String name) {
-      String exact = headers.get(name);
-      if (exact != null) {
-        return exact;
-      }
-      for (var entry : headers.entrySet()) {
-        if (name.equalsIgnoreCase(entry.getKey())) {
-          return entry.getValue();
-        }
-      }
-      return null;
     }
 
     private static OrderHttpResponse responseWithHeader(String body) {
@@ -381,13 +466,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
           .build();
     }
 
-    private static String substituteManagedNeCredentials(String path, String body) {
-      if (path == null || !path.contains("/oauth/token")) {
-        return body;
-      }
-      return body.replace("${ne:grantType}", "password")
-          .replace("${ne:username}", "admin")
-          .replace("${ne:password}", "Admin@123");
+    private String substituteManagedNeCredentials(String ne, String body) {
+      return substituteCredentials(body, neCredentials.get(ne));
     }
 
     private static OrderHttpResponse responseChunk(String body) {
@@ -527,14 +607,14 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
         return Mono.just(OrderResourceResponse.getDefaultInstance());
       }
       String targetUrl = neTargets.get(neName);
-      lastResolvedTarget = targetUrl;
+      NeCredentials credentials = neCredentials.get(neName);
       log.info("[EastcomSimulator] LOAD_NE_ACCEPTED ne={}, target={}", neName, targetUrl);
       return Mono.just(
           OrderResourceResponse.newBuilder()
               .setNeUrl(targetUrl)
               .putNeParams("grantType", "password")
-              .putNeParams("username", "admin")
-              .putNeParams("password", "Admin@123")
+              .putNeParams("username", credentials.username())
+              .putNeParams("password", credentials.password())
               .build());
     }
 
@@ -580,10 +660,14 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
             String[] parsedMethod = {"POST"};
             String[] parsedPath = {"/"};
             Map<String, String> parsedHeaders = new LinkedHashMap<>();
+            String[] requestNe = {""};
 
             Disposable requestDisposable =
                 requests.subscribe(
                     req -> {
+                      if (req.hasInfo()) {
+                        requestNe[0] = req.getInfo().getParamsOrDefault("deviceName", "");
+                      }
                       String data = decodeRequestData(req.getData());
                       if (!headersParsed.get()
                           && (data.startsWith("POST")
@@ -625,24 +709,15 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                         forwarded.set(true);
                         String httpMethod = parsedMethod[0];
                         String httpPath = parsedPath[0];
-                        String body = substituteManagedNeCredentials(httpPath, bodyBuf.toString());
-                        // The SDK's configureHeaderHost sets the HTTP Host header to the
-                        // full neUrl (e.g. "https://127.0.0.1:26335") returned by
-                        // loadNeResource.  Using this per-request header avoids the race
-                        // condition on the shared lastResolvedTarget field when two NEs
-                        // call loadNeResource concurrently on the same RSocket connection.
-                        String hostHeader = findHeader(parsedHeaders, "Host");
-                        String targetBase;
-                        if (hostHeader != null
-                            && (hostHeader.startsWith("http://")
-                                || hostHeader.startsWith("https://"))) {
-                          targetBase = withoutTrailingSlash(hostHeader);
-                        } else {
-                          targetBase =
-                              lastResolvedTarget != null
-                                  ? lastResolvedTarget
-                                  : "http://127.0.0.1:26335";
+                        // SDK 1.1.18 carries deviceName in the first RPC packet. Resolve both
+                        // target and credentials per request, even when two NEs share a URL.
+                        String targetBase = neTargets.get(requestNe[0]);
+                        if (targetBase == null) {
+                          sink.error(new IllegalArgumentException("Unknown or missing request NE"));
+                          return;
                         }
+                        String body =
+                            substituteManagedNeCredentials(requestNe[0], bodyBuf.toString());
                         String forwardUrl =
                             targetBase + (httpPath.startsWith("/") ? httpPath : "/" + httpPath);
                         boolean streaming = forwardUrl.endsWith("/message:stream");

@@ -16,6 +16,9 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class EastcomOrderSimulatorServerTest {
 
@@ -90,8 +93,23 @@ class EastcomOrderSimulatorServerTest {
     }
   }
 
-  @Test
-  void tokenServiceObtainsBearerHeaderThroughTheVendorHttpClient() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"", "accessSession", "X-Session"})
+  void tokenServiceObtainsConfiguredOrDefaultHeaderThroughTheVendorHttpClient(
+      String profileHeader, @TempDir java.nio.file.Path tempDir) throws Exception {
+    String responseHeader = profileHeader.isEmpty() ? "accessSession" : profileHeader;
+    var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    com.fasterxml.jackson.databind.JsonNode credentials;
+    try (var input = getClass().getResourceAsStream("/test-order-credentials.json")) {
+      credentials = mapper.readTree(input);
+    }
+    var scheme =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            credentials.path("profiles").path("shared-omc").path("bearerAuth");
+    if (profileHeader.isEmpty()) scheme.remove("order_token_header");
+    else scheme.put("order_token_header", profileHeader);
+    var credentialsPath = tempDir.resolve("credentials.json");
+    mapper.writeValue(credentialsPath.toFile(), credentials);
     int platformPort = availablePort();
     int omcPort = availablePort();
     com.sun.net.httpserver.HttpServer omc =
@@ -105,7 +123,7 @@ class EastcomOrderSimulatorServerTest {
           assertTrue(body.contains("omc-user"));
           assertTrue(body.contains("city1-password"));
           assertFalse(body.contains("sim-password"));
-          exchange.getResponseHeaders().set("bearToken", "omc-token-through-eastcom");
+          exchange.getResponseHeaders().set(responseHeader, "omc-token-through-eastcom");
           byte[] response = "{}".getBytes(StandardCharsets.UTF_8);
           exchange.sendResponseHeaders(200, response.length);
           exchange.getResponseBody().write(response);
@@ -133,7 +151,7 @@ class EastcomOrderSimulatorServerTest {
 
       assertEquals(
           "omc-token-through-eastcom",
-          new EastcomTokenService(properties, "classpath:test-order-credentials.json")
+          new EastcomTokenService(properties, credentialsPath.toString())
               .getOrRefresh("SPN Domain Agent City1"));
     } finally {
       omc.stop(0);
