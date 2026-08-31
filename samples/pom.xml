@@ -31,7 +31,7 @@
             <artifactId>a2a-java-sdk-spec-grpc</artifactId>
             <version>${a2a.java.sdk.version}</version>
         </dependency>
-        <!-- Host-owned content generation; the engine itself depends only on a2a-t-core. -->
+        <!-- Content generation belongs to the host, not the engine. -->
         <dependency>
             <groupId>net.openan.a2a-t.sdk</groupId>
             <artifactId>a2a-t-client</artifactId>

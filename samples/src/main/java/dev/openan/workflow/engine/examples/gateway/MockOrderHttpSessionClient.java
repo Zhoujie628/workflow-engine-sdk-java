@@ -20,7 +20,6 @@
 package dev.openan.workflow.engine.examples.gateway;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,7 +75,7 @@ public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.Ord
     }
 
     @Override
-    public OrderHttpSessionStrResponse execute(
+    public OrderResponse execute(
             OrderHttpSessionStrRequest request, int timeoutMillis) {
         long started = System.nanoTime();
         String uriPath = request.getUriPath();
@@ -131,10 +130,7 @@ public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.Ord
                     responseBody.length(),
                     elapsedMillis(started));
 
-            return OrderHttpSessionStrResponse.newBuilder()
-                    .setStatus(status)
-                    .setBody(responseBody)
-                    .build();
+            return new OrderResponse(status, responseBody, Map.of(), "mock-raw-data");
         } catch (Exception e) {
             log.error(
                     "[MockOrderClient] EXECUTE_FAILED elapsedMs={}, errorType={}, message={}",
@@ -142,10 +138,7 @@ public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.Ord
                     e.getClass().getSimpleName(),
                     e.getMessage(),
                     e);
-            return OrderHttpSessionStrResponse.newBuilder()
-                    .setStatus(500)
-                    .setBody("Error: " + e.getMessage())
-                    .build();
+            return new OrderResponse(500, "Error: " + e.getMessage(), Map.of(), "mock-raw-data");
         }
     }
 
@@ -154,7 +147,7 @@ public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.Ord
     public void executeStreaming(
             OrderHttpSessionStrRequest request,
             int timeoutMillis,
-            Predicate<OrderHttpSessionStrResponse> responseSink) {
+            Predicate<OrderResponse> responseSink) {
         long started = System.nanoTime();
         HttpURLConnection conn = null;
         int chunks = 0;
@@ -238,8 +231,8 @@ public class MockOrderHttpSessionClient implements OrderGatewayClientRuntime.Ord
         return conn;
     }
 
-    private static OrderHttpSessionStrResponse response(int status, String body) {
-        return OrderHttpSessionStrResponse.newBuilder().setStatus(status).setBody(body).build();
+    private static OrderResponse response(int status, String body) {
+        return new OrderResponse(status, body, Map.of(), "mock-raw-data");
     }
 
     private HttpURLConnection openConnection(String urlStr) throws IOException {

@@ -12,13 +12,15 @@ import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.internal.RequestBodyUriSpec;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.internal.SseListener;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.List;
+import java.util.LinkedHashMap;
+import dev.openan.workflow.engine.client.WireLog;
 import java.util.function.Predicate;
 
 /**
@@ -80,53 +82,108 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
     }
 
     @Override
-    public OrderHttpSessionStrResponse execute(
-            OrderHttpSessionStrRequest request, int timeoutMillis) {
-        RequestBodyUriSpec spec = prepareRequest(request, timeoutMillis);
-        HttpResponse response = spec.send();
-        int status = response.statusCode();
-        String body = response.responseContent().asString();
-        log.info(
-                "[OrderHttpClient] EXECUTE_DONE ne={}, status={}, bodyChars={}",
-                ne,
-                status,
-                body != null ? body.length() : 0);
-        return OrderHttpSessionStrResponse.newBuilder()
-                .setStatus(status)
-                .setBody(body != null ? body : "")
-                .build();
+    public OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        Map<String, String> trace = trace();
+        try {
+            RequestBodyUriSpec spec = prepareRequest(request, timeoutMillis);
+            logRequest(requestId, request, trace);
+            HttpResponse response = spec.send();
+            OrderResponse result = new OrderResponse(response.statusCode(),
+                    response.responseContent().asString(), responseHeaders(response.headers().entries()), "sdk-body");
+            logResponse(requestId, request, result, trace);
+            return result;
+        } catch (RuntimeException error) {
+            logFailure(requestId, request, trace, error);
+            throw error;
+        }
     }
 
     @Override
-    public void executeStreaming(
-            OrderHttpSessionStrRequest request,
-            int timeoutMillis,
-            Predicate<OrderHttpSessionStrResponse> responseSink) {
-        RequestBodyUriSpec spec = prepareRequest(request, timeoutMillis);
-        spec.sendSse(new SseListener() {
-            @Override
-            public void onHeader(HttpClientResponse r) {
-                int code = r.status().code();
-                if (code != 200) {
-                    throw new IllegalStateException(
-                            "SSE response error status: " + code);
+    public void executeStreaming(OrderHttpSessionStrRequest request, int timeoutMillis,
+            Predicate<OrderResponse> responseSink) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        Map<String, String> trace = trace();
+        java.util.concurrent.atomic.AtomicInteger status = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<Map<String, List<String>>> headers =
+                new java.util.concurrent.atomic.AtomicReference<>(Map.of());
+        WireLog.Body observation = new WireLog.Body(true, true, frame ->
+                WireLog.inContext(trace, () -> WireLog.record("ORDER_SDK_RESPONSE", "RESPONSE_BODY", requestId,
+                        request.getUriPath(), request.getMethod(), status.get() == 0 ? null : status.get(),
+                        Map.of(), "sdk-sse-text", frame[0],
+                        "SDK string callbacks assembled as SSE; original byte encoding/OMC wire=unobserved; "
+                                + frame[1])));
+        boolean interrupted = true;
+        try {
+            RequestBodyUriSpec spec = prepareRequest(request, timeoutMillis);
+            logRequest(requestId, request, trace);
+            spec.sendSse(new SseListener() {
+                @Override
+                public void onHeader(HttpClientResponse response) {
+                    status.set(response.status().code());
+                    headers.set(responseHeaders(response.responseHeaders().entries()));
+                    logResponse(requestId, request, new OrderResponse(status.get(), "", headers.get(), "sdk-headers"), trace);
+                    if (status.get() < 200 || status.get() >= 300)
+                        throw new IllegalStateException("SSE response error status: " + status.get());
                 }
-            }
 
-            @Override
-            public void onBodyString(String content) {
-                OrderHttpSessionStrResponse chunk = OrderHttpSessionStrResponse.newBuilder()
-                        .setStatus(200)
-                        .setBody(content != null ? content : "")
-                        .build();
-                responseSink.test(chunk);
-            }
+                @Override
+                public void onBodyString(String content) {
+                    if (status.get() == 0) throw new IllegalStateException("SDK delivered a body before response headers");
+                    OrderResponse chunk = new OrderResponse(status.get(), content, headers.get(), "sdk-text-chunk");
+                    observation.accept(java.nio.ByteBuffer.wrap(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    responseSink.test(chunk);
+                }
 
-            @Override
-            public java.lang.Boolean isOnString() {
-                return true;
-            }
-        });
+                @Override
+                public java.lang.Boolean isOnString() { return true; }
+            });
+            interrupted = false;
+        } catch (RuntimeException error) {
+            logFailure(requestId, request, trace, error);
+            throw error;
+        } finally {
+            observation.end(interrupted);
+            WireLog.inContext(trace, () -> WireLog.record("ORDER_SDK_RESPONSE", "STREAM_EXIT", requestId,
+                    request.getUriPath(), request.getMethod(), status.get() == 0 ? null : status.get(),
+                    Map.of(), "sdk-lifecycle", "", "sendSse returned; OMC wire=unobserved"));
+        }
+    }
+
+    private Map<String, String> trace() {
+        Map<String, String> trace = new LinkedHashMap<>(WireLog.context());
+        trace.put("NE", ne);
+        trace.put("transport", "order");
+        return Map.copyOf(trace);
+    }
+
+    private static Map<String, List<String>> responseHeaders(Iterable<Map.Entry<String, String>> entries) {
+        Map<String, List<String>> result = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (var entry : entries) result.computeIfAbsent(entry.getKey(), key -> new java.util.ArrayList<>()).add(entry.getValue());
+        return result;
+    }
+
+    private static void logRequest(String id, OrderHttpSessionStrRequest request, Map<String, String> trace) {
+        Map<String, List<String>> headers = new LinkedHashMap<>();
+        request.getHeadersMap().forEach((key, value) -> headers.put(key, List.of(value)));
+        WireLog.inContext(trace, () -> WireLog.record("ORDER_FORWARD_REQUEST", "REQUEST", id,
+                request.getUriPath(), request.getMethod(), null, headers, "serialized-utf8", request.getBody(),
+                "supplied to vendor HTTP SDK; platform credentials/OMC wire=unobserved"));
+    }
+
+    private static void logResponse(String id, OrderHttpSessionStrRequest request,
+            OrderResponse response, Map<String, String> trace) {
+        WireLog.inContext(trace, () -> WireLog.record("ORDER_SDK_RESPONSE", "RESPONSE", id,
+                request.getUriPath(), request.getMethod(), response.status(), response.headers(),
+                response.representation(), response.body(),
+                "vendor callback; only SDK-delivered fields observed; original byte encoding/OMC wire=unobserved"));
+    }
+
+    private static void logFailure(String id, OrderHttpSessionStrRequest request,
+            Map<String, String> trace, RuntimeException error) {
+        WireLog.inContext(trace, () -> WireLog.record("ORDER_SDK_RESPONSE", "FAILURE", id,
+                request.getUriPath(), request.getMethod(), null, Map.of(), "sdk-error", "",
+                "errorType=" + error.getClass().getSimpleName()));
     }
 
     @Override
@@ -154,7 +211,7 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
         } else if ("DELETE".equalsIgnoreCase(method)) {
             spec = httpClient.delete();
         } else {
-            spec = httpClient.post();
+            throw new IllegalArgumentException("Unsupported forwarded HTTP method: " + method);
         }
         spec.uri(request.getUriPath());
         Map<String, String> headers = request.getHeadersMap();

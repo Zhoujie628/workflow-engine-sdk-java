@@ -21,7 +21,6 @@ package dev.openan.workflow.engine.examples.gateway;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.core.common.ServerInfo;
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 
 import com.google.protobuf.util.JsonFormat;
 
@@ -89,8 +88,6 @@ public final class OrderGatewayClientRuntime
             return raw;
         }
     }
-    private static final String INCLUDE_SENSITIVE_HEADERS =
-            "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_SENSITIVE_HEADERS";
     private static final String INCLUDE_BODY = "WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY";
     private static final String MAX_BODY_CHARS = "WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS";
     private static final int DEFAULT_MAX_BODY_CHARS = 100_000;
@@ -310,13 +307,13 @@ public final class OrderGatewayClientRuntime
                             .setBody(body)
                             .build();
             logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
-            OrderHttpSessionStrResponse response =
+            OrderResponse response =
                     handle.session().execute(request, config.timeoutMillis);
             logProtocolResponse(requestId, agentCard.name(), 1, response);
             validateResponse(response);
             org.a2aproject.sdk.grpc.Task.Builder task =
                     org.a2aproject.sdk.grpc.Task.newBuilder();
-            JsonFormat.parser().merge(response.getBody(), task);
+            JsonFormat.parser().merge(response.body(), task);
             handle.release();
             handle = null;
             log.info(
@@ -364,6 +361,7 @@ public final class OrderGatewayClientRuntime
             handle = null;
             return SendMessageResult.builder()
                     .text(A2ATransport.extractResponseText(events))
+                    .receivedMessages(dev.openan.workflow.engine.client.ProtocolResponses.assemble(events))
                     .task(A2ATransport.extractResponseTask(events))
                     .taskState(A2ATransport.extractResponseTaskState(events))
                     .metadata(A2ATransport.extractResponseMetadata(events))
@@ -395,11 +393,11 @@ public final class OrderGatewayClientRuntime
             Consumer<ClientEvent> eventSink,
             String requestId,
             String agentName) {
-        OrderHttpSessionStrResponse response = session.execute(request, config.timeoutMillis);
+        OrderResponse response = session.execute(request, config.timeoutMillis);
         logProtocolResponse(requestId, agentName, 1, response);
         validateResponse(response);
         List<ClientEvent> events =
-                responseParser.parseNonStreaming(response.getBody(), eventSink);
+                responseParser.parseNonStreaming(response.body(), eventSink);
         if (events.isEmpty()) {
             throw new IllegalStateException("Gateway message:send response has no A2A payload");
         }
@@ -436,8 +434,8 @@ public final class OrderGatewayClientRuntime
                             requestId,
                             agentName,
                             chunkCount.get(),
-                            response.getBody().length());
-                    boolean terminal = parserSession.accept(response.getBody());
+                            response.body().length());
+                    boolean terminal = parserSession.accept(response.body());
                     if (terminal) {
                         log.info(
                                 "[OrderGateway] STREAM_TERMINAL requestId={}, agent={}, chunk={}, sseFrame={}",
@@ -464,11 +462,11 @@ public final class OrderGatewayClientRuntime
 
     private static void logSseFrame(
             String requestId, String agentName, int frame, String sseFrame) {
-        if (!protocolLog.isDebugEnabled()) {
+        if (!protocolLog.isDebugEnabled() || !booleanSetting("WORKFLOW_ENGINE_PROTOCOL_MODEL_PREVIEW", false)) {
             return;
         }
         protocolLog.debug(
-                "<<< [OrderSDK] SSE_FRAME requestId={}, agent={}, frame={}\n=== Body ===\n{}",
+                "MODEL_PREVIEW <<< [OrderSDK] SSE_FRAME requestId={}, agent={}, frame={}\n=== Body ===\n{}",
                 requestId,
                 agentName,
                 frame,
@@ -525,18 +523,18 @@ public final class OrderGatewayClientRuntime
     }
 
     private static void logProtocolResponseHead(
-            String requestId, String agentName, OrderHttpSessionStrResponse response) {
-        if (!protocolLog.isDebugEnabled()) {
+            String requestId, String agentName, OrderResponse response) {
+        if (!protocolLog.isDebugEnabled() || !booleanSetting("WORKFLOW_ENGINE_PROTOCOL_MODEL_PREVIEW", false)) {
             return;
         }
         protocolLog.debug(
-                "<<< [OrderSDK] RESPONSE requestId={}, agent={}\n"
+                "MODEL_PREVIEW <<< [OrderSDK] RESPONSE requestId={}, agent={}\n"
                         + "=== Status ===\n{}\n"
                         + "=== Headers ===\n{}",
                 requestId,
                 agentName,
-                response.getStatus(),
-                formatProtocolHeaders(response.getHeadersMap()));
+                response.status(),
+                formatProtocolHeaders(response.headers()));
     }
 
     private static void logProtocolRequest(
@@ -544,11 +542,11 @@ public final class OrderGatewayClientRuntime
             String agentName,
             String ne,
             OrderHttpSessionStrRequest request) {
-        if (!protocolLog.isDebugEnabled()) {
+        if (!protocolLog.isDebugEnabled() || !booleanSetting("WORKFLOW_ENGINE_PROTOCOL_MODEL_PREVIEW", false)) {
             return;
         }
         protocolLog.debug(
-                ">>> [OrderSDK] REQUEST requestId={}, agent={}, ne={}\n"
+                "MODEL_PREVIEW >>> [OrderSDK] REQUEST requestId={}, agent={}, ne={}\n"
                         + "=== Method/Path ===\n{} {}\n"
                         + "=== Headers ===\n{}\n"
                         + "=== Body ===\n{}",
@@ -565,28 +563,28 @@ public final class OrderGatewayClientRuntime
             String requestId,
             String agentName,
             int frame,
-            OrderHttpSessionStrResponse response) {
-        if (!protocolLog.isDebugEnabled()) {
+            OrderResponse response) {
+        if (!protocolLog.isDebugEnabled() || !booleanSetting("WORKFLOW_ENGINE_PROTOCOL_MODEL_PREVIEW", false)) {
             return;
         }
         protocolLog.debug(
-                "<<< [OrderSDK] RESPONSE requestId={}, agent={}, frame={}\n"
+                "MODEL_PREVIEW <<< [OrderSDK] RESPONSE requestId={}, agent={}, frame={}\n"
                         + "=== Status ===\n{}\n"
                         + "=== Headers ===\n{}\n"
                         + "=== Body ===\n{}",
                 requestId,
                 agentName,
                 frame,
-                response.getStatus(),
-                formatProtocolHeaders(response.getHeadersMap()),
-                formatProtocolBody(prettyJson(response.getBody())));
+                response.status(),
+                formatProtocolHeaders(response.headers()),
+                formatProtocolBody(prettyJson(response.body())));
     }
 
-    private static String formatProtocolHeaders(Map<String, String> headers) {
+    private static String formatProtocolHeaders(Map<String, ?> headers) {
         if (headers == null || headers.isEmpty()) {
             return "(none)";
         }
-        boolean includeSensitive = includeSensitiveHeaders();
+        boolean includeSensitive = false;
         StringBuilder formatted = new StringBuilder();
         headers.forEach(
                 (name, value) ->
@@ -601,15 +599,11 @@ public final class OrderGatewayClientRuntime
         return formatted.toString().trim();
     }
 
-    private static boolean includeSensitiveHeaders() {
-        return booleanSetting(INCLUDE_SENSITIVE_HEADERS, false);
-    }
-
     static String formatProtocolBody(String body) {
-        if (!booleanSetting(INCLUDE_BODY, false)) {
+        if (!booleanSetting(INCLUDE_BODY, true)) {
             return "(body logging disabled)";
         }
-        String value = body != null ? body : "";
+        String value = dev.openan.workflow.engine.client.WireLog.redact(body);
         int maxChars = intSetting(MAX_BODY_CHARS, DEFAULT_MAX_BODY_CHARS);
         if (value.length() <= maxChars) {
             return value;
@@ -656,15 +650,15 @@ public final class OrderGatewayClientRuntime
                 || normalized.contains("secret")
                 || normalized.contains("api-key")
                 || normalized.contains("apikey")
-                || normalized.contains("cookie");
+                || normalized.contains("cookie") || normalized.equals("accesssession") || normalized.contains("password");
     }
 
-    private static void validateResponse(OrderHttpSessionStrResponse response) {
+    private static void validateResponse(OrderResponse response) {
         Objects.requireNonNull(response, "Gateway returned a null response");
-        int status = response.getStatus();
+        int status = response.status();
         if (status != 0 && (status < 200 || status >= 300)) {
             throw new IllegalStateException(
-                    "Gateway HTTP " + status + ": " + abbreviate(response.getBody(), 500));
+                    "Gateway HTTP " + status + ": " + abbreviate(response.body(), 500));
         }
     }
 
@@ -723,12 +717,12 @@ public final class OrderGatewayClientRuntime
     }
 
     interface OrderSession extends AutoCloseable {
-        OrderHttpSessionStrResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis);
+        OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis);
 
         void executeStreaming(
                 OrderHttpSessionStrRequest request,
                 int timeoutMillis,
-                Predicate<OrderHttpSessionStrResponse> responseSink);
+                Predicate<OrderResponse> responseSink);
 
         default String sessionType() {
             String simpleName = getClass().getSimpleName();
