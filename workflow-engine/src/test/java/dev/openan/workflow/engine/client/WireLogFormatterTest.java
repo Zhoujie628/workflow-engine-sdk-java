@@ -107,12 +107,17 @@ class WireLogFormatterTest {
 
     @Test void prettyDisplayDecodesNonAsciiUnicodeEscapesButKeepsStructuralEscapes() {
         String raw = "{\"授权策略\":\"\\u65b0\\u589e\\u52a8\\u7f51\\u64cd\\u4f5c\","
-                + "\"note\":\"line\\u000anext\",\"emoji\":\"\\ud83d\\ude00\"}";
+                + "\"note\":\"line\\u000anext\",\"emoji\":\"\\ud83d\\ude00\","
+                + "\"prompt\":\"请根据\\u003c授权策略的操作类型\\u003e和\\u003c动网操作的授权策略列表\\u003e完成相应的授权操作\","
+                + "\"structural\":\"quote \\u0022 and backslash \\u005c stay\"}";
         String pretty = WireLogFormatter.prettyBody(raw, "serialized-utf8");
         assertTrue(pretty.contains("\"授权策略\": \"新增动网操作\""));
         assertTrue(pretty.contains("\"emoji\": \"😀\""));
-        // structural escapes (\n) stay verbatim; raw observation is untouched
-        assertTrue(pretty.contains("\\u000a"));
+        assertTrue(pretty.contains("请根据<授权策略的操作类型>和<动网操作的授权策略列表>完成相应的授权操作"));
+        // structural and control escapes stay verbatim; raw observation is untouched
+        assertTrue(pretty.contains("line\\u000anext"));
+        assertTrue(pretty.contains("\\u0022"));
+        assertTrue(pretty.contains("\\u005c"));
     }
 
     @Test void displayExpansionIsBoundedAndDoesNotRecurseOnDeepJson() {

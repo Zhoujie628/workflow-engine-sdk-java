@@ -125,6 +125,19 @@ final class WireLogFormatter {
         }
     }
 
+    /**
+     * Characters that may be decoded for the display: printable and not structural. Quotes and backslashes
+     * stay escaped so the displayed JSON stays readable; control characters stay escaped. This decodes both
+     * non-ASCII escapes (for example protobuf-JSON escaping Chinese) and the HTML-safe ASCII escapes
+     * protobuf-JSON emits for angle brackets and ampersands.
+     */
+    private static boolean isDisplayDecodable(int codePoint) {
+        if (codePoint < 0x20) return false;
+        if (codePoint == 0x22 || codePoint == 0x5c) return false;
+        if (codePoint < 0x80) return true;
+        return !Character.isISOControl(codePoint);
+    }
+
     private static String prettyJson(String text) {        String trimmed = text.strip();
         if (!isJsonContainer(trimmed)) return text;
         StringBuilder out = new StringBuilder();
@@ -138,8 +151,8 @@ final class WireLogFormatter {
                 if (escaped) {
                     if (c == 'u') {
                         int cp = decodeUnicodeEscape(trimmed, i);
-                        if (cp >= 0x80) {
-                            // display-only decoding of non-ASCII escapes; structural escapes stay verbatim
+                        if (isDisplayDecodable(cp)) {
+                            // display-only decoding; quotes, backslashes and control escapes stay verbatim
                             int advance = 4;
                             if (Character.isHighSurrogate((char) cp) && trimmed.length() > i + 10
                                     && trimmed.charAt(i + 5) == '\\' && trimmed.charAt(i + 6) == 'u') {
