@@ -1,706 +1,101 @@
 ﻿# A2A-T 执行引擎 SDK 与 AgentScope 结合方案
 
-> 面向工作台研发团队。说明 A2A-T 执行引擎 SDK（a2at-engine-java）与 AgentScope 框架如何在工作台 Agent 化改造中协同定位、划分职责、落地结合，发挥各自最大作用。本文档供双方对方案使用。
+本文为宿主接入推理服务的设计指引，不是已实现的 AgentScope 模块；仓库没有绑定 AgentScope 版本或提供可部署的 Python 服务。
+工作台需要实现桥接、模型配置、工具权限、超时、取消与持久化。接口基线见 [业务回调契约](BUSINESS_CALLBACKS.md)。
 
-> **实现校准（2026-08-25）**：本文的协议 API 以当前执行引擎代码和锁定的
-> A2A-T SDK revision 为准。Authorization-T、Notification-T 是工作台按业务时机发起的独立
-> 协议操作，不是 PSOP 节点；Task-T、Authorization-T、Notification-T 必须使用三套独立的
-> transport/runtime/context。Notification-T 通过 `NotificationSubscription` 管理长连接。
-
----
-
-## 1. 背景与目标
-
-### 1.1 现状
-
-工作台当前为传统 Spring Java 微服务，承载传输工作台智能体的业务逻辑。业务复杂度高，当前 SDK demo 中的工作台智能体（`WorkbenchControlPoint`）为打桩实现。
-
-工作台团队计划从传统 Spring 微服务做 Agent 化改造，跟上行业趋势，拟采用 AgentScope 框架。
-
-### 1.2 目标
-
-- 工作台集成 A2A-T 执行引擎 SDK，通过编排中心编排，调度各个智能体
-- 业务逻辑交还给工作台自己，但用 AgentScope 承载复杂业务决策
-- SDK 与 AgentScope 各司其长，不产生职责重叠或编排引擎冲突
-
-### 1.3 本文回答的问题
-
-SDK 和 AgentScope 怎么结合才能发挥最大作用？边界在哪里？具体怎么落地？
-
----
-
-## 2. 核心判断：两个框架在不同层，互补而非竞争
-
-A2A-T 执行引擎 SDK 和 AgentScope 解决的是完全不同层次的问题：
-
-| 维度 | A2A-T 执行引擎 SDK | AgentScope |
-|------|-------------------|------------|
-| 解决的问题 | 智能体**之间**怎么协作 | 单个智能体**内部**怎么思考 |
-| 层次定位 | 跨组织编排层 + A2A-T 标准协议层 | 智能体内部智能层（推理 + 工具 + 记忆） |
-| 回答的问题 | 谁、什么时候、调哪个智能体 | 拿到任务后怎么想、怎么做、调什么工具 |
-| 协议合规 | A2A-T 四类扩展全量承载 | 不涉及跨组织协议 |
-| 工作流拓扑 | PSOP 工作流（来自编排中心）驱动 DAG 遍历 | 不持有跨智能体工作流拓扑 |
-| 技术栈 | Java（Spring Boot starter） | Python（社区生态） |
-
-**结论：两者是互补关系，不是替代关系。** AgentScope 管的是每个智能体大脑内部的推理循环；SDK 管的是智能体之间怎么按照标准协议和工作流协作。结合点在 SDK 的 `ControlPoint` 接口。
-
----
-
-## 3. SDK 架构现状速览
-
-### 3.1 三个 Maven 模块
-
-| 模块 | 作用 | 工作台是否需要实现 |
-|------|------|------------------|
-| `workflow-engine` | 核心 SDK：客户端、工作流执行、控制点、模型 | 否，直接引用 |
-| `spring-boot-starter` | Spring Boot 自动配置，暴露 A2A-T 服务端端点 | 只需提供 `@Component AgentExecutor` |
-| `samples` | demo（打桩工作台 + 城市 OMC 智能体） | 参考用，不集成 |
-
-### 3.2 核心 API 表面
+## 1. 集成边界
 
 ```mermaid
-graph TD
-    ORCH["编排中心 (Python/FastAPI)<br/>PSOP 工作流存储 + 搜索 API"]
-    LOAD["LoadPsop.search() / load()<br/>从编排中心搜索 + 加载工作流"]
-    EXEC["ExecutePsop.builder()<br/>高层工作流执行器（加载->执行->事件->持久化）<br/>.psop(workflow)<br/>.agentCards(cards)<br/>.controlPoint(cp) ← 工作台业务决策回调（AgentScope 插入点）<br/>.engineClient(client)<br/>.execute()"]
-    WEC["WorkflowEngineClient<br/>出站发送门面（Task-T + 协商循环 + 认证）<br/>sendMessage(agent, msg)"]
-    WB["工作台业务生命周期"]
-    EXT["ExtensionSender<br/>独立协议操作门面（Authorization-T / Notification-T）"]
-    TRANSPORT["A2ATransport<br/>底层实现复用；三类协议实例隔离"]
-
-    ORCH --> LOAD
-    LOAD --> EXEC
-    WB --> EXEC
-    WB --> EXT
-    EXEC --> WEC
-    WEC --> TRANSPORT
-    EXT --> TRANSPORT
+flowchart LR
+    REG[注册中心 AgentCard] --> HOST[宿主工作台]
+    ORCH[编排中心 workflow] --> HOST
+    HOST --> ENGINE[执行引擎 SDK]
+    ENGINE --> CP[ControlPoint 业务回调]
+    CP --> BRIDGE[宿主 ReasoningBridge]
+    BRIDGE --> REASON[AgentScope 推理服务]
+    REASON --> TOOLS[授权范围内的业务工具]
+    ENGINE --> ORDER[东信 Order 适配器]
+    ORDER --> OMC[OMC]
+    ENGINE --> DIRECT[直连适配器]
+    DIRECT --> OMC
 ```
 
-### 3.3 工作台需要实现的三个组件
+跨智能体流程由设计态 DAG 与执行引擎负责；AgentScope 只处理当前回调，不再实现一套跨城市调度。
+A2A 信封、认证、协议状态、响应组装由引擎处理；宿主桥接层调用 A2A-T 内容 API，向引擎返回最终内容。模板和业务 metadata 是否进入推理服务由宿主决定；认证密钥不能交给模型。
+注册中心提供 AgentCard，编排中心提供 workflow，两者职责不同。
 
-| 组件 | 接口/类 | 职责 | 是否 AgentScope 插入点 |
-|------|--------|------|---------------------|
-| AgentExecutor | `org.a2aproject.sdk.server.agentexecution.AgentExecutor` | A2A 服务端入口，接收 Task-T | 入站入口，可委派 |
-| ControlPoint | `dev.openan.workflow.engine.control.ControlPoint` | 工作流决策回调（4 个方法） | **是，主要插入点** |
+## 2. 四回调
 
-### 3.4 A2A-T 四类扩展的承载划分
+| 回调 | 输入 | 返回/职责 |
+|---|---|---|
+| onTask | TaskRequest：instruction、input、目标与 workflowInput | MessageContent：仅准备业务内容，不发送 |
+| onSelfTask | 本地任务与分组上游输出 | TaskResult：success、outputs 数组与可选错误 |
+| onRoute | RouteRequest：前置信息、当前结果、候选分支 | RouteDecision：允许的 nextStep |
+| onNegotiation | 当前任务、首次提交、完整收到内容及会话历史 | NegotiationReply：Send(最终内容) 或 Stop(本地终止) |
 
-| A2A-T 扩展 | 业务含义 | 发起方 | 时机 | SDK 承载 | 工作台实现 |
-|-----------|---------|--------|------|---------|-----------|
-| Task-T | 下发诊断任务 | 工作台 -> OMC | 工作流执行中 | `WorkflowEngineClient` | 任务内容（onTask） |
-| Negotiation-T | 参数补充协商 | OMC <-> 工作台 | OMC 发现缺参数时反向发起 | SDK 自动循环 | 补传内容（onNegotiation） |
-| Authorization-T | 抢通授权 | 工作台 -> OMC | 工作台独立业务时机，一次性请求 | `ExtensionSender` 结构化 API | 授权策略字段与 schema |
-| Notification-T | 抢通结果订阅/上报 | 工作台 -> OMC | 工作台独立业务时机，长连接 | `ExtensionSender` + `NotificationSubscription` | 订阅字段、回调与关闭时机 |
+onTask 返回之后由引擎发送，并按远端终态解包；业务不处理 SendMessageResult。
+selfTask 输出可以多个对象或嵌套数组，可作为后续 agent 输入；不限制为 LLM 字符串。
+onRoute 只在条件分支调用，未实现则失败，不默认选择第一个。
+协商从当前城市工单或权威工具取值；缺少可靠信息则拒绝/终止，不固定端口或自动同意。
 
-**设计原则：协议机制由 SDK 承担，业务决策由工作台实现。** AgentScope 只替换"业务决策"列，不碰"SDK 承载"列。
+## 3. Java 桥接
 
----
-
-## 4. ControlPoint 四回调：AgentScope 插入点详解
-
-`ControlPoint` 是 SDK 的业务决策接口，也是 AgentScope 唯一需要插入的地方。四个方法当前在 demo 中全部打桩，正是工作台复杂业务逻辑应该由 AgentScope 承载的位置。
-
-### 4.1 onTask —— 任务下发决策
+下列 ReasoningBridge 是宿主定义的接口，不是引擎新增 API。
+导入 CompletableFuture、control.ControlPoint 和 model 包相应类型：
 
 ```java
-CompletableFuture<TaskResponse> onTask(TaskRequest request, TaskDispatcher taskDispatcher);
-```
-
-**demo 现状（打桩）：** `buildTargetedTaskMessage(step)` 根据 step 名硬编码返回城市任务模板字符串，`buildCity1Task()` / `buildCity2Task()` 写死故障参数。
-
-**问题：** 真实场景下上游输入是自然语言（"上海-广州 SPN 专线 down，光功率异常"），参数不固定、城市不固定、故障类型不固定。硬编码模板无法覆盖。
-
-**AgentScope 替换后：**
-- ReActAgent 接收上游全文上下文
-- 推理：从自然语言中提取目标智能体城市、故障类型、相关参数
-- 调用工具：查工作台业务系统确认端口状态、告警历史
-- 生成只含目标智能体相关参数的自包含任务消息（不混入其他城市信息）
-- 工作台 `onTask` 拿到 AgentScope 生成的 `TaskSubmission`，交给 `TaskDispatcher.dispatch()`
-
-**SDK 仍承担：** Task-T 自然语言/fromData 生成、协商自动循环、认证、扩展头注入。
-
-### 4.2 onSelfTask —— 本地自处理决策
-
-```java
-CompletableFuture<TaskResponse> onSelfTask(TaskRequest request);
-```
-
-**demo 现状（打桩）：** `analyzeFaultLocation()` 关键词匹配 + `LlmHelper.text()` 单轮 LLM 调用，做故障定位汇总。
-
-**问题：** 真实故障分析需要多步推理（查告警 -> 查拓扑 -> 判断故障类型 -> 定位根因），单轮 LLM 不够，且无法跨任务累积记忆。
-
-**AgentScope 替换后：**
-- ReActAgent 多步推理循环：推理 -> 调 OMC API 工具 -> 观察结果 -> 再推理
-- 可调用真实业务工具：查告警系统、查网络拓扑、查历史工单
-- 记忆组件：同一客户、同一专线的历次故障可累积，形成故障画像
-- 输出：结构化故障定位结论
-
-**注意：** `onSelfTask` 是 SELF_LOOP 步，不经过 A2A-T 协议（不传 engineClient）。AgentScope 在这里纯做内部推理，SDK 不介入。
-
-### 4.3 onRoute —— 分支路由决策
-
-```java
-CompletableFuture<RouteDecision> onRoute(String stepName, Map<String,Object> results, List<JumpCondition> conditions);
-```
-
-**demo 现状（打桩）：** 直接 `super.onRoute()` 走默认——取第一个非终端分支。
-
-**问题：** 默认路由只看分支列表顺序，不看上游各智能体返回的实际内容。真实场景需要根据"城市1 诊断出端口故障"还是"城市2 无异常"来决定是否走恢复授权分支。
-
-**AgentScope 替换后：**
-- ReActAgent 读取上游各步的返回结果内容（`results` map）
-- 语义理解：哪些城市有故障、故障类型、严重程度
-- 决策：返回 `RouteDecision.nextStep` 指向正确的下一步
-- 可调工具：查故障知识库判断是否需要抢通授权
-
-### 4.4 onNegotiation —— 参数补充协商
-
-```java
-CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request);
-```
-
-**demo 现状（打桩）：** `NegotiationStrategy.resolve()` 模板化回复。
-
-**问题：** 下游智能体（OMC）返回 INPUT_REQUIRED 说"缺少端口编号"，工作台应该去业务系统查到端口编号再补传，而不是模板回复。
-
-**AgentScope 替换后：**
-- ReActAgent 解析下游智能体缺什么参数
-- 调工具：去工作台业务系统查缺失的参数
-- 返回精准的 `acceptText/acceptData/rejectText/rejectData/abortText/abortData` 决策
-- SDK 自动将补传内容作为 follow-up 重发给下游智能体（工作台不碰重发逻辑）
-
-### 4.5 汇总
-
-| 回调 | demo 打桩方式 | AgentScope 替换价值 | SDK 仍承担 |
-|------|-------------|-------------------|-----------|
-| onTask | 硬编码城市任务模板 | 动态提取参数 + 工具校验 + 强类型 TaskSubmission | Task-T 协议 + dispatch |
-| onSelfTask | 关键词匹配 + 单轮 LLM | 多步推理 + 真实工具 + 跨任务记忆 | 不介入（SELF_LOOP 无 A2A-T） |
-| onRoute | 走默认顺序 | 语义理解结果内容 + 智能分支选择 | DAG 遍历 + 状态管理 |
-| onNegotiation | 模板回复 | 解析缺参 + 工具取参 + 精准补传 | follow-up 自动重发 |
-
----
-
-## 5. 推荐结合架构
-
-### 5.1 架构全景
-
-```mermaid
-graph TD
-    UPPER["上层故障系统<br/>(上层业务系统)"]
-    ORCH["编排中心<br/>(Python/FastAPI)<br/>PSOP 存储 + 搜索 + 智能体注册"]
-    WB["工作台智能体<br/>(Spring Boot + spring-boot-starter)"]
-    BRIDGE["ReasoningBridge<br/>(Java 薄 HTTP 桥)"]
-    AS["AgentScope 推理服务<br/>(Python/FastAPI)<br/>ReActAgent + tools + memory"]
-    OMC1["城市 OMC 智能体<br/>(下游)"]
-    OMC2["城市 OMC 智能体<br/>(下游)"]
-    BIZ["工作台业务系统<br/>(告警/拓扑/工单)"]
-
-    UPPER -->|"A2A-T Task-T 原始诊断任务"| WB
-    WB -->|"LoadPsop.search/load"| ORCH
-    ORCH -->|"PSOP 工作流"| WB
-    WB -->|"onTask/onSelfTask/onRoute/onNeg"| BRIDGE
-    BRIDGE -->|"HTTP/gRPC"| AS
-    AS -.->|"工具调用"| BIZ
-    WB -->|"A2A-T Task-T 下发<br/>(SDK 承载协议)"| OMC1
-    WB -->|"A2A-T Task-T 下发<br/>(SDK 承载协议)"| OMC2
-    OMC1 -.->|"Notification-T 上报<br/>(SDK 承载)"| WB
-    OMC2 -.->|"Notification-T 上报<br/>(SDK 承载)"| WB
-```
-
-### 5.2 数据流（以 SPN 跨城诊断为例）
-
-```mermaid
-sequenceDiagram
-    participant UPPER as 上层故障系统
-    participant WB as 工作台智能体 (Spring+SDK)
-    participant ORCH as 编排中心
-    participant AS as AgentScope 推理服务
-    participant OMC as 城市 OMC 智能体
-
-    UPPER->>WB: A2A-T Task-T 原始诊断任务
-    Note over WB: AgentExecutor 接收，委派给 Orchestrator
-    WB->>ORCH: LoadPsop.search(intent)
-    ORCH-->>WB: PSOP 工作流拓扑
-    Note over WB: ExecutePsop 开始执行工作流
-
-    rect rgba(240, 248, 255, 1)
-        Note right of WB: 步骤: diagnosis_city1
-        WB->>AS: buildTaskSubmission(city1, 上游上下文)
-        Note over AS: ReActAgent 推理 + 工具查参数
-        AS-->>WB: 自包含城市1任务消息
-        WB->>OMC: sendMessage (SDK 承载 Task-T + 认证)
-        OMC-->>WB: 诊断结果
-    end
-
-    rect rgba(240, 248, 255, 1)
-        Note right of WB: 步骤: diagnosis_city2
-        WB->>AS: buildTaskSubmission(city2, 上游上下文)
-        AS-->>WB: 自包含城市2任务消息
-        WB->>OMC: sendMessage (SDK 承载)
-        OMC-->>WB: 诊断结果
-    end
-
-    rect rgba(255, 250, 240, 1)
-        Note right of WB: 步骤: merge_analysis (SELF_LOOP)
-        WB->>AS: selfProcess(汇总, 各城结果)
-        Note over AS: ReActAgent 多步推理<br/>查告警->查拓扑->定位根因
-        AS-->>WB: 故障定位结论
-    end
-
-    rect rgba(240, 255, 240, 1)
-        Note right of WB: 步骤: route_decision
-        WB->>AS: decideRoute(结果内容, 分支条件)
-        AS-->>WB: 走恢复授权分支
-    end
-
-    Note over WB: ExecutePsop 结束，产出汇总
-    WB-->>UPPER: 诊断结果 + Artifact
-```
-
-### 5.3 职责分配总表
-
-| 职责 | 承载方 | 说明 |
-|------|--------|------|
-| A2A-T 协议合规（四类扩展） | **SDK** | 工作台不碰协议机制 |
-| PSOP 工作流拓扑存储与搜索 | **编排中心** | 工作流定义不在工作台或 AgentScope |
-| 工作流 DAG 遍历与状态管理 | **SDK（ExecutePsop / WorkflowExecutor）** | 谁先谁后由 PSOP 驱动 |
-| Task-T 消息收发 + SSE 流式 | **SDK** | 工作台只提供消息内容 |
-| Agent 认证（Bearer 令牌） | **SDK** | 工作台提供 credentials.json |
-| 独立 Authorization-T / Notification-T 协议操作 | **SDK（ExtensionSender）** | 工作台提供结构化数据、业务时机、回调与关闭策略 |
-| 任务消息内容生成 | **AgentScope** | 动态、上下文感知，替代打桩模板 |
-| 本地自处理（汇总/分析） | **AgentScope** | 多步推理 + 工具 + 记忆 |
-| 分支路由决策 | **AgentScope** | 语义理解结果内容后决策 |
-| 参数补充协商内容 | **AgentScope** | 解析缺参 + 工具取参 |
-| 业务工具调用（查告警/拓扑/工单） | **AgentScope** | AgentScope 工具集对接工作台业务系统 |
-| Spring Boot 服务容器 | **工作台（spring-boot-starter）** | 只需一个 @Component AgentExecutor |
-
----
-
-## 6. 接缝设计：ReasoningBridge
-
-### 6.1 设计原则
-
-- 接缝在 Java 侧（工作台 ControlPoint 实现），保持 Spring 管理
-- AgentScope 是独立 Python 服务，通过 HTTP 调用，语言无关
-- ControlPoint 每个方法体尽量只做"调桥 -> 拿结果 -> 塞回 SDK"，不含业务逻辑
-- 桥接口稳定，AgentScope 侧实现可独立演进
-
-### 6.2 Java 侧接口定义
-
-```java
-package com.example.workbench.bridge;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-
-/**
- * 工作台业务决策桥：将 ControlPoint 四个回调代理给 AgentScope 推理服务。
- * 工作台只实现这一个接口的 HTTP 客户端，ControlPoint 实现里每个方法体一行调用。
- */
-public interface ReasoningBridge {
-
-    /**
-     * onTask 决策：根据上游上下文，为目标智能体生成自然语言或结构化任务提交。
-     */
-    CompletableFuture<TaskSubmission> buildTaskSubmission(TaskRequest request);
-
-    /**
-     * onSelfTask 决策：本地多步推理（汇总/分析/定位）。
-     * 不经过 A2A-T，纯 AgentScope 内部推理。
-     */
-    CompletableFuture<String> selfProcess(
-            String stepName,
-            String message,
-            Map<String, Object> priorStepResults);
-
-    /**
-     * onRoute 决策：根据上游各步返回内容，选择下一步分支。
-     * 返回 nextStep 名称。
-     */
-    CompletableFuture<String> decideRoute(
-            String stepName,
-            Map<String, Object> results,
-            List<Map<String, Object>> candidateBranches);
-
-    /**
-     * onNegotiation 决策：下游智能体缺参数时，解析缺什么 + 工具取参 + 生成补传内容。
-     * SDK 负责将返回值作为 follow-up 自动重发，工作台不碰重发。
-     */
-    CompletableFuture<NegotiationDecision> negotiate(NegotiationRequest request);
+interface ReasoningBridge {
+    CompletableFuture<MessageContent> prepare(TaskRequest request);
+    CompletableFuture<TaskResult> executeLocal(TaskRequest request);
+    CompletableFuture<RouteDecision> route(RouteRequest request);
+    CompletableFuture<NegotiationReply> negotiate(NegotiationRequest request);
 }
+
+ControlPoint controlPoint = ControlPoint.builder()
+    .onTask(bridge::prepare)
+    .onSelfTask(bridge::executeLocal)
+    .onRoute(bridge::route)
+    .onNegotiation(bridge::negotiate)
+    .build();
 ```
 
-### 6.3 ControlPoint 实现（工作台侧）
-
-```java
-package com.example.workbench.control;
-
-import dev.openan.workflow.engine.client.WorkflowEngineClient;
-import dev.openan.workflow.engine.control.DefaultControlPoint;
-import dev.openan.workflow.engine.model.JumpCondition;
-import dev.openan.workflow.engine.model.RouteDecision;
-import dev.openan.workflow.engine.model.TaskRequest;
-import dev.openan.workflow.engine.model.TaskResponse;
-import com.example.workbench.bridge.ReasoningBridge;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-
-/**
- * 工作台 ControlPoint：四个方法各一行调桥，业务逻辑全在 AgentScope 侧。
- * SDK 承担 sendMessage 之后的全部协议机制（Task-T 提示词、协商循环、认证）。
- */
-public class AgentScopeControlPoint extends DefaultControlPoint {
-
-    private final ReasoningBridge bridge;
-
-    public AgentScopeControlPoint(ReasoningBridge bridge) {
-        this.bridge = bridge;
-    }
-
-    @Override
-    public CompletableFuture<TaskResponse> onTask(
-            TaskRequest request, TaskDispatcher dispatcher) {
-        return bridge
-                .buildTaskSubmission(request)
-                .thenCompose(dispatcher::dispatch)
-                .thenApply(
-                        r -> {
-                            String state = r.getTaskState();
-                            boolean success = state == null || state.isBlank()
-                                    ? r.getText() != null && !r.getText().isBlank()
-                                    : state.endsWith("COMPLETED");
-                            return TaskResponse.builder()
-                                    .success(success)
-                                    .output(r.getText())
-                                    .build();
-                        })
-                .exceptionally(
-                        e ->
-                                TaskResponse.builder()
-                                        .success(false)
-                                        .error("Agent call failed: " + e.getMessage())
-                                        .build());
-    }
-
-    @Override
-    public CompletableFuture<TaskResponse> onSelfTask(TaskRequest request) {
-        return bridge
-                .selfProcess(request.getStepName(), request.getMessage(), Map.of())
-                .thenApply(out -> TaskResponse.builder().success(true).output(out).build());
-    }
-
-    @Override
-    public CompletableFuture<RouteDecision> onRoute(
-            String stepName, Map<String, Object> results, List<JumpCondition> conditions) {
-        return bridge
-                .decideRoute(stepName, results, conditionsToMaps(conditions))
-                .thenApply(
-                        next ->
-                                RouteDecision.builder()
-                                        .nextStep(next)
-                                        .reason("AgentScope decided: " + next)
-                                        .build());
-    }
-
-    @Override
-    public CompletableFuture<NegotiationDecision> onNegotiation(NegotiationRequest request) {
-        return bridge.negotiate(request);
-    }
-
-    private List<Map<String, Object>> conditionsToMaps(List<JumpCondition> conditions) {
-        return conditions.stream()
-                .map(c -> Map.of("step", (Object) c.getStep(), "condition", (Object) c.getCondition()))
-                .toList();
-    }
-}
-```
-
-### 6.4 HTTP 桥实现（工作台侧）
-
-```java
-package com.example.workbench.bridge;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-
-/**
- * ReasoningBridge 的 HTTP 实现，调用 AgentScope Python 服务。
- * AgentScope 服务地址通过配置注入（如 a2a.reasoning-url）。
- */
-public class HttpReasoningBridge implements ReasoningBridge {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    private final HttpClient client;
-    private final String baseUrl;
-
-    public HttpReasoningBridge(String baseUrl) {
-        this.baseUrl = baseUrl;
-        this.client =
-                HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(10))
-                        .build();
-    }
-
-    @Override
-    public CompletableFuture<TaskSubmission> buildTaskSubmission(TaskRequest request) {
-        return post(
-                "/reasoning/build-task",
-                Map.of(
-                        "step", request.getStepName(),
-                        "agent", request.getAgentName(),
-                        "context", request.getMessage()))
-                .thenApply(this::toTaskSubmission);
-    }
-
-    @Override
-    public CompletableFuture<String> selfProcess(
-            String stepName, String message, Map<String, Object> priorStepResults) {
-        return post(
-                "/reasoning/self-process",
-                Map.of(
-                        "step", stepName,
-                        "message", message,
-                        "prior_results", priorStepResults));
-    }
-
-    @Override
-    public CompletableFuture<String> decideRoute(
-            String stepName, Map<String, Object> results, List<Map<String, Object>> branches) {
-        return post(
-                "/reasoning/decide-route",
-                Map.of(
-                        "step", stepName,
-                        "results", results,
-                        "branches", branches));
-    }
-
-    @Override
-    public CompletableFuture<NegotiationDecision> negotiate(NegotiationRequest request) {
-        return post(
-                "/reasoning/negotiate",
-                Map.of(
-                        "agent", request.agentName(),
-                        "concern", request.concern(),
-                        "kind", request.kind(),
-                        "round", request.round()))
-                .thenApply(this::toNegotiationDecision);
-    }
-
-    private CompletableFuture<String> post(String path, Map<String, Object> body) {
-        return CompletableFuture.supplyAsync(
-                () -> {
-                    try {
-                        String json = MAPPER.writeValueAsString(body);
-                        HttpRequest req =
-                                HttpRequest.newBuilder()
-                                        .uri(URI.create(baseUrl + path))
-                                        .header("Content-Type", "application/json")
-                                        .POST(HttpRequest.BodyPublishers.ofString(json))
-                                        .build();
-                        HttpResponse<String> resp =
-                                client.send(req, HttpResponse.BodyHandlers.ofString());
-                        if (resp.statusCode() != 200) {
-                            throw new RuntimeException(
-                                    "AgentScope service returned " + resp.statusCode());
-                        }
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> result = MAPPER.readValue(resp.body(), Map.class);
-                        return (String) result.get("result");
-                    } catch (Exception e) {
-                        throw new RuntimeException("Reasoning bridge call failed: " + e.getMessage(), e);
-                    }
-                });
-    }
-}
-```
-
-### 6.5 AgentScope 侧服务骨架（Python）
-
-```python
-# reasoning_service.py
-# AgentScope 推理服务：四个端点对应 ControlPoint 四个回调。
-# 每个端点用 ReActAgent 做推理，可调用工作台业务系统工具。
-
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI(title="Workbench Reasoning Service")
-
-# 初始化 LLM + Agent（按 AgentScope 最新文档配置）
-# agent = ReActAgent(
-#     name="workbench_agent",
-#     model=...,
-#     tools=[
-#         Tool(query_alarm),      # 对接工作台告警系统
-#         Tool(query_topology),    # 对接工作台拓扑系统
-#         Tool(query_work_order),  # 对接工作台工单系统
-#     ],
-# )
-
-
-class BuildTaskRequest(BaseModel):
-    step: str
-    agent: str
-    context: str
-    params: dict
-
-
-@app.post("/reasoning/build-task")
-async def build_task(req: BuildTaskRequest):
-    """onTask 决策：从上游上下文提取目标智能体相关参数，生成自包含任务消息。"""
-    prompt = (
-        f"上游诊断任务：{req.context}\n"
-        f"目标智能体：{req.agent}\n"
-        f"请提取与该智能体相关的故障参数，"
-        f"生成只包含该智能体所需信息的自包含任务消息。用中文。"
-    )
-    result = agent(prompt)
-    return {"result": result.text}
-
-
-class SelfProcessRequest(BaseModel):
-    step: str
-    message: str
-    prior_results: dict
-
-
-@app.post("/reasoning/self-process")
-async def self_process(req: SelfProcessRequest):
-    """onSelfTask 决策：多步推理做故障定位汇总，可调工具查告警/拓扑。"""
-    prompt = (
-        f"各城市诊断结果：{req.prior_results}\n"
-        f"上游任务：{req.message}\n"
-        f"请汇总分析，定位故障城市和根因。"
-    )
-    result = agent(prompt)
-    return {"result": result.text}
-
-
-class DecideRouteRequest(BaseModel):
-    step: str
-    results: dict
-    branches: list
-
-
-@app.post("/reasoning/decide-route")
-async def decide_route(req: DecideRouteRequest):
-    """onRoute 决策：根据上游结果内容语义选择下一步分支。"""
-    prompt = (
-        f"上游各步返回：{req.results}\n"
-        f"候选分支：{req.branches}\n"
-        f"请选择最合适的下一步分支，只返回分支名称。"
-    )
-    result = agent(prompt)
-    return {"result": result.text.strip()}
-
-
-class NegotiateRequest(BaseModel):
-    agent: str
-    concern: str
-    receive_result: dict
-
-
-@app.post("/reasoning/negotiate")
-async def negotiate(req: NegotiateRequest):
-    """onNegotiation 决策：解析下游缺什么参数，调工具取参，生成补传内容。"""
-    prompt = (
-        f"下游智能体 {req.agent} 返回参数不足：{req.concern}\n"
-        f"已有结果：{req.receive_result}\n"
-        f"请查询缺失参数并生成补传内容。用中文。"
-    )
-    result = agent(prompt)
-    return {"result": result.text}
-```
-
-> 注意：上方 AgentScope 代码为骨架示意，展示端点与 ControlPoint 回调的对应关系。AgentScope 的具体 API（ReActAgent、Tool、Model 的构造方式）请以 AgentScope 官方最新文档为准。
-
----
-
-## 7. 边界与反模式
-
-### 7.1 核心边界：不要让 AgentScope 重复 PSOP 工作流
-
-AgentScope 自带多智能体协作模式（pipeline、sequential、parallel 等）。**如果工作台用 AgentScope 的编排去重新实现"先调城市1、再调城市2、再汇总"这个流程，就会和 SDK 的 `WorkflowExecutor` + 编排中心的 PSOP 形成两个编排引擎打架。**
-
-| 编排层 | 归属 | 编排什么 |
-|--------|------|---------|
-| 智能体**之间**的编排 | SDK + PSOP（编排中心） | 谁调谁、什么顺序、什么条件跳转 |
-| 智能体**内部**的编排 | AgentScope | ReAct 循环、工具调用顺序、子任务分解 |
-
-这条线必须跟工作台团队讲清楚：**AgentScope 的多智能体编排模式不要用于跨智能体流程，跨智能体流程由 PSOP 工作流定义、SDK 执行。**
-
-### 7.2 其他注意事项
-
-| 事项 | 说明 |
-|------|------|
-| 不要在 onRoute 里发消息 | `onRoute` 只返回分支决策，不发 A2A-T 消息。发消息是 `onTask` 的职责 |
-| 不要在 onNegotiation 里发消息 | `onNegotiation` 只返回补传文本，SDK 自动重发 follow-up。工作台不碰重发 |
-| SELF_LOOP 步不经过 A2A-T | `onSelfTask` 不传 engineClient，AgentScope 纯内部推理 |
-| AgentScope 服务要独立部署 | 不要嵌入 Spring Boot 进程，保持语言无关、独立扩缩容 |
-| 工作流拓扑改动只改 PSOP | 业务流程变化（加步骤、改顺序）去编排中心改 PSOP，不改 AgentScope 代码 |
-| AgentScope 工具对接工作台业务系统 | 工具（查告警/拓扑/工单）是工作台自己的业务系统，AgentScope 服务通过 API 调用 |
-
----
-
-## 8. 落地路线
-
-### 8.1 分步实施
-
-```mermaid
-graph LR
-    S1["步骤 1<br/>工作台引入 SDK starter<br/>提供 AgentExecutor"]
-    S2["步骤 2<br/>部署 AgentScope 推理服务<br/>四个端点骨架"]
-    S3["步骤 3<br/>实现 ReasoningBridge<br/>HTTP 桥"]
-    S4["步骤 4<br/>ControlPoint 委派给桥<br/>替换打桩逻辑"]
-    S5["步骤 5<br/>AgentScope 接业务工具<br/>查告警/拓扑/工单"]
-    S6["步骤 6<br/>端到端联调<br/>编排中心 + 工作台 + 下游"]
-
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6
-```
-
-| 步骤 | 工作台做 | SDK 侧 |
-|------|---------|--------|
-| 1. 引入 starter | Maven 依赖 `spring-boot-starter`，写 `@Component AgentExecutor` | 提供 starter + autoconfig |
-| 2. 部署 AgentScope | 起 Python FastAPI 服务，四个端点骨架（可先返回固定文本） | 不涉及 |
-| 3. 实现桥 | 写 `HttpReasoningBridge`，配置 `a2a.reasoning-url` | 不涉及 |
-| 4. 委派 ControlPoint | `AgentScopeControlPoint` 四方法委派给桥 | 提供 ControlPoint 接口 + DefaultControlPoint |
-| 5. 接业务工具 | AgentScope 工具对接告警/拓扑/工单系统 | 不涉及 |
-| 6. 端到端联调 | 编排中心搜 PSOP -> 工作台执行 -> 下游 OMC 响应 | 提供 ExecutePsop + LoadPsop |
-
-### 8.2 可选：下游智能体也 Agent 化
-
-如果城市 OMC 智能体也要 Agent 化（从传统服务改为智能体），同理：
-- AgentScope 做内部推理（诊断逻辑）
-- 用 SDK 的 server starter（或 Python SDK）暴露 A2A-T 接口
-- 工作台通过 SDK 的 `sendMessage` 调用它们，协议透明
-
-### 8.3 编排中心侧
-
-- PSOP 工作流定义工作台的跨智能体流程拓扑（步骤、顺序、条件、智能体分配）
-- 编排中心负责 PSOP 存储 + 意图搜索
-- 工作台通过 `LoadPsop.search` + `LoadPsop.load` 获取工作流
-- 工作流变更只需改编排中心的 PSOP，不改代码
-
----
-
-## 9. 总结
-
-| 问题 | 答案 |
-|------|------|
-| SDK 和 AgentScope 谁管什么 | SDK 管智能体之间的协议和编排；AgentScope 管智能体内部的推理 |
-| 结合点在哪 | SDK 的 `ControlPoint` 接口四个回调 |
-| 怎么跨语言 | Java 侧薄 HTTP 桥（ReasoningBridge），AgentScope 独立 Python 服务 |
-| 怎么避免冲突 | AgentScope 不做跨智能体编排（那是 PSOP + SDK 的职责） |
-| 工作台要改多少 | 一个 `@Component AgentExecutor` + 一个 `ControlPoint` 实现 + 一个 HTTP 桥，业务逻辑全在 AgentScope 侧 |
-
-**一句话：SDK 做壳（协议 + 工作流），AgentScope 做脑（推理 + 工具 + 记忆），ControlPoint 是壳和脑之间的接缝。**
+bridge 是宿主实现，负责 SDK 内容生成／校验和最终 MessageContent。
+不接管目标、A2A task/context 标识或认证头，不给任意上游输出强加业务 schema。
+
+## 4. 跨语言 JSON 契约
+
+宿主定义跨语言 DTO，明确区分业务输入和最终内容。
+桥接层调用 A2A-T 自然语言／结构化接口，构造 parts、metadata、extensions 快照，
+返回 Send(content) 或 Stop(code, reason)，不依赖 Jackson 猜测 sealed 类型。
+结束回复保持收到 context 的 id/round/maxRounds，宿主 SDK 负责内容规则及业务错误映射。
+
+输入保留 executionId/taskId、stepName/agentName、instruction/input 与 workflowInput。
+workflowInput 保留 runtimeIntent 和 stepName → taskResults[] → outputs[]，不是完整聊天历史。
+contextFrom=[] 不收集上游，null 为直接前驱，["*"] 为已有祖先结果，显式数组为指定已有结果。
+contextFrom 不添加等待关系；DAG next 才控制调度。
+
+路由返回值必须属于 candidates，不能让服务输出任意步骤名称。
+本地输出始终是数组，错误以 success=false 与 error/errorCode/errorDetails 表达，不伪装成诊断输出。
+HTTP 桥必须处理错误状态码、无效 JSON、空回复、超时和取消，不能将失败当作空白成功。
+超时不等于远端操作停止，动网类工具的重试必须考虑幂等及人工确认。
+
+## 5. 场景与隔离
+
+WAIMO 下发投诉后，工作台解析输入、加载 workflow；两个城市并行诊断，最后本地汇总。
+样例 onTask 使用两套城市数据，协商策略读取本次提交输入；selfTask 用 LlmHelper，
+离线模式保留实际来源而不补造结论。生产应替换工单数据与模型/工具，不把样例当作通用规则。
+
+Authorization-T 与 Notification-T 是独立预操作，不属于 workflow 因果链；
+失败不阻断诊断。各自有独立 channel/runtime/context，通知持续至抢通结果、取消或宿主关闭。
+不同执行需隔离业务记忆、回调和 client/transport 生命周期，不能共用一个“当前城市”变量。
+认证由宿主 AuthProvider 或所选凭据路径承担，不让模型获取/输出凭据。
+
+## 6. 验收清单
+
+- 两城市并发时参数、协商回答和记忆不串任务。
+- onTask 只返回 MessageContent，引擎发送一次并完成协议处理。
+- 多输出和本地结果能进入下游内容生成；目标模板可表达业务必需事实。
+- 三类协商均可接管；类型匹配、无信息、不支持操作和用户取消均明确处理。
+- direct 与 Order 共用同一组业务回调，认证/路由保持在传输适配层。
+- 本地和远端失败、无效 JSON、超时、取消有可观测结果。
+- 另行执行真实 AgentScope、LLM、OMC 联调；仓库离线模拟测试不等价于现网验收。

@@ -5,15 +5,15 @@
 - 仓库：`project-openan/a2a-t-sdk-java`
 - 发布标签：`v1.1.0`，commit：`e42c83acce3e5ac2c245d36546ced0fa017b2b58`
 - Maven Central 版本：`1.1.0`，groupId `net.openan.a2a-t.sdk`
-- 引擎使用 `a2a-t-core`；samples／宿主显式使用 `a2a-t-client`，OMC 接收端使用 `a2a-t-server`。引擎不传递引入内容生成、LLM、prompt/resources。
+- 引擎仅使用 `a2a-t-core`；samples／宿主显式引入 `a2a-t-client`，OMC 接收端使用 `a2a-t-server`。纯引擎消费者不依赖 LLM/prompt/resources。
 
 ## 已知上游生命周期缺口
 
 该正式版本中的 `A2ATClient`、`A2ATServer` 和 `LLMClient` 尚未实现
 `AutoCloseable`，因此调用过 OpenAI 兼容 LLM 后，底层 OpenAI Java 客户端的
 `DefaultSleeper` 定时线程无法由工作流引擎通过公共 API 关闭。`SpringSpnDemo` 的
-离线协议测试不受此限制；真实模型调用后的生命周期仍需额外观察，
-一次性关闭内嵌 Tomcat 时可能提示上游线程生命周期告警。
+离线协议与双路径模拟业务测试不受此限制；真实模型调用后的生命周期需要额外观察，
+但一次性关闭内嵌 Tomcat 时会提示这一条上游线程生命周期告警。
 
 上游 SDK 应在新提交中补充幂等 `close()`，由 `A2ATClient/A2ATServer` 级联关闭其拥有的
 LLM provider；执行引擎届时应升级到该新提交对应的新 Maven 版本。禁止在不改变版本号的
@@ -30,8 +30,7 @@ samples 宿主 A2ATInitialization 在初始化线程临时包装资源 URL，仅
 完成后恢复类加载器；不更改全局 URL 缓存或 SDK jar。
 每次 SDK 升级需重新验证该隔离是否仍必要。
 
-SDK 当前内容接口接受字符串模板 URI，宿主通过 StandardTemplates.*.uri() 指定。
-业务调用生成／校验 API，再经 A2atMessages.from 转为最终 MessageContent。
+SDK 内容接口由宿主通过 StandardTemplates.*.uri() 选择模板；业务自行生成最终内容，再用 A2atMessages.from 包装。
 引擎只检查协商上下文关联，不解释业务内容。
 完整契约见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
@@ -61,16 +60,23 @@ SDK jar 的 SHA-1 与 Central 发布校验值一致。
 
 需要接收端校验时同样显式添加 `a2a-t-server:1.1.0`；samples 已声明二者。
 
+东信 `com.eastcom.apollo:order-shaded-client:1.1.18` 仍是独立的非 Central 依赖，
+运行 dev 完整 samples 前仍需按《指令平台适配指南》配置企业制品库或安装供应商 jar。
+main 直连不需要该依赖。
+
 ## 升级 A2A-T SDK
 
 升级时更新根 `pom.xml` 的 `a2a.t.sdk.version`、本文发布标签和相关接入文档，
 核对正式制品与源码／资源差异，并运行完整回归。CI 直接使用根 POM，不单独维护版本或编译 SDK。
 
 禁止只覆盖本地同版本 jar。新版本至少要验证 Task-T 生成/校验、无状态 Negotiation-T
-metadata、Authorization-T、Notification-T 长连接，以及现行传输路径：
-验证直连 OMC 的 SpringSpnDemo 端到端流程。
+metadata、Authorization-T、Notification-T 长连接，以及两条现行传输路径：
 
-“只支持最新 A2A-T SDK”仅表示不兼容旧 SDK 版本和旧协议格式。
+1. `main` 验证直连 OMC 的 SpringSpnDemo 端到端流程；
+2. `dev` 同时验证直连 OMC 和东信 Order 指令平台模拟器的 SpringSpnDemo 端到端流程。
+
+“只支持最新 A2A-T SDK”仅表示不兼容旧 SDK 版本和旧协议格式，绝不表示取消直连或
+Order 任一传输能力，也不允许省略双传输链路测试。
 
 ## A2A Java SDK 基线
 

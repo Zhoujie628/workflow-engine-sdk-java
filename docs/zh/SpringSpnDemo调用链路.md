@@ -1,7 +1,7 @@
 # SpringSpnDemo 当前调用链路
 
-> 校准日期：2026-08-28。以 `dev` 当前源码、锁定的 A2A-T SDK
-> `1.0.0-0de5a27`（commit `0de5a2751781419820436e5eb17cffc39b9db47d`）和
+> 校准日期：2026-08-30。以 `dev` 当前源码、锁定的 A2A-T SDK
+> `1.1.0`（commit `e42c83acce3e5ac2c245d36546ced0fa017b2b58`）和
 > A2A Java SDK `1.2.0.Final` 为准。
 > 直连与东信 Order 是当前必须同时支持的两条南向线路，不是新旧版本兼容模式。
 
@@ -41,13 +41,12 @@ sequenceDiagram
 直连本地演示和 Order simulator 保持 `embeddedOmc=true`。
 
 `SpringWorkbenchExtensionLifecycle` 为 Authorization-T 和 Notification-T 分别调用
-`ClientRuntimeFactory.create()`，并拒绝两者复用同一 runtime 实例。Authorization transport 在全部
-ACK 成功后关闭；Notification transport 保留到订阅完成、取消或 Spring 容器关闭。
+`ClientRuntimeFactory.create()`，并拒绝两者复用同一 runtime 实例。Authorization transport 在操作结束后关闭（包括失败）；Notification transport 保留到订阅完成、取消或 Spring 容器关闭。
 
 ## 3. 北向 WAIMO 请求
 
 `SpringSpnDemo.sendTaskToWorkbench()` 创建专用北向 transport，调用
-`sendMessageFromData` 与 SDK `StandardTemplates.PRIVATE_LINE_COMPLAINT`：
+宿主 A2ATClient.generateTaskPromptFromDataWithSchema 和 A2atMessages.from，再调用 sendMessage(agent, finalContent)：
 
 1. SDK schema-aware 管线将原始投诉数据渲染为 Task-T prompt。
 2. A2A Java SDK 通过 `https://127.0.0.1:26337/a2a/json/message:stream` 发送。
@@ -59,6 +58,12 @@ ACK 成功后关闭；Notification transport 保留到订阅完成、取消或 S
 schema-aware `fromData` 跳过场景识别，但 slot 映射仍可使用 SDK 配置的 LLM。
 
 ## 4. 工作流执行
+
+工作台 onTask 用宿主 A2ATClient 生成最终 MessageContent，引擎只封装发送、保留完整响应。
+onSelfTask 返回 TaskResult，多输出通过 WorkflowInput 按 contextFrom 提供，不拼 instruction。
+onNegotiation 由宿主校验并生成最终回复，返回 Send(content) 或本地 Stop，不固定补同一端口。
+字段见 [业务回调契约](BUSINESS_CALLBACKS.md)。
+
 
 ```mermaid
 flowchart LR
@@ -104,23 +109,27 @@ Negotiation-T 轮次或业务回调契约。Order 模式的每个 agent/context 
 OMC 仅在 Task-T 缺少必填参数或存在业务语义错误时发起协商。LLM/配置/网络故障会
 直接失败，不伪装成参数协商。OMC 用 typed propose 渲染 SDK prompt，工作台校验
 `templateUri` 和 `negotiationContext={id,round,maxRounds,performative}`，再用 typed accept/reject/abort 回复。
-引擎不使用已从 SDK 删除的旧状态机接口，不存在原始文本 fallback。
+引擎不使用 SDK 的废弃状态机接口，不存在原始文本 fallback。
+两个 OMC 都消费 SDK 填充后的任务数据；Accept 也从正式 Negotiation-T metadata 校验并合并填充字段，
+不再把 parts 摘要或原始回复拼接给诊断。Reject／Abort 分别校验并结束任务，不执行诊断。
+具体 SDK 入口、业务数据与拒绝策略见 [业务回调调用参考](BUSINESS_CALLBACKS.md#9-示例业务侧的-a2a-t-110-调用参考)。
 
-主投诉工作流给两个地市都下发完整诊断输入，因此正常主链路不会人为制造缺参来触发
-Negotiation-T；协商能力由独立协议用例覆盖。
+本地 SpringSpnDemo 默认让 City1 的 Task-T 缺少任务对象以演示协商，City2 参数完整直接诊断。
+`-Da2at.samples.negotiation=false` 可切回两城市完整输入；对接外部 OMC 默认不注入缺参。
 
 ## 7. Authorization-T 与 Notification-T
 
 `ExtensionPrePositioner` 对每个 OMC：
 
-1. 用 `sendExtensionMessageFromData` 渲染并发送白名单；ACK 必须为
-   `TASK_STATE_COMPLETED`，且 Authorization-T artifact metadata 必须明确返回成功/失败、
-   策略标识和新增/查询时的策略列表，否则本次授权操作记为失败。
-2. 用 `openNotificationFromData` 建立长连接；ACK 必须为 `WORKING` 或 `COMPLETED`。
+1. 宿主生成白名单最终内容后调用 `sendAuthorization`；`ExtensionPrePositioner` 检查 ACK
+   为 `TASK_STATE_COMPLETED`。示例 OMC 仅在已校验并应用策略后返回该状态；正式 OMC 若以
+   COMPLETED 承载业务失败，宿主还需按其回执契约判断结果，不能只依赖 A2A 状态。
+2. 宿主生成订阅最终内容后调用 `openNotification` 建立长连接；ACK 必须为 `WORKING` 或 `COMPLETED`。
 3. OMC 诊断给出抢通方案后，只在 SDK 已验证的白名单精确命中业务场景/处置类型/
    操作名称/有效期时自动执行。没有白名单时 fail-closed。
 4. 执行结果通过 Notification-T `recovery-result` artifact 上报。
-5. `WorkbenchExtensionLifecycle` 先从本地订阅表移除并关闭句柄，再通知外部 observer；
+5. `WorkbenchExtensionLifecycle` 用 `RecoveryNotification` 检查正式 metadata 中完整的已结束抢通结果，
+   确认后从本地订阅表移除并关闭句柄，再通知外部 observer；仅名称或摘要不足以触发关闭。
    observer 异常不影响流关闭。
 6. 本地 Order 模拟器识别完整 SSE frame 中的 `recovery-result` 后结束该转发，确保关流
    也传递到 OMC；没有抢通结果的订阅继续保持到显式取消或工作台关闭。
@@ -141,3 +150,32 @@ Authorization-T 模板支持新增、修改、删除、查询，但示例 OMC �
 3. Demo 关闭 Spring context、两个 OMC server，以及当前模式启用的本地 gateway/simulator。
 
 正常工作流完成不能作为 Notification-T 订阅关闭条件。
+
+### 查看真实协商与协议日志
+
+直接运行本地 SpringSpnDemo，默认 City1 缺参并协商、City2 参数完整直接诊断，无需添加 VM 参数。
+Negotiation-T 扩展激活本身不强制协商；这是本地 Demo 专门设置的场景，不是引擎默认行为。
+要关闭本地缺参演示、让两城市都直接诊断，在 IDEA **VM options** 增加：
+
+```text
+-Da2at.samples.negotiation=false
+```
+
+默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
+可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` → `INPUT_REQUIRED / PROPOSE`
+→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。
+非内嵌 OMC 模式默认不注入缺参，显式设置 `-Da2at.samples.negotiation=true` 也会被拒绝。
+Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
+协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。
+main 支持直连；dev 默认 order，两种模式使用同一业务回调。
+
+离线重复验证（两个命令顺序执行，避免端口冲突）：
+
+```powershell
+mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+# 仅 dev：真实供应商 jar + 本地平台/OMC 模拟器
+mvn -q -pl samples -am "-Dtest=SpringSpnDemoOrderE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
+```
+
+每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK 的
+模板、校验和 HTTP/SSE；不是现网 OMC、平台或真实模型语义的验证。

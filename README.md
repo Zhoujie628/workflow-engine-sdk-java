@@ -6,18 +6,18 @@
 
 A standalone SDK for executing multi-agent workflows over the [A2A protocol](https://a2aproject.github.io/a2a-java/) with [A2A-T](https://projects.tmforum.org/a2aproject/telecommunication/extensions/) telecom extensions.
 
-The engine handles workflow scheduling, A2A envelopes, transport, task waiting, authentication and TLS. Host callbacks return final message content and own any A2A-T generation, schema, validation or LLM calls.
+The engine handles workflow scheduling, A2A envelopes, transport, task waiting, authentication and TLS. Host callbacks return final content and own A2A-T generation, schemas, semantic validation and LLM calls.
 
 ## Features
 
 - **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (stateless auto negotiation loop), Authorization-T (independent whitelist operation), Notification-T (independent long-lived SSE subscription)
-- **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local multi-output TaskResult and explicit NegotiationReply.Send/Stop
-- **Minimal A2A-T dependency**: a2a-t-core only in the engine; content generation and template queries use the host's explicit a2a-t-client dependency
+- **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local TaskResult and explicit NegotiationReply.Send/Stop
+- **Minimal content dependency**: only a2a-t-core in the engine; generation and template queries belong to the host's a2a-t-client
 - **DAG Workflow Execution**: Parallel dispatch, self-loop steps, conditional routing
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
 - **HTTPS/TLS**: Configurable trust store, self-signed cert support for development
-- **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf views and dev Order SDK observations; bodies default on at DEBUG with mandatory secret-field redaction
+- **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf and dev vendor SDK observations; bodies enabled at DEBUG, mandatory redaction
 
 The SPN sample treats the protocol document as an input, not as executable truth. The pinned A2A-T
 SDK templates, slot schemas, canonical URIs, and validation results are authoritative. Protocol
@@ -80,13 +80,11 @@ A2ATransport transport = new A2ATransport(agentCards, null,
                 .build());
 WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
 
-// 4. Plain A2A example; use host A2A-T SDK generation for Task-T.
+// 4. Ordinary A2A content; host SDK generation is needed for Task-T.
 ControlPoint controlPoint = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
+    .onTask(request -> CompletableFuture.completedFuture(MessageContent.text(request.getInstruction())))
     .build();
-// Implement local, conditional-route and negotiation callbacks as needed.
-// Complete contract: docs/en/BUSINESS_CALLBACKS.md
+// Implement onSelfTask/onRoute/onNegotiation if required; see docs/en/BUSINESS_CALLBACKS.md.
 
 // 5. Execute
 ExecutionResult result = ExecutePsop.builder()
@@ -167,7 +165,7 @@ graph TD
 
 ### 中文
 
-- [A2A-T SDK 依赖说明](docs/zh/A2AT-SDK-DEPENDENCY.md) - 安装当前未发布的固定版本依赖
+- [A2A-T SDK 依赖说明](docs/zh/A2AT-SDK-DEPENDENCY.md) - Maven Central 正式版本及 IDEA 同步说明
 - [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台接入执行引擎的主交付文档
 - [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信 Order 转发配置、实现边界与联调验收
 - [SpringSpnDemo 调用链路](docs/zh/SpringSpnDemo调用链路.md) - 直连与 Order 双模式端到端调用链
