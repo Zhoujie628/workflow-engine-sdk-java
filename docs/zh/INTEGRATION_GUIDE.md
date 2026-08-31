@@ -101,16 +101,16 @@ onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生�
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .onSelfTask(request -> CompletableFuture.completedFuture(
-        TaskResult.success(List.of(Map.of(
-            "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
-    .onNegotiation(request -> CompletableFuture.completedFuture(
-        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-    .build();
+        .onTask(request -> CompletableFuture.completedFuture(
+                MessageContent.text(request.getInstruction())))
+        .onSelfTask(request -> CompletableFuture.completedFuture(
+                TaskResult.success(List.of(Map.of(
+                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
+        .onRoute(request -> CompletableFuture.failedFuture(
+                new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onNegotiation(request -> CompletableFuture.completedFuture(
+                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+        .build();
 ```
 
 ### 4.4 执行
@@ -464,9 +464,13 @@ EventCallback callback = new EventCallback() {
     }
 };
 
-ExecutePsop.builder()
-    .eventCallback(callback)
-    // ...
+ExecutePsop.
+
+builder()
+    .
+
+eventCallback(callback)
+// ...
 ```
 
 常用事件类型：`STEP_START`、`STEP_COMPLETE`、`AGENT_REQUEST`、`AGENT_RESPONSE`、`NEGOTIATION_REQUEST`、`NEGOTIATION_RESOLVED`、

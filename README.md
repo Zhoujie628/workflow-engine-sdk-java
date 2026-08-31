@@ -73,36 +73,38 @@ import java.util.concurrent.*;
 Workflow workflow = LoadPsop.load(
         "https://127.0.0.1:5001", "psop-id", null, false);
 
-// 2. Load agent cards
-RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-List<AgentCard> agentCards = registry.fetchAgentCards();
+        // 2. Load agent cards
+        RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
+        List<AgentCard> agentCards = registry.fetchAgentCards();
 
-// 3. Create transport + engine client
-A2ATransport transport = new A2ATransport(agentCards, null,
-        WorkflowEngineClientConfig.builder()
-                .sslVerify(true)
-                .credentialsConfigPath("credentials.json")
-                .build());
-WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
+        // 3. Create transport + engine client
+        A2ATransport transport = new A2ATransport(agentCards, null,
+                WorkflowEngineClientConfig.builder()
+                        .sslVerify(true)
+                        .credentialsConfigPath("credentials.json")
+                        .build());
+        WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
 
-// 4. Ordinary A2A content; host SDK generation is needed for Task-T.
-ControlPoint controlPoint = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(MessageContent.text(request.getInstruction())))
-    .build();
+        // 4. Ordinary A2A content; host SDK generation is needed for Task-T.
+        ControlPoint controlPoint = ControlPoint.builder()
+                .onTask(request -> CompletableFuture.completedFuture(MessageContent.text(request.getInstruction())))
+                .build();
 // Implement onSelfTask/onRoute/onNegotiation if required; see docs/en/BUSINESS_CALLBACKS.md.
 
-// 5. Execute
-ExecutionResult result = ExecutePsop.builder()
-        .psop(workflow)
-        .agentCards(agentCards)
-        .controlPoint(controlPoint)
-        .engineClient(client)
-        .runtimeIntent("Diagnose fault")
-        .lang("zh")
-        .execute()
-        .get(10, TimeUnit.MINUTES);
+        // 5. Execute
+        ExecutionResult result = ExecutePsop.builder()
+                .psop(workflow)
+                .agentCards(agentCards)
+                .controlPoint(controlPoint)
+                .engineClient(client)
+                .runtimeIntent("Diagnose fault")
+                .lang("zh")
+                .execute()
+                .get(10, TimeUnit.MINUTES);
 
-System.out.println("Success: " + result.isSuccess());
+System.out.
+
+        println("Success: "+result.isSuccess());
 ```
 
 Final content callbacks, complete dependency inputs and negotiation
@@ -116,7 +118,6 @@ graph TD
     L1["Layer 1 — Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
     L0["Layer 0 — Transport<br/>WorkflowEngineClient / A2ATransport<br/>A2A send, auth, extensions, SSL, SSE"]
     F["Foundation — Decision<br/>ControlPoint<br/>user-implemented business decisions"]
-
     L2 --> L1 --> L0
     L0 -.-> F
 ```

@@ -22,16 +22,16 @@ See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working e
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .onSelfTask(request -> CompletableFuture.completedFuture(
-        TaskResult.success(List.of(Map.of(
-            "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
-    .onNegotiation(request -> CompletableFuture.completedFuture(
-        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-    .build();
+        .onTask(request -> CompletableFuture.completedFuture(
+                MessageContent.text(request.getInstruction())))
+        .onSelfTask(request -> CompletableFuture.completedFuture(
+                TaskResult.success(List.of(Map.of(
+                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
+        .onRoute(request -> CompletableFuture.failedFuture(
+                new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onNegotiation(request -> CompletableFuture.completedFuture(
+                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+        .build();
 ```
 
 This example deliberately sends ordinary text, not Task-T. Replace the local projection and route/stop policies with
@@ -106,7 +106,7 @@ A2ATClient in the host, not in WorkflowEngineClientConfig or ExecutePsop.
 ```java
 // sdk, data, schema and template selection are owned by host code.
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+                data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("Diagnose this line")));
 ```
 

@@ -36,6 +36,7 @@ public final class WireLog {
   private static final Pattern SECRET_FORM =
       Pattern.compile(
           "(?i)((?:password|passwd|pwd|[\\w-]*token|[\\w-]*secret|accessSession|api[-_]?key)=)[^&\\s]*");
+
   private WireLog() {}
 
   public static Map<String, String> context() {

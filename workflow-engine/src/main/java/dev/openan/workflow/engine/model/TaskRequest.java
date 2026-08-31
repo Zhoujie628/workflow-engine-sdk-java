@@ -41,11 +41,9 @@ public class TaskRequest {
   /** Current task instruction only; never contains rendered upstream results. */
   String instruction;
 
-  @Builder.Default
-  String language = "zh";
+  @Builder.Default String language = "zh";
   String stepName;
 
   /** Engine-assembled, protocol-neutral input selected by the workflow definition. */
-  @Builder.Default
-  WorkflowInput workflowInput = WorkflowInput.empty();
+  @Builder.Default WorkflowInput workflowInput = WorkflowInput.empty();
 }

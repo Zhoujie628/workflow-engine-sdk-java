@@ -15,6 +15,7 @@ final class EastcomAuthProvider implements AuthProvider {
   private final TokenService tokenService;
   private final String requestHeader;
   private final String scheme;
+
   EastcomAuthProvider(TokenService tokenService, String requestHeader, String scheme) {
     this.tokenService = Objects.requireNonNull(tokenService, "tokenService");
     this.requestHeader = requireText(requestHeader, "requestHeader");

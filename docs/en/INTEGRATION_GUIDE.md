@@ -104,16 +104,16 @@ See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working e
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .onSelfTask(request -> CompletableFuture.completedFuture(
-        TaskResult.success(List.of(Map.of(
-            "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
-    .onNegotiation(request -> CompletableFuture.completedFuture(
-        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-    .build();
+        .onTask(request -> CompletableFuture.completedFuture(
+                MessageContent.text(request.getInstruction())))
+        .onSelfTask(request -> CompletableFuture.completedFuture(
+                TaskResult.success(List.of(Map.of(
+                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
+        .onRoute(request -> CompletableFuture.failedFuture(
+                new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onNegotiation(request -> CompletableFuture.completedFuture(
+                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+        .build();
 ```
 
 ### 4.4 Execute
@@ -392,14 +392,26 @@ workflow prerequisites.
 .sslVerify(false)
 
 // Production: enable verification + custom CA certs
-.sslVerify(true)
-.caCertsPath("/path/to/ca-certs.pem")
+.
+
+sslVerify(true)
+.
+
+caCertsPath("/path/to/ca-certs.pem")
 
 // Optional mTLS and CRL. Private keys support PKCS#8 PEM/DER; encrypted keys require a password
-.clientCertPath("/path/to/client-cert.pem")
-.clientKeyPath("/path/to/client-key.pem")
-.clientKeyPassword("change-me")
-.crlPath("/path/to/revocations.crl")
+.
+
+clientCertPath("/path/to/client-cert.pem")
+.
+
+clientKeyPath("/path/to/client-key.pem")
+.
+
+clientKeyPassword("change-me")
+.
+
+crlPath("/path/to/revocations.crl")
 ```
 
 For HTTP/JSON-RPC, TLS policy is scoped to the current client and never changes JVM-wide hostname verification;
@@ -477,9 +489,13 @@ EventCallback callback = new EventCallback() {
     }
 };
 
-ExecutePsop.builder()
-    .eventCallback(callback)
-    // ...
+ExecutePsop.
+
+builder()
+    .
+
+eventCallback(callback)
+// ...
 ```
 
 Common event types: `STEP_START`, `STEP_COMPLETE`, `AGENT_REQUEST`,
@@ -563,8 +579,14 @@ freeing the RSocket event loop:
 
 ```java
 forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
-        .subscribeOn(Schedulers.boundedElastic())
-        .subscribe(sink::next, sink::error, () -> sink.complete());
+        .
+
+subscribeOn(Schedulers.boundedElastic())
+        .
+
+subscribe(sink::next, sink::error, () ->sink.
+
+complete());
 ```
 
 ### Fix 2: Use HTTP Host Header Instead of Shared `lastResolvedTarget`

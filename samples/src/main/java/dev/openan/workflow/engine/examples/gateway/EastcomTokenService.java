@@ -40,6 +40,7 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
   private final TokenFetcher tokenFetcher;
   private final Map<String, CachedToken> cache = new ConcurrentHashMap<>();
   private final Map<String, Object> refreshLocks = new ConcurrentHashMap<>();
+
   EastcomTokenService(OrderGatewayProperties properties, String credentialsPath) {
     this(properties, EastcomCredentialConfigLoader.load(credentialsPath));
   }

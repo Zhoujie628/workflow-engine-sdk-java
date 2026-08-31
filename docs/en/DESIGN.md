@@ -60,7 +60,6 @@ graph TD
     L1["Layer 1 - Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
     L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (independent operations)"]
     F["Foundation - Decision<br/>ControlPoint<br/>user-implemented business decisions"]
-
     L2 --> L1 --> L0
     L0 -.-> F
 ```
@@ -183,20 +182,20 @@ sequenceDiagram
     participant H as Host callbacks + A2A-T client
     participant E as Workflow engine
     participant A as Remote agent
-    E->>H: onTask(TaskRequest + upstream window)
-    H->>H: Generate/validate final content
-    H-->>E: MessageContent
-    E->>A: A2A envelope + unchanged content
+    E ->> H: onTask(TaskRequest + upstream window)
+    H ->> H: Generate/validate final content
+    H -->> E: MessageContent
+    E ->> A: A2A envelope + unchanged content
     opt INPUT_REQUIRED with valid Propose
-        A-->>E: Task status + Negotiation-T Propose
-        E->>H: onNegotiation(originalSubmission, received, history)
-        H->>H: Validate proposal and generate reply
-        H-->>E: Send(MessageContent) or local Stop
-        E->>A: Same task/context with final reply content
+        A -->> E: Task status + Negotiation-T Propose
+        E ->> H: onNegotiation(originalSubmission, received, history)
+        H ->> H: Validate proposal and generate reply
+        H -->> E: Send(MessageContent) or local Stop
+        E ->> A: Same task/context with final reply content
     end
-    A-->>E: Task result / artifacts
-    E->>H: onSelfTask(selected complete upstream results)
-    H-->>E: TaskResult
+    A -->> E: Task result / artifacts
+    E ->> H: onSelfTask(selected complete upstream results)
+    H -->> E: TaskResult
 ```
 
 ```mermaid
@@ -204,18 +203,18 @@ sequenceDiagram
     participant H as Host + A2A-T client
     participant ES as Independent ExtensionSender
     participant A as OMC
-    H->>H: Generate final authorization content
-    H->>ES: sendAuthorization(agent, content)
-    ES->>A: One-shot authorization
-    A-->>H: Independent result, never gates workflow
-    H->>H: Generate final subscription content
-    H->>ES: openNotification(agent, content, listener)
-    ES-->>H: Registered handle
-    ES->>A: Independent long-lived stream
-    A-->>H: ACK via acknowledgement()
-    A-->>H: listener(handle, ReceivedMessage)
-    H->>ES: handle.close() on recovery/cancel/shutdown
-    ES-->>H: completion() after stream exits
+    H ->> H: Generate final authorization content
+    H ->> ES: sendAuthorization(agent, content)
+    ES ->> A: One-shot authorization
+    A -->> H: Independent result, never gates workflow
+    H ->> H: Generate final subscription content
+    H ->> ES: openNotification(agent, content, listener)
+    ES -->> H: Registered handle
+    ES ->> A: Independent long-lived stream
+    A -->> H: ACK via acknowledgement()
+    A -->> H: listener(handle, ReceivedMessage)
+    H ->> ES: handle.close() on recovery/cancel/shutdown
+    ES -->> H: completion() after stream exits
 ```
 
 ## 9. Dependencies

@@ -239,8 +239,11 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 ```java
 interface ControlPoint {
     CompletableFuture<MessageContent> onTask(TaskRequest request);
+
     CompletableFuture<TaskResult> onSelfTask(TaskRequest request);
+
     CompletableFuture<RouteDecision> onRoute(RouteRequest request);
+
     CompletableFuture<NegotiationReply> onNegotiation(NegotiationRequest request);
 }
 ```

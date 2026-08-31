@@ -35,10 +35,12 @@ import org.springframework.stereotype.Component;
 public final class ClientRuntimeFactory {
   /** Bean name used by a host application to supply its own OMC authentication provider. */
   public static final String OMC_AUTH_PROVIDER_BEAN_NAME = "workflowOmcAuthProvider";
+
   private final Mode mode;
   private final String mockGatewayUrl;
   private final OrderGatewayClientRuntime.OrderConfig orderConfig;
   private final AuthProvider authProvider;
+
   @Autowired
   public ClientRuntimeFactory(
       WorkbenchClientProperties workbench,

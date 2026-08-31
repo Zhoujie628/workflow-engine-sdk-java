@@ -42,16 +42,16 @@ onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生�
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .onSelfTask(request -> CompletableFuture.completedFuture(
-        TaskResult.success(List.of(Map.of(
-            "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
-    .onNegotiation(request -> CompletableFuture.completedFuture(
-        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-    .build();
+        .onTask(request -> CompletableFuture.completedFuture(
+                MessageContent.text(request.getInstruction())))
+        .onSelfTask(request -> CompletableFuture.completedFuture(
+                TaskResult.success(List.of(Map.of(
+                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
+        .onRoute(request -> CompletableFuture.failedFuture(
+                new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onNegotiation(request -> CompletableFuture.completedFuture(
+                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+        .build();
 ```
 
 ## 4. 通过 Builder 执行（推荐）
@@ -106,20 +106,20 @@ ExecutionResult result = ExecutePsop.builder()
 ## 6. 中间层（Layer 1: WorkflowExecutor）
 
 ```java
-try (var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
+try(var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
         WorkflowEngineClientConfig.builder()
                 .sslVerify(false)
                 .credentialsConfigPath("etc/conf/agent_credentials.json")
-                .build())) {
-    WorkflowExecutor executor = new WorkflowExecutor(
-            workflow,
-            new MyControlPoint(),
-            client,
-            new EventCallback(),
-            "诊断故障",
-            "zh"
-    );
-    ExecutionResult result = executor.run().join();
+                .build())){
+WorkflowExecutor executor = new WorkflowExecutor(
+        workflow,
+        new MyControlPoint(),
+        client,
+        new EventCallback(),
+        "诊断故障",
+        "zh"
+);
+ExecutionResult result = executor.run().join();
 }
 ```
 
@@ -244,6 +244,7 @@ provider，不覆盖模板，也不是生产失败兜底。
 ### SSE Server（Spring WebFlux）
 
 ```java
+
 @GetMapping("/execute/{psopId}")
 public Flux<String> execute(@PathVariable String psopId) {
     Workflow workflow = LoadPsop.load(baseUrl, psopId, token, false);

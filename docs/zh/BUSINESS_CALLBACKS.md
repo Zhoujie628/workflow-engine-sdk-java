@@ -20,16 +20,16 @@ onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生�
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-    .onTask(request -> CompletableFuture.completedFuture(
-        MessageContent.text(request.getInstruction())))
-    .onSelfTask(request -> CompletableFuture.completedFuture(
-        TaskResult.success(List.of(Map.of(
-            "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
-    .onNegotiation(request -> CompletableFuture.completedFuture(
-        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-    .build();
+        .onTask(request -> CompletableFuture.completedFuture(
+                MessageContent.text(request.getInstruction())))
+        .onSelfTask(request -> CompletableFuture.completedFuture(
+                TaskResult.success(List.of(Map.of(
+                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
+        .onRoute(request -> CompletableFuture.failedFuture(
+                new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onNegotiation(request -> CompletableFuture.completedFuture(
+                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+        .build();
 ```
 
 示例显式发送普通文本，不宣称为 Task-T；本地透传、路由和停止策略需替换为真实业务逻辑。 onTask 只返回内容，不自行再次发起任务网络请求。
@@ -95,7 +95,7 @@ WorkflowEngineClientConfig 或 ExecutePsop 承载 LLM 配置。
 ```java
 // sdk、data、schema、模板选择均属于宿主。
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+                data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("诊断当前专线")));
 ```
 

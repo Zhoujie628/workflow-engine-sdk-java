@@ -83,6 +83,7 @@ public final class OrderGatewayClientRuntime
   private final OrderSessionFactory sessionFactory;
   private final ConversationSessionManager sessionManager;
   private final GatewayA2AResponseParser responseParser;
+
   public OrderGatewayClientRuntime(OrderConfig config) {
     this(
         config,
