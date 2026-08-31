@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
-import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrResponse;
 import com.google.protobuf.util.JsonFormat;
 
 import org.a2aproject.sdk.client.ClientEvent;
@@ -89,21 +88,18 @@ class OrderGatewayClientRuntimeTest {
                     openedRoutes.add(route);
                     return new OrderGatewayClientRuntime.OrderSession() {
                         @Override
-                        public OrderHttpSessionStrResponse execute(
+                        public OrderResponse execute(
                                 OrderHttpSessionStrRequest request, int timeoutMillis) {
                             requests.add(request);
                             assertEquals(9_000, timeoutMillis);
-                            return OrderHttpSessionStrResponse.newBuilder()
-                                    .setStatus(200)
-                                    .setBody(responseBody)
-                                    .build();
+                            return new OrderResponse(200, responseBody, Map.of(), "test-data");
                         }
 
                         @Override
                         public void executeStreaming(
                                 OrderHttpSessionStrRequest request,
                                 int timeoutMillis,
-                                Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                Predicate<OrderResponse> responseSink) {
                             throw new AssertionError("Blocking AgentCard must not use streaming");
                         }
 
@@ -168,7 +164,7 @@ class OrderGatewayClientRuntimeTest {
                 route ->
                         new OrderGatewayClientRuntime.OrderSession() {
                             @Override
-                            public OrderHttpSessionStrResponse execute(
+                            public OrderResponse execute(
                                     OrderHttpSessionStrRequest request, int timeoutMillis) {
                                 throw new AssertionError("Streaming AgentCard must not use execute");
                             }
@@ -177,7 +173,7 @@ class OrderGatewayClientRuntimeTest {
                             public void executeStreaming(
                                     OrderHttpSessionStrRequest request,
                                     int timeoutMillis,
-                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                    Predicate<OrderResponse> responseSink) {
                                 assertEquals("/a2a/json/message:stream", request.getUriPath());
                                 assertEquals("text/event-stream", request.getHeadersMap().get("Accept"));
                                 assertEquals(9_000, timeoutMillis);
@@ -217,7 +213,7 @@ class OrderGatewayClientRuntimeTest {
                 route ->
                         new OrderGatewayClientRuntime.OrderSession() {
                             @Override
-                            public OrderHttpSessionStrResponse execute(
+                            public OrderResponse execute(
                                     OrderHttpSessionStrRequest request, int timeoutMillis) {
                                 throw new AssertionError();
                             }
@@ -226,7 +222,7 @@ class OrderGatewayClientRuntimeTest {
                             public void executeStreaming(
                                     OrderHttpSessionStrRequest request,
                                     int timeoutMillis,
-                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                    Predicate<OrderResponse> responseSink) {
                                 throw new IllegalStateException("stream disconnected");
                             }
 
@@ -269,23 +265,20 @@ class OrderGatewayClientRuntimeTest {
                     openCount.incrementAndGet();
                     return new OrderGatewayClientRuntime.OrderSession() {
                         @Override
-                        public OrderHttpSessionStrResponse execute(
+                        public OrderResponse execute(
                                 OrderHttpSessionStrRequest request, int timeoutMillis) {
                             String body =
                                     requestCount.getAndIncrement() == 0
                                             ? inputRequired
                                             : completed;
-                            return OrderHttpSessionStrResponse.newBuilder()
-                                    .setStatus(200)
-                                    .setBody(body)
-                                    .build();
+                            return new OrderResponse(200, body, Map.of(), "test-data");
                         }
 
                         @Override
                         public void executeStreaming(
                                 OrderHttpSessionStrRequest request,
                                 int timeoutMillis,
-                                Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                Predicate<OrderResponse> responseSink) {
                             throw new AssertionError("Blocking AgentCard must not use streaming");
                         }
 
@@ -321,19 +314,16 @@ class OrderGatewayClientRuntimeTest {
                     openCount.incrementAndGet();
                     return new OrderGatewayClientRuntime.OrderSession() {
                         @Override
-                        public OrderHttpSessionStrResponse execute(
+                        public OrderResponse execute(
                                 OrderHttpSessionStrRequest request, int timeoutMillis) {
-                            return OrderHttpSessionStrResponse.newBuilder()
-                                    .setStatus(200)
-                                    .setBody(completed)
-                                    .build();
+                            return new OrderResponse(200, completed, Map.of(), "test-data");
                         }
 
                         @Override
                         public void executeStreaming(
                                 OrderHttpSessionStrRequest request,
                                 int timeoutMillis,
-                                Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                Predicate<OrderResponse> responseSink) {
                             throw new AssertionError("Blocking AgentCard must not use streaming");
                         }
 
@@ -376,20 +366,17 @@ class OrderGatewayClientRuntimeTest {
                 route ->
                         new OrderGatewayClientRuntime.OrderSession() {
                             @Override
-                            public OrderHttpSessionStrResponse execute(
+                            public OrderResponse execute(
                                     OrderHttpSessionStrRequest request, int timeoutMillis) {
                                 requests.add(request);
-                                return OrderHttpSessionStrResponse.newBuilder()
-                                        .setStatus(200)
-                                        .setBody(taskBody)
-                                        .build();
+                                return new OrderResponse(200, taskBody, Map.of(), "test-data");
                             }
 
                             @Override
                             public void executeStreaming(
                                     OrderHttpSessionStrRequest request,
                                     int timeoutMillis,
-                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                    Predicate<OrderResponse> responseSink) {
                                 throw new AssertionError();
                             }
 
@@ -427,7 +414,7 @@ class OrderGatewayClientRuntimeTest {
                 route ->
                         new OrderGatewayClientRuntime.OrderSession() {
                             @Override
-                            public OrderHttpSessionStrResponse execute(
+                            public OrderResponse execute(
                                     OrderHttpSessionStrRequest request, int timeoutMillis) {
                                 throw new AssertionError();
                             }
@@ -436,7 +423,7 @@ class OrderGatewayClientRuntimeTest {
                             public void executeStreaming(
                                     OrderHttpSessionStrRequest request,
                                     int timeoutMillis,
-                                    Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                    Predicate<OrderResponse> responseSink) {
                                 requests.add(request);
                                 responseSink.test(streamResponse("data:" + completed + "\n\n"));
                             }
@@ -479,19 +466,16 @@ class OrderGatewayClientRuntimeTest {
                     openCount.incrementAndGet();
                     return new OrderGatewayClientRuntime.OrderSession() {
                         @Override
-                        public OrderHttpSessionStrResponse execute(
+                        public OrderResponse execute(
                                 OrderHttpSessionStrRequest request, int timeoutMillis) {
-                            return OrderHttpSessionStrResponse.newBuilder()
-                                    .setStatus(200)
-                                    .setBody(completed)
-                                    .build();
+                            return new OrderResponse(200, completed, Map.of(), "test-data");
                         }
 
                         @Override
                         public void executeStreaming(
                                 OrderHttpSessionStrRequest request,
                                 int timeoutMillis,
-                                Predicate<OrderHttpSessionStrResponse> responseSink) {
+                                Predicate<OrderResponse> responseSink) {
                             throw new AssertionError();
                         }
 
@@ -533,8 +517,8 @@ class OrderGatewayClientRuntimeTest {
                 new GatewayA2AResponseParser());
     }
 
-    private static OrderHttpSessionStrResponse streamResponse(String body) {
-        return OrderHttpSessionStrResponse.newBuilder().setStatus(200).setBody(body).build();
+    private static OrderResponse streamResponse(String body) {
+        return new OrderResponse(200, body, Map.of(), "test-data");
     }
 
     private static String plainTaskJson(String taskId, String contextId) throws Exception {
