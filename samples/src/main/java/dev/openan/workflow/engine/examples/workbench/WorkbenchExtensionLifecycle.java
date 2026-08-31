@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 public final class WorkbenchExtensionLifecycle implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(WorkbenchExtensionLifecycle.class);
 
+  private final dev.openan.workflow.engine.client.AuthProvider authProvider;
   private final String credentialsPath;
   private final boolean sslVerify;
   private final String a2atEnvPath;
@@ -42,6 +43,15 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       java.util.function.BiConsumer<
               NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
           notificationCallback) {
+    this(credentialsPath, sslVerify, a2atEnvPath, runtimeSupplier, notificationCallback, null);
+  }
+
+  public WorkbenchExtensionLifecycle(
+      String credentialsPath, boolean sslVerify, String a2atEnvPath,
+      Supplier<A2AJavaClientRuntime> runtimeSupplier,
+      java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback,
+      dev.openan.workflow.engine.client.AuthProvider authProvider) {
+    this.authProvider = authProvider;
     this.credentialsPath = credentialsPath;
     this.sslVerify = sslVerify;
     this.a2atEnvPath = a2atEnvPath;
@@ -61,28 +71,30 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       return;
     }
     List<AgentCard> agentCards = new WorkbenchAgentCatalog().load();
-    A2AJavaClientRuntime authorizationRuntime =
-        runtimeSupplier != null ? runtimeSupplier.get() : null;
-    A2AJavaClientRuntime notificationRuntime =
-        runtimeSupplier != null ? runtimeSupplier.get() : null;
-    if (authorizationRuntime != null && authorizationRuntime == notificationRuntime) {
-      throw new IllegalStateException(
-          "Runtime supplier must create independent Authorization-T and Notification-T instances");
-    }
-    WorkflowEngineClientConfig config =
-        WorkflowEngineClientConfig.builder()
-            .sslVerify(sslVerify)
-            .credentialsConfigPath(credentialsPath)
-            .build();
-    A2ATransport authorizationTransport =
-        new A2ATransport(agentCards, authorizationRuntime, config);
-    A2ATransport notificationCandidate = new A2ATransport(agentCards, notificationRuntime, config);
-    long started = System.nanoTime();
-    log.info(
-        "[ExtensionLifecycle] START authorizationContextId={}, notificationContextId={}, scope=workbench",
-        authorizationTransport.getContextId(),
-        notificationCandidate.getContextId());
+    A2AJavaClientRuntime authorizationRuntime = null;
+    A2AJavaClientRuntime notificationRuntime = null;
+    A2ATransport authorizationTransport = null;
+    A2ATransport notificationCandidate = null;
     try {
+      authorizationRuntime = runtimeSupplier != null ? runtimeSupplier.get() : null;
+      notificationRuntime = runtimeSupplier != null ? runtimeSupplier.get() : null;
+      if (authorizationRuntime != null && authorizationRuntime == notificationRuntime) {
+        throw new IllegalStateException(
+            "Runtime supplier must create independent Authorization-T and Notification-T instances");
+      }
+      WorkflowEngineClientConfig config =
+          WorkflowEngineClientConfig.builder()
+              .sslVerify(sslVerify)
+              .credentialsConfigPath(credentialsPath)
+              .authProvider(authProvider)
+              .build();
+      authorizationTransport = new A2ATransport(agentCards, authorizationRuntime, config);
+      notificationCandidate = new A2ATransport(agentCards, notificationRuntime, config);
+      long started = System.nanoTime();
+      log.info(
+          "[ExtensionLifecycle] START authorizationContextId={}, notificationContextId={}, scope=workbench",
+          authorizationTransport.getContextId(),
+          notificationCandidate.getContextId());
       List<NotificationSubscription> opened =
           new ExtensionPrePositioner(a2atEnvPath)
               .prePosition(
@@ -96,7 +108,6 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
               .map(NotificationSubscription::agentName)
               .collect(Collectors.toUnmodifiableSet());
       subscriptions.entrySet().removeIf(entry -> !activeAgents.contains(entry.getKey()));
-      authorizationTransport.close();
       notificationTransport = notificationCandidate;
       log.info(
           "[ExtensionLifecycle] ACTIVE contextId={}, subscriptions={}, notificationScope=workbench, elapsedMs={}",
@@ -106,9 +117,20 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     } catch (RuntimeException e) {
       subscriptions.values().forEach(NotificationSubscription::close);
       subscriptions.clear();
-      authorizationTransport.close();
-      notificationCandidate.close();
+      closeResource(notificationCandidate,
+          notificationRuntime == authorizationRuntime ? null : notificationRuntime);
       throw e;
+    } finally {
+      closeResource(authorizationTransport, authorizationRuntime);
+    }
+  }
+
+  private static void closeResource(A2ATransport transport, A2AJavaClientRuntime runtime) {
+    try {
+      if (transport != null) transport.close();
+      else if (runtime != null) runtime.close();
+    } catch (RuntimeException error) {
+      log.warn("Extension resource cleanup failed", error);
     }
   }
 

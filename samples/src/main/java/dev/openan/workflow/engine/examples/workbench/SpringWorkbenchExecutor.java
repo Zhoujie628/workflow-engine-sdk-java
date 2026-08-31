@@ -49,6 +49,8 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
 
   private final WorkbenchClientProperties properties;
   private volatile WorkbenchTaskInputParser taskInputParser;
+  private final java.util.concurrent.ConcurrentMap<String, ExecutionCancellation> executions =
+      new java.util.concurrent.ConcurrentHashMap<>();
 
   public SpringWorkbenchExecutor(WorkbenchClientProperties properties) {
     this.properties = properties;
@@ -80,6 +82,8 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
     String contextId = ctx.getContextId();
     String userText = extractText(ctx.getMessage());
     long started = System.nanoTime();
+    ExecutionCancellation cancellation = new ExecutionCancellation();
+    executions.put(taskId, cancellation);
     emitter.submit(buildStatusMessage(contextId, taskId, "Task received"));
     emitter.startWork(buildStatusMessage(contextId, taskId, "Processing"));
 
@@ -106,7 +110,8 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                   resolveCredentialsPath(),
                   properties.isSslVerify(),
                   resolveEnvPath())
-              .run(input, properties.isDemoNegotiationEnabled());
+              .run(input, properties.isDemoNegotiationEnabled(), cancellation);
+      cancellation.check();
       Map<String, Object> metadata = new LinkedHashMap<>();
       metadata.put(A2ATExtension.TASK_T.uri(), result);
       List<Part<?>> parts = List.of(new TextPart(result));
@@ -119,6 +124,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
           result.length(),
           elapsedMillis(started));
     } catch (Exception e) {
+      if (cancellation.isCancelled()) return;
       log.error(
           "[SpringWorkbench] TASK_FAILED taskId={}, contextId={}, elapsedMs={}, "
               + "errorType={}, message={}",
@@ -129,6 +135,8 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
           e.getMessage(),
           e);
       emitter.fail(buildStatusMessage(contextId, taskId, "Failed: " + e.getMessage()));
+    } finally {
+      executions.remove(taskId, cancellation);
     }
   }
 
@@ -147,6 +155,8 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
 
   @Override
   public void cancel(RequestContext ctx, AgentEmitter emitter) throws A2AError {
+    ExecutionCancellation execution = executions.get(ctx.getTaskId());
+    if (execution != null) execution.cancel();
     log.warn(
         "[SpringWorkbench] TASK_CANCEL taskId={}, contextId={}",
         ctx.getTaskId(),

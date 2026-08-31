@@ -120,13 +120,13 @@ class WorkbenchTaskFlowTest {
                 List.of(
                     Map.of(
                         "step", "diagnosis_city1",
-                        "output", "city1"),
+                        "outputs", List.of("city1")),
                     Map.of(
                         "step", "diagnosis_city2",
-                        "output", "city2"),
+                        "outputs", List.of("city2")),
                     Map.of(
                         "step", "merge_analysis",
-                        "output", "merged result")))
+                        "outputs", List.of("merged result"))))
             .stepOutputs(
                 Map.of(
                     "diagnosis_city1", Map.of("diagnose", "city1"),
@@ -135,5 +135,48 @@ class WorkbenchTaskFlowTest {
             .build();
 
     assertEquals("merged result", WorkbenchOrchestrator.buildResultText(result));
+  }
+
+  @Test
+  void arbitraryTerminalNamesAndMultipleOutputsArePreserved() {
+    var workflow = Workflow.builder().name("custom").steps(List.of(
+        dev.openan.workflow.engine.model.WorkflowStep.builder().name("custom-final").build())).build();
+    var result = ExecutionResult.builder().success(true).history(List.of())
+        .stepOutputs(Map.of("custom-final", Map.of("business", List.of("text", Map.of("count", 2), List.of("nested")))))
+        .build();
+    assertEquals("text\n\n{\"count\":2}\n\n[\"nested\"]", WorkbenchOrchestrator.buildResultText(result, workflow));
+  }
+
+  @Test
+  void cancellationIsRequestLocalAndSurvivesLateBinding() {
+    var first = new ExecutionCancellation();
+    var second = new ExecutionCancellation();
+    first.cancel();
+    var future = new java.util.concurrent.CompletableFuture<Void>();
+    first.bind(future);
+    assertTrue(future.isCancelled());
+    assertThrows(java.util.concurrent.CancellationException.class, first::check);
+    second.check();
+  }
+
+  @Test
+  void secondRuntimeCreationFailureClosesFirstRuntime() {
+    var creates = new java.util.concurrent.atomic.AtomicInteger();
+    var closes = new java.util.concurrent.atomic.AtomicInteger();
+    var runtime = (dev.openan.workflow.engine.client.A2AJavaClientRuntime)
+        java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+            new Class<?>[] {dev.openan.workflow.engine.client.A2AJavaClientRuntime.class},
+            (proxy, method, args) -> {
+              if (method.getName().equals("close")) closes.incrementAndGet();
+              return null;
+            });
+    try (var lifecycle = new WorkbenchExtensionLifecycle(null, true, null, () -> {
+      if (creates.incrementAndGet() == 2) throw new IllegalStateException("second initialization failed");
+      return runtime;
+    }, null)) {
+      assertThrows(IllegalStateException.class, lifecycle::start);
+      assertEquals(1, closes.get());
+    }
+    assertEquals(1, closes.get());
   }
 }
