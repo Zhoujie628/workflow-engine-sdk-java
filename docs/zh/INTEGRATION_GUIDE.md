@@ -303,7 +303,7 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
         "required": false
       },
       {
-        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/NEGOTIATION-T",
+        "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
         "description": "协商文本交换",
         "required": false
       },
