@@ -39,9 +39,10 @@ class NotificationSubscriptionTest {
 
         assertEquals(1, closes.get());
         assertFalse(subscription.isActive());
-        assertTrue(subscription.completion().isDone());
+        assertFalse(subscription.completion().isDone());
         assertFalse(subscription.streamTermination().isDone());
         subscription.markStreamTerminated();
+        assertTrue(subscription.completion().isDone());
         assertTrue(subscription.streamTermination().isDone());
         assertEquals("ack", subscription.acknowledgement().join().getText());
     }

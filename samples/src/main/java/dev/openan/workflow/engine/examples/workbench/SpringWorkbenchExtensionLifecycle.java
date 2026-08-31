@@ -22,6 +22,8 @@ public final class SpringWorkbenchExtensionLifecycle {
 
     private final WorkbenchClientProperties properties;
     private WorkbenchExtensionLifecycle lifecycle;
+    private volatile java.util.concurrent.CompletableFuture<Void> firstRecovery =
+            new java.util.concurrent.CompletableFuture<>();
 
     public SpringWorkbenchExtensionLifecycle(WorkbenchClientProperties properties) {
         this.properties = properties;
@@ -32,6 +34,7 @@ public final class SpringWorkbenchExtensionLifecycle {
         if (lifecycle != null && lifecycle.isActive()) {
             return;
         }
+        firstRecovery = new java.util.concurrent.CompletableFuture<>();
         WorkbenchExtensionLifecycle candidate =
                 new WorkbenchExtensionLifecycle(
                         resolveCredentialsPath(),
@@ -63,17 +66,37 @@ public final class SpringWorkbenchExtensionLifecycle {
         lifecycle = null;
     }
 
-    private void onNotification(Map<String, Object> data) {
-        Object text = data.get("text");
-        log.info(
-                "[Notification] EVENT scope=workbench, agent={}, state={}, textChars={}, metadata={}",
-                data.get("agent"),
-                data.get("state"),
-                text != null ? String.valueOf(text).length() : 0,
-                data.containsKey("metadata") ? "yes" : "no");
-        if (text != null) {
-            log.debug("[Notification] Recovery result from {}: {}", data.get("agent"), text);
+    /**
+     * Bounded observation for the local demo before host shutdown, never a workflow prerequisite.
+     * Only the first recovery is expected: a healthy city may never publish a recovery result.
+     */
+    public boolean awaitFirstRecovery(java.time.Duration timeout) {
+        if (timeout.isNegative())
+            throw new IllegalArgumentException("timeout must not be negative");
+        java.util.concurrent.CompletableFuture<Void> observed;
+        synchronized (this) {
+            if (lifecycle == null) return false;
+            observed = firstRecovery;
         }
+        try {
+            observed.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (java.util.concurrent.ExecutionException
+                | java.util.concurrent.TimeoutException e) {
+            return false;
+        }
+    }
+
+    private void onNotification(dev.openan.workflow.engine.client.NotificationSubscription handle,
+            dev.openan.workflow.engine.model.ReceivedMessage received) {
+        if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(received))
+            firstRecovery.complete(null);
+        log.info("[Notification] EVENT scope=workbench, agent={}, artifacts={}",
+                handle.agentName(), received.artifacts().size());
+        log.debug("[Notification] Content from {}: {}", handle.agentName(), received);
     }
 
     private String resolveEnvPath() {

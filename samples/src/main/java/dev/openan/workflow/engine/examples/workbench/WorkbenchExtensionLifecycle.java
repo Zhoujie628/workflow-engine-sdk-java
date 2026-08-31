@@ -29,7 +29,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     private final boolean sslVerify;
     private final String a2atEnvPath;
     private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
-    private final Consumer<Map<String, Object>> notificationCallback;
+    private final java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback;
     private final Map<String, NotificationSubscription> subscriptions = new ConcurrentHashMap<>();
     private A2ATransport notificationTransport;
 
@@ -38,7 +38,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
             boolean sslVerify,
             String a2atEnvPath,
             Supplier<A2AJavaClientRuntime> runtimeSupplier,
-            Consumer<Map<String, Object>> notificationCallback) {
+            java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback) {
         this.credentialsPath = credentialsPath;
         this.sslVerify = sslVerify;
         this.a2atEnvPath = a2atEnvPath;
@@ -65,7 +65,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         WorkflowEngineClientConfig config =
                 WorkflowEngineClientConfig.builder()
                         .sslVerify(sslVerify)
-                        .a2atEnvPath(a2atEnvPath)
+
                         .credentialsConfigPath(credentialsPath)
                         .build();
         A2ATransport authorizationTransport =
@@ -79,7 +79,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
                 notificationCandidate.getContextId());
         try {
             List<NotificationSubscription> opened =
-                    new ExtensionPrePositioner()
+                    new ExtensionPrePositioner(a2atEnvPath)
                             .prePosition(
                                     new DefaultExtensionSender(authorizationTransport),
                                     new DefaultExtensionSender(notificationCandidate),
@@ -124,28 +124,17 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         subscriptions.clear();
     }
 
-    private void handleNotification(Map<String, Object> data) {
-        if ("recovery-result".equals(data.get("artifact_name"))) {
-            String agent = String.valueOf(data.get("agent"));
-            NotificationSubscription completed = subscriptions.remove(agent);
-            if (completed != null) {
-                log.info(
-                        "[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, events={}, action=close-stream",
-                        agent,
-                        completed.contextId(),
-                        completed.heartbeat().eventCount());
-                completed.close();
-            }
+    private void handleNotification(NotificationSubscription handle,
+            dev.openan.workflow.engine.model.ReceivedMessage received) {
+        if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(received)) {
+            subscriptions.remove(handle.agentName(), handle);
+            log.info("[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, action=close-stream",
+                    handle.agentName(), handle.contextId());
+            handle.close();
         }
         if (notificationCallback != null) {
-            try {
-                notificationCallback.accept(data);
-            } catch (RuntimeException callbackError) {
-                log.warn(
-                        "[ExtensionLifecycle] Notification observer failed: {}",
-                        callbackError.getMessage(),
-                        callbackError);
-            }
+            try { notificationCallback.accept(handle, received); }
+            catch (RuntimeException error) { log.warn("Notification observer failed", error); }
         }
     }
 

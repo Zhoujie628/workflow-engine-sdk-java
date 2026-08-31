@@ -17,17 +17,22 @@
  *    under the License.
  */
 
-package dev.openan.workflow.engine.control;
+package dev.openan.workflow.engine.model;
 
-import dev.openan.workflow.engine.model.SendMessageResult;
-import dev.openan.workflow.engine.model.TaskSubmission;
+import java.util.List;
 
-import java.util.concurrent.CompletableFuture;
+/** Conditional route input; upstream selection is identical to task callbacks. */
+public record RouteRequest(
+        String executionId,
+        String stepName,
+        WorkflowInput workflowInput,
+        List<TaskExecutionResult> currentResults,
+        List<RouteOption> candidates) {
+    public RouteRequest {
+        currentResults = List.copyOf(currentResults);
+        candidates = List.copyOf(candidates);
+    }
 
-/** Narrow capability exposed to business task callbacks for dispatching one typed remote task. */
-@FunctionalInterface
-public interface TaskDispatcher {
-
-    /** Dispatches a natural-language or structured Task-T submission. */
-    CompletableFuture<SendMessageResult> dispatch(TaskSubmission submission);
+    /** A permitted target and its business condition. */
+    public record RouteOption(String nextStep, String condition) {}
 }

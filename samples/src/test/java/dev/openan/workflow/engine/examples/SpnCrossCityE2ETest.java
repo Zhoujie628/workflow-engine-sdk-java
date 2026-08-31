@@ -77,6 +77,7 @@ class SpnCrossCityE2ETest {
     private int port1;
     private int port2;
     private String sdkEnvPath;
+    private net.openan.a2at.sdk.client.A2ATClient contentClient;
 
     @BeforeAll
     static void registerMockProvider() {
@@ -165,12 +166,14 @@ class SpnCrossCityE2ETest {
         WorkflowEngineClientConfig config =
                 WorkflowEngineClientConfig.builder()
                         .sslVerify(false)
-                        .a2atEnvPath(sdkEnvPath)
+
                         .build();
         taskTransport = new A2ATransport(List.of(c1, c2), null, config);
         authorizationTransport = new A2ATransport(List.of(c1, c2), null, config);
         notificationTransport = new A2ATransport(List.of(c1, c2), null, config);
         client = new DefaultWorkflowEngineClient(taskTransport);
+        contentClient = dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(sdkEnvPath)));
         authorizationSender = new DefaultExtensionSender(authorizationTransport);
         notificationSender = new DefaultExtensionSender(notificationTransport);
     }
@@ -239,15 +242,10 @@ class SpnCrossCityE2ETest {
         assertNotEquals(authorizationTransport.getContextId(), notificationTransport.getContextId());
         // Pre-position Authorization-T + Notification-T to both SPN agents
         for (String agent : List.of("SPN Domain Agent City1", "SPN Domain Agent City2")) {
-            authorizationSender
-                    .sendExtensionMessageFromData(
-                            agent,
-                            "下发授权放行策略",
-                            SpnCasePrompts.addAuthorizationData(),
-                            SpnCasePrompts.authorizationSchema(),
-                            net.openan.a2at.sdk.core.model.StandardTemplates
-                                    .AUTHORIZATION_POLICY_MANAGEMENT,
-                            dev.openan.workflow.engine.client.A2ATExtension.AUTHORIZATION_T)
+            authorizationSender.sendAuthorization(agent, dev.openan.workflow.engine.client.A2atMessages.from(
+                            contentClient.generateAuthPromptFromDataWithSchema(SpnCasePrompts.addAuthorizationData(), SpnCasePrompts.authorizationSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                    .AUTHORIZATION_POLICY_MANAGEMENT.uri()),
+                            List.of(new org.a2aproject.sdk.spec.TextPart("下发授权放行策略"))))
                     .join();
         }
 
@@ -255,8 +253,12 @@ class SpnCrossCityE2ETest {
         CountDownLatch recoveryResultNotification = new CountDownLatch(1);
         AtomicReference<String> recoveryPlanNotificationText = new AtomicReference<>();
         AtomicReference<String> recoveryNotificationText = new AtomicReference<>();
-        java.util.function.Consumer<Map<String, Object>> notificationCallback =
-                event -> {
+        java.util.function.BiConsumer<NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage> notificationCallback =
+                (handle, received) -> {
+                    for (var artifact : received.artifacts()) {
+                    Map<String, Object> event = new java.util.LinkedHashMap<>();
+                    event.put("metadata", artifact.metadata());
+                    event.put("artifact_name", artifact.name());
                     Object metadataValue = event.get("metadata");
                     String protocolContent = "";
                     if (metadataValue instanceof Map<?, ?> metadata) {
@@ -272,17 +274,13 @@ class SpnCrossCityE2ETest {
                         recoveryNotificationText.set(protocolContent);
                         recoveryResultNotification.countDown();
                     }
+                    }
                 };
         for (String agent : List.of("SPN Domain Agent City1", "SPN Domain Agent City2")) {
             NotificationSubscription subscription =
-                    notificationSender.openNotificationFromData(
-                                    agent,
-                                    "订阅业务抢通结果通知",
-                                    SpnCasePrompts.subscribeServiceRecoveryData(),
-                                    SpnCasePrompts.serviceRecoverySchema(),
-                                    net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY,
-                                    notificationCallback)
-                            .join();
+                    notificationSender.openNotification(agent, dev.openan.workflow.engine.client.A2atMessages.from(
+                            contentClient.generateNotificationPromptFromDataWithSchema(SpnCasePrompts.subscribeServiceRecoveryData(), SpnCasePrompts.serviceRecoverySchema(), net.openan.a2at.sdk.core.model.StandardTemplates.SERVICE_RECOVERY.uri()),
+                            List.of(new org.a2aproject.sdk.spec.TextPart("订阅业务抢通结果通知"))), notificationCallback);
             subscription.acknowledgement().join();
             subscriptions.add(subscription);
         }
@@ -371,7 +369,8 @@ class SpnCrossCityE2ETest {
         Map<String, Object> mergeOut = result.getStepOutputs().get("merge_analysis");
         assertNotNull(mergeOut, "merge_analysis output must exist");
         String mergeText = String.valueOf(mergeOut.values().iterator().next());
-        assertTrue(mergeText.contains("城市1"), "Merge must locate fault in City1: " + mergeText);
+        assertTrue(mergeText.contains("SPN Domain Agent City1") && mergeText.contains("无收光"),
+                "Offline merge must preserve actual City1 identity and diagnosis: " + mergeText);
     }
 
     private static boolean await(CountDownLatch latch, long seconds) {

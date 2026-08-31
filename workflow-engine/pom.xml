@@ -51,7 +51,7 @@
         <!-- A2A-T extension SDK (Java) -->
         <dependency>
             <groupId>net.openan.a2a-t.sdk</groupId>
-            <artifactId>a2a-t-client</artifactId>
+            <artifactId>a2a-t-core</artifactId>
             <version>${a2a.t.sdk.version}</version>
         </dependency>
 

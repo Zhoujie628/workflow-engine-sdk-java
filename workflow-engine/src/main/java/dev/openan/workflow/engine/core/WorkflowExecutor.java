@@ -28,10 +28,12 @@ import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.StepType;
 import dev.openan.workflow.engine.model.Task;
 import dev.openan.workflow.engine.model.TaskRequest;
-import dev.openan.workflow.engine.model.TaskResponse;
 import dev.openan.workflow.engine.model.TaskStatus;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowStep;
+import dev.openan.workflow.engine.model.TaskExecutionResult;
+import dev.openan.workflow.engine.model.TaskResult;
+import dev.openan.workflow.engine.model.WorkflowInput;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,12 +60,17 @@ public class WorkflowExecutor {
     private static final Logger log = LoggerFactory.getLogger(WorkflowExecutor.class);
 
     private final Workflow workflow;
+    private final AtomicBoolean started = new AtomicBoolean();
+    private final AtomicBoolean stopped = new AtomicBoolean();
+    private final Set<CompletableFuture<?>> activeTasks = ConcurrentHashMap.newKeySet();
     private final ControlPoint controlPoint;
     private final WorkflowEngineClient engineClient;
     private final EventCallback eventCallback;
     private final ContextBuilder contextBuilder;
     private final String lang;
+    private final String executionId = java.util.UUID.randomUUID().toString();
     private final Map<String, Map<String, Object>> stepOutputs = new ConcurrentHashMap<>();
+    private final Map<String, List<TaskExecutionResult>> stepExecutionResults = new ConcurrentHashMap<>();
     private final List<Map<String, Object>> executionHistory =
             Collections.synchronizedList(new ArrayList<>());
 
@@ -74,11 +81,13 @@ public class WorkflowExecutor {
             EventCallback eventCallback,
             String runtimeIntent,
             String lang) {
-        this.workflow = workflow;
+        this.workflow =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .convertValue(workflow, Workflow.class);
         this.controlPoint = controlPoint;
         this.engineClient = engineClient;
         this.eventCallback = eventCallback != null ? eventCallback : new EventCallback();
-        this.contextBuilder = new ContextBuilder(workflow, runtimeIntent);
+        this.contextBuilder = new ContextBuilder(this.workflow, runtimeIntent);
         this.lang = lang != null ? lang : "zh";
         try {
             this.engineClient.setControlPoint(this.controlPoint);
@@ -123,6 +132,9 @@ public class WorkflowExecutor {
     }
 
     public CompletableFuture<ExecutionResult> run() {
+        if (!started.compareAndSet(false, true))
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("WorkflowExecutor is single-use"));
         // NOTE: START lifecycle event is emitted by the runner (ExecutePsop),
         // not here. Mirrors Python SDK where the executor emits only
         // step/task/route events and the runner emits start/complete/error/close.
@@ -156,7 +168,7 @@ public class WorkflowExecutor {
         }
         Set<Integer> executed = ConcurrentHashMap.newKeySet();
         AtomicBoolean failed = new AtomicBoolean();
-        return executeSteps(pending, scheduled, executed, activated, failed)
+        CompletableFuture<ExecutionResult> execution = executeSteps(pending, scheduled, executed, activated, failed)
                 .thenApply(
                         v -> {
                             emit(EventType.WORKFLOW_COMPLETE, Map.of());
@@ -182,6 +194,11 @@ public class WorkflowExecutor {
                                     .error(e.getMessage())
                                     .build();
                         });
+        execution.whenComplete((value, error) -> {
+            stopped.set(true);
+            activeTasks.forEach(task -> task.cancel(true));
+        });
+        return execution;
     }
 
     private CompletableFuture<Void> executeSteps(
@@ -190,7 +207,7 @@ public class WorkflowExecutor {
             Set<Integer> executed,
             Set<Integer> activated,
             AtomicBoolean failed) {
-        if (pending.isEmpty() || failed.get()) {
+        if (pending.isEmpty() || failed.get() || stopped.get()) {
             return CompletableFuture.completedFuture(null);
         }
 
@@ -281,6 +298,7 @@ public class WorkflowExecutor {
                 .thenCompose(
                         result -> {
                             stepOutputs.put(step.getName(), result.results());
+                            stepExecutionResults.put(step.getName(), result.taskResults());
                             if (!result.success()) {
                                 log.error("Step {} failed, stopping.", step.getName());
                                 emit(
@@ -336,6 +354,35 @@ public class WorkflowExecutor {
                 graph.get(i).add(target);
             }
         }
+        for (WorkflowStep step : workflow.getSteps()) {
+            List<String> contextFrom = step.getContextFrom();
+            if (contextFrom == null || contextFrom.isEmpty()) continue;
+            if (contextFrom.contains("*") && contextFrom.size() != 1) {
+                throw new IllegalArgumentException(
+                        "Step "
+                                + step.getName()
+                                + " cannot combine '*' with named context sources");
+            }
+            if (contextFrom.contains("*")) continue;
+            Set<String> ancestors = Set.copyOf(contextBuilder.getAllPredecessors(step.getName()));
+            for (String source : contextFrom) {
+                if (!indices.containsKey(source)) {
+                    throw new IllegalArgumentException(
+                            "Step "
+                                    + step.getName()
+                                    + " references missing context source "
+                                    + source);
+                }
+                if (!ancestors.contains(source)) {
+                    throw new IllegalArgumentException(
+                            "Step "
+                                    + step.getName()
+                                    + " context source "
+                                    + source
+                                    + " is not an upstream dependency");
+                }
+            }
+        }
         int[] state = new int[workflow.getSteps().size()];
         for (int i = 0; i < state.length; i++) detectCycle(i, graph, state);
     }
@@ -362,17 +409,18 @@ public class WorkflowExecutor {
             String taskDesc,
             String agentName,
             int subtaskIndex,
-            String output,
+            List<Object> outputs,
             boolean success,
-            Map<String, Object> results) {}
+            Map<String, Object> results,
+            List<TaskExecutionResult> taskResults) {}
 
     private CompletableFuture<StepResult> executeSubtasks(WorkflowStep step) {
-        String contextMessage = contextBuilder.buildContext(step, stepOutputs);
+        var workflowInput = contextBuilder.buildWorkflowInput(step, stepExecutionResults);
         List<CompletableFuture<StepResult>> futures = new ArrayList<>();
         for (int i = 0; i < step.getSubtasks().size(); i++) {
             final int subtaskIndex = i;
             final var task = step.getSubtasks().get(i);
-            var request = buildTaskRequest(step, task, subtaskIndex, contextMessage);
+            var request = buildTaskRequest(step, task, subtaskIndex, workflowInput);
             emit(
                     EventType.TASK_REQUEST,
                     Map.of(
@@ -382,10 +430,14 @@ public class WorkflowExecutor {
                             task.getAgent(),
                             "task",
                             task.getDescription()));
-            futures.add(
-                    dispatchTask(step, request)
-                            .thenApply(r -> processTaskResponse(step, task, subtaskIndex, r))
-                            .exceptionally(e -> processTaskError(step, task, subtaskIndex, e)));
+            CompletableFuture<TaskResult> dispatch = dispatchTask(step, request);
+            CompletableFuture<StepResult> processed = dispatch
+                            .thenApply(r -> processTaskResult(step, task, subtaskIndex, r))
+                            .exceptionally(e -> processTaskError(step, task, subtaskIndex, e));
+            processed.whenComplete((result, error) -> {
+                if (processed.isCancelled()) dispatch.cancel(true);
+            });
+            futures.add(processed);
         }
         if (step.getStepType() == StepType.ANY_SUCCESS) {
             return anySuccess(futures);
@@ -394,37 +446,78 @@ public class WorkflowExecutor {
                 .thenApply(v -> collectAllSuccess(futures));
     }
 
+    private String taskId(String stepName, int index) {
+        return java.util
+                .UUID
+                .nameUUIDFromBytes(
+                        (executionId + ":" + stepName + ":" + index)
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString();
+    }
+
     private TaskRequest buildTaskRequest(
-            WorkflowStep step, Task task, int subtaskIndex, String contextMessage) {
-        String taskMessage =
-                contextBuilder.buildTaskMessage(task.getDescription(), contextMessage, lang);
+            WorkflowStep step, Task task, int subtaskIndex, WorkflowInput workflowInput) {
         log.info(
                 "[Executor] Dispatching task: step={}, agent={}, subtask_index={}, desc={}",
                 step.getName(),
                 task.getAgent(),
                 subtaskIndex,
                 task.getDescription());
-        log.debug("[Executor] Task message to {}: [{}]", task.getAgent(), taskMessage);
         return TaskRequest.builder()
                 .agentName(task.getAgent())
                 .skill(task.getSkill())
-                .message(taskMessage)
-                .description(task.getDescription())
-                .context(contextMessage)
+                .instruction(task.getDescription())
+                .language(lang)
                 .stepName(step.getName())
-                .subtaskIndex(subtaskIndex)
+                .executionId(executionId)
+                .taskId(taskId(step.getName(), subtaskIndex))
+                .input(
+                        task.getInput() == null
+                                ? dev.openan.workflow.engine.model.BusinessInput.text(
+                                        task.getDescription())
+                                : task.getInput())
+                .workflowInput(workflowInput)
                 .build();
     }
 
-    private CompletableFuture<TaskResponse> dispatchTask(WorkflowStep step, TaskRequest request) {
-        if (step.getStepType() == StepType.SELF_LOOP) {
-            log.info(
-                    "[Executor] Self-loop task: step={}, agent={} (local, no A2A-T)",
-                    step.getName(),
-                    request.getAgentName());
-            return controlPoint.onSelfTask(request);
-        }
-        return controlPoint.onTask(request, engineClient);
+    private CompletableFuture<TaskResult> dispatchTask(WorkflowStep step, TaskRequest request) {
+        CompletableFuture<TaskResult> result = new CompletableFuture<>();
+        activeTasks.add(result);
+        result.orTimeout(engineClient.callbackTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+        result.whenComplete((value, error) -> activeTasks.remove(result));
+        CompletableFuture.runAsync(() -> {
+            try {
+                if (result.isDone() || stopped.get()) return;
+                if (step.getStepType() == StepType.SELF_LOOP) {
+                    completeFrom(result, java.util.Objects.requireNonNull(controlPoint.onSelfTask(request),
+                            "onSelfTask returned null future"));
+                    return;
+                }
+                var prepared = java.util.Objects.requireNonNull(controlPoint.onTask(request), "onTask returned null future");
+                prepared.whenComplete((content, error) -> {
+                    if (result.isDone() || stopped.get()) {
+                        log.debug("[Executor] Late callback ignored step={}, taskId={}", request.getStepName(), request.getTaskId());
+                        return;
+                    }
+                    if (error != null) { result.completeExceptionally(error); return; }
+                    try {
+                        var sent = engineClient.dispatch(request,
+                                java.util.Objects.requireNonNull(content, "onTask returned null content"), controlPoint);
+                        result.whenComplete((value, failure) -> { if (!sent.isDone()) sent.cancel(true); });
+                        completeFrom(result, sent.thenApply(ProtocolResultAdapter::toTaskResult));
+                    } catch (RuntimeException failure) { result.completeExceptionally(failure); }
+                });
+            } catch (RuntimeException error) { result.completeExceptionally(error); }
+        });
+        return result;
+    }
+
+    private static <T> void completeFrom(CompletableFuture<T> destination, CompletableFuture<T> source) {
+        source.whenComplete((value, error) -> {
+            if (error != null) destination.completeExceptionally(error);
+            else if (value == null) destination.completeExceptionally(new IllegalStateException("Callback returned null"));
+            else destination.complete(value);
+        });
     }
 
     private StepResult collectAllSuccess(List<CompletableFuture<StepResult>> futures) {
@@ -438,7 +531,14 @@ public class WorkflowExecutor {
             }
         }
         return new StepResult(
-                null, null, -1, null, !anyFailed, collectTaskResults(completedResults));
+                null, null, -1,
+                List.of(), !anyFailed, collectTaskResults(completedResults),
+                collectExecutionResults(completedResults));
+    }
+
+    private static List<TaskExecutionResult> collectExecutionResults(
+            List<StepResult> completedResults) {
+        return completedResults.stream().flatMap(result -> result.taskResults().stream()).toList();
     }
 
     /** Keeps every subtask result even when descriptions repeat within one parallel step. */
@@ -464,13 +564,13 @@ public class WorkflowExecutor {
                                     + result.subtaskIndex()
                                     + "]"
                             : result.taskDesc();
-            results.put(key, result.output());
+            results.put(key, result.outputs());
         }
         return results;
     }
 
-    private StepResult processTaskResponse(
-            WorkflowStep step, Task task, int subtaskIndex, TaskResponse response) {
+    private StepResult processTaskResult(
+            WorkflowStep step, Task task, int subtaskIndex, TaskResult response) {
         task.setStatus(response.isSuccess() ? TaskStatus.SUCCESS : TaskStatus.FAILED);
         emit(
                 EventType.TASK_STATUS_CHANGED,
@@ -485,14 +585,12 @@ public class WorkflowExecutor {
                         task.getStatus().getValue()));
         String status = response.isSuccess() ? "success" : "failed";
         log.info("[Executor] Task {} -> {}: {}", task.getDescription(), task.getAgent(), status);
-        if (response.isSuccess() && response.getOutput() != null) {
+        if (response.isSuccess() && !response.getOutputs().isEmpty()) {
             log.debug(
-                    "[Executor] Task output from {}: [{}]", task.getAgent(), response.getOutput());
+                    "[Executor] Task outputs from {}: [{}]", task.getAgent(), response.getOutputs());
         }
-        String output =
-                response.isSuccess()
-                        ? (response.getOutput() != null ? response.getOutput() : "")
-                        : (response.getError() != null ? response.getError() : "");
+        List<Object> outputs =
+                response.getOutputs();
         executionHistory.add(
                 Map.of(
                         "step",
@@ -505,8 +603,14 @@ public class WorkflowExecutor {
                         task.getAgent(),
                         "status",
                         status,
-                        "output",
-                        output));
+                        "outputs",
+                        outputs,
+                        "error",
+                        response.getError() == null ? "" : response.getError(),
+                        "errorCode",
+                        response.getErrorCode() == null ? "" : response.getErrorCode(),
+                        "errorDetails",
+                        response.getErrorDetails()));
         emit(
                 EventType.TASK_RESPONSE,
                 Map.of(
@@ -518,61 +622,41 @@ public class WorkflowExecutor {
                         task.getAgent(),
                         "task",
                         task.getDescription(),
-                        "output",
-                        output));
+                        "outputs",
+                        outputs,
+                        "success",
+                        response.isSuccess(),
+                        "error",
+                        response.getError() == null ? "" : response.getError(),
+                        "errorCode",
+                        response.getErrorCode() == null ? "" : response.getErrorCode(),
+                        "errorDetails",
+                        response.getErrorDetails()));
         return new StepResult(
                 task.getDescription(),
                 task.getAgent(),
                 subtaskIndex,
-                output,
+                outputs,
                 response.isSuccess(),
-                null);
+                null,
+                List.of(
+                        new TaskExecutionResult(
+                                task.getAgent(),
+                                task.getSkill(),
+                                taskId(step.getName(), subtaskIndex),
+                                task.getDescription(),
+                                task.getStatus(),
+                                outputs,
+                                response.getReceivedMessages(),
+                                response.getError(),
+                                response.getErrorCode(),
+                                response.getErrorDetails())));
     }
 
     private StepResult processTaskError(
             WorkflowStep step, Task task, int subtaskIndex, Throwable e) {
-        task.setStatus(TaskStatus.FAILED);
-        emit(
-                EventType.TASK_STATUS_CHANGED,
-                Map.of(
-                        "step",
-                        step.getName(),
-                        "subtask_index",
-                        subtaskIndex,
-                        "agent",
-                        task.getAgent(),
-                        "status",
-                        TaskStatus.FAILED.getValue()));
-        String errorMessage =
-                e.getMessage() != null && !e.getMessage().isBlank()
-                        ? e.getMessage()
-                        : e.getClass().getSimpleName();
-        log.error(
-                "[Executor] Task {} -> {}: exception: {}",
-                task.getDescription(),
-                task.getAgent(),
-                errorMessage);
-        executionHistory.add(
-                Map.of(
-                        "step",
-                        step.getName(),
-                        "subtask_index",
-                        subtaskIndex,
-                        "task",
-                        task.getDescription(),
-                        "agent",
-                        task.getAgent(),
-                        "status",
-                        "failed",
-                        "output",
-                        errorMessage));
-        return new StepResult(
-                task.getDescription(),
-                task.getAgent(),
-                subtaskIndex,
-                errorMessage,
-                false,
-                null);
+        return processTaskResult(step, task,
+                        subtaskIndex, FailureMapping.from(e));
     }
 
     /**
@@ -583,12 +667,13 @@ public class WorkflowExecutor {
     private CompletableFuture<StepResult> anySuccess(List<CompletableFuture<StepResult>> futures) {
         if (futures.isEmpty()) {
             return CompletableFuture.completedFuture(
-                    new StepResult(null, null, -1, null, true, Map.of()));
+                    new StepResult(null, null, -1, List.of(), true, Map.of(), List.of()));
         }
         CompletableFuture<StepResult> result = new CompletableFuture<>();
         int total = futures.size();
         int[] completed = {0};
         int[] failedCount = {0};
+        boolean[] winnerChosen = {false};
 
         for (CompletableFuture<StepResult> f : futures) {
             f.handle(
@@ -597,6 +682,7 @@ public class WorkflowExecutor {
                             completed[0]++;
                             boolean success = (ex == null && sr != null && sr.success());
                             if (success && !result.isDone()) {
+                                winnerChosen[0] = true;
                                 // Cancel all remaining
                                 for (CompletableFuture<StepResult> other : futures) {
                                     if (!other.isDone()) {
@@ -622,10 +708,11 @@ public class WorkflowExecutor {
                                                 null,
                                                 null,
                                                 -1,
-                                                null,
+                                                List.of(),
                                                 true,
-                                                collectTaskResults(completedResults)));
-                            } else if (!success) {
+                                                collectTaskResults(completedResults),
+                                                collectExecutionResults(completedResults)));
+                            } else if (!success && !winnerChosen[0]) {
                                 failedCount[0]++;
                                 if (completed[0] == total && !result.isDone()) {
                                     // All failed
@@ -647,9 +734,10 @@ public class WorkflowExecutor {
                                                     null,
                                                     null,
                                                     -1,
-                                                    null,
+                                                    List.of(),
                                                     false,
-                                                    collectTaskResults(completedResults)));
+                                                    collectTaskResults(completedResults),
+                                                    collectExecutionResults(completedResults)));
                                 }
                             }
                         }
@@ -678,19 +766,21 @@ public class WorkflowExecutor {
             }
             return CompletableFuture.completedFuture(indices);
         }
-        // Build context for onRoute: upstream context_from results + current step results
-        Map<String, Object> routeContext = new HashMap<>();
-        if (step.getContextFrom() != null) {
-            for (String ref : step.getContextFrom()) {
-                Map<String, Object> out = stepOutputs.get(ref);
-                if (out != null) {
-                    routeContext.put(ref, out);
-                }
-            }
-        }
-        routeContext.put(step.getName(), stepResult);
+        var routeRequest = new dev.openan.workflow.engine.model.RouteRequest(
+                        executionId,
+                        step.getName(),
+                        contextBuilder.buildWorkflowInput(step, stepExecutionResults),
+                        stepExecutionResults.getOrDefault(step.getName(), List.of()),
+                        step.getNext().stream()
+                                .map(
+                                        option ->
+                                                new dev.openan.workflow.engine.model.RouteRequest
+                                                        .RouteOption(
+                                                        option.getStep(), option.getCondition()))
+                                .toList());
         return controlPoint
-                .onRoute(step.getName(), routeContext, step.getNext())
+                .onRoute(routeRequest)
+                .orTimeout(engineClient.callbackTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)
                 .thenApply(
                         decision -> {
                             log.info(

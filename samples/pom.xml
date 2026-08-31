@@ -31,6 +31,12 @@
             <artifactId>a2a-java-sdk-spec-grpc</artifactId>
             <version>${a2a.java.sdk.version}</version>
         </dependency>
+        <!-- Host-owned content generation; the engine itself depends only on a2a-t-core. -->
+        <dependency>
+            <groupId>net.openan.a2a-t.sdk</groupId>
+            <artifactId>a2a-t-client</artifactId>
+            <version>${a2a.t.sdk.version}</version>
+        </dependency>
         <!-- A2A-T server SDK (for server-side prompt compliance checking in OMC agents) -->
         <dependency>
             <groupId>net.openan.a2a-t.sdk</groupId>

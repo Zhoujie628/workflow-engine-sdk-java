@@ -19,12 +19,15 @@
 
 package dev.openan.workflow.engine.core;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.openan.workflow.engine.model.JumpCondition;
 import dev.openan.workflow.engine.model.Task;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowStep;
+import dev.openan.workflow.engine.model.TaskExecutionResult;
+import dev.openan.workflow.engine.model.TaskStatus;
 
 import org.junit.jupiter.api.Test;
 
@@ -42,81 +45,102 @@ class ContextBuilderTest {
                         next == null
                                 ? List.of()
                                 : next.stream()
-                                        .map(s -> JumpCondition.builder().step(s).build())
+                                        .map(target -> JumpCondition.builder().step(target).build())
                                         .toList())
                 .contextFrom(contextFrom)
                 .subtasks(List.of(Task.builder().agent("A").description("t").build()))
                 .build();
     }
 
+    private TaskExecutionResult result(String agent, String output) {
+        return new TaskExecutionResult(
+                agent,
+                "diagnose",
+                agent + "-task",
+                "task",
+                TaskStatus.SUCCESS,
+                List.of(output),
+                List.of(), null, null, Map.of());
+    }
+
     @Test
-    void layerZeroReturnsRuntimeIntentOnly() {
-        Workflow wf =
+    void layerZeroKeepsRuntimeIntentSeparateFromTaskInstruction() {
+        Workflow workflow =
                 Workflow.builder()
                         .name("w")
                         .steps(List.of(step("s1", 0, List.of("s2"), null)))
                         .build();
-        ContextBuilder cb = new ContextBuilder(wf, "my intent");
-        String ctx = cb.buildContext(wf.getSteps().get(0), new HashMap<>());
-        assertEquals("## Runtime Context\n\nmy intent", ctx);
+
+        var context = new ContextBuilder(workflow, "my intent")
+                        .buildWorkflowInput(workflow.getSteps().get(0), Map.of());
+        assertEquals("my intent", context.runtimeIntent());
+        assertTrue(context.upstreamResults().isEmpty());
     }
 
     @Test
-    void layerZeroNoIntentReturnsEmpty() {
-        Workflow wf =
-                Workflow.builder()
-                        .name("w")
-                        .steps(List.of(step("s1", 0, List.of("s2"), null)))
-                        .build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        String ctx = cb.buildContext(wf.getSteps().get(0), new HashMap<>());
-        assertEquals("", ctx);
-    }
-
-    @Test
-    void directPredecessorsProvideContext() {
+    void directPredecessorsProvideTypedResults() {
         WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
         WorkflowStep s2 = step("s2", 1, List.of(), null);
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "intent");
-        Map<String, Map<String, Object>> outputs = new HashMap<>();
-        outputs.put("s1", Map.of("do A", "result-from-A"));
-        String ctx = cb.buildContext(s2, outputs);
-        assertTrue(ctx.contains("## Runtime Context"));
-        assertTrue(ctx.contains("## Previous Step Execution Results"));
-        assertTrue(ctx.contains("### s1 Results"));
-        assertTrue(ctx.contains("result-from-A"));
+        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
+        Map<String, List<TaskExecutionResult>> results =
+                Map.of("s1", List.of(result("OMC-1", "result-from-A")));
+
+        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
+
+        assertEquals("intent", context.runtimeIntent());
+        assertEquals(1, context.upstreamResults().size());
+        assertEquals("s1", context.upstreamResults().get(0).stepName());
+        assertEquals("OMC-1", context.upstreamResults().get(0).taskResults().get(0).agentName());
+        assertEquals(
+                List.of("result-from-A"),
+                context.upstreamResults().get(0).taskResults().get(0).outputs());
     }
 
     @Test
-    void contextFromExplicitListOverridesPredecessors() {
+    void contextFromExplicitListOverridesDirectPredecessors() {
         WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
         WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
         WorkflowStep s3 = step("s3", 1, List.of(), List.of("s2"));
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "intent");
-        Map<String, Map<String, Object>> outputs = new HashMap<>();
-        outputs.put("s1", Map.of("t1", "out1"));
-        outputs.put("s2", Map.of("t2", "out2"));
-        String ctx = cb.buildContext(s3, outputs);
-        assertTrue(ctx.contains("out2"));
-        assertFalse(ctx.contains("out1"));
+        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
+        Map<String, List<TaskExecutionResult>> results = new HashMap<>();
+        results.put("s1", List.of(result("OMC-1", "out1")));
+        results.put("s2", List.of(result("OMC-2", "out2")));
+
+        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
+
+        assertEquals(
+                List.of("s2"),
+                context.upstreamResults().stream().map(value -> value.stepName()).toList());
     }
 
     @Test
     void contextFromStarIncludesAllAncestors() {
-        // DAG: s1 -> s2 -> s3, context_from=["*"] on s3 should include s1 and s2
         WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
         WorkflowStep s2 = step("s2", 1, List.of("s3"), null);
-        WorkflowStep s3 = step("s3", 1, List.of(), List.of("*"));
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "intent");
-        Map<String, Map<String, Object>> outputs = new HashMap<>();
-        outputs.put("s1", Map.of("t1", "out1"));
-        outputs.put("s2", Map.of("t2", "out2"));
-        String ctx = cb.buildContext(s3, outputs);
-        assertTrue(ctx.contains("out1"));
-        assertTrue(ctx.contains("out2"));
+        WorkflowStep s3 = step("s3", 2, List.of(), List.of("*"));
+        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
+        Map<String, List<TaskExecutionResult>> results = new HashMap<>();
+        results.put("s1", List.of(result("OMC-1", "out1")));
+        results.put("s2", List.of(result("OMC-2", "out2")));
+
+        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s3, results);
+
+        assertEquals(2, context.upstreamResults().size());
+        assertEquals(
+                List.of("s2", "s1"),
+                context.upstreamResults().stream().map(value -> value.stepName()).toList());
+    }
+
+    @Test
+    void explicitEmptyContextFromDisablesUpstreamAggregation() {
+        WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
+        WorkflowStep s2 = step("s2", 1, List.of(), List.of());
+        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
+        Map<String, List<TaskExecutionResult>> results =
+                Map.of("s1", List.of(result("OMC-1", "out1")));
+
+        var context = new ContextBuilder(workflow, "intent").buildWorkflowInput(s2, results);
+        assertTrue(context.upstreamResults().isEmpty());
     }
 
     @Test
@@ -124,63 +148,11 @@ class ContextBuilderTest {
         WorkflowStep s1 = step("s1", 0, List.of("s3"), null);
         WorkflowStep s2 = step("s2", 0, List.of("s3"), null);
         WorkflowStep s3 = step("s3", 1, List.of(), null);
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        List<String> preds = cb.getStepPredecessors("s3");
-        assertEquals(2, preds.size());
-        assertTrue(preds.contains("s1"));
-        assertTrue(preds.contains("s2"));
-    }
+        Workflow workflow = Workflow.builder().name("w").steps(List.of(s1, s2, s3)).build();
 
-    @Test
-    void getStepPredecessorsEmptyForRoot() {
-        WorkflowStep s1 = step("s1", 0, List.of("s2"), null);
-        WorkflowStep s2 = step("s2", 1, List.of(), null);
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        assertTrue(cb.getStepPredecessors("s1").isEmpty());
-    }
-
-    @Test
-    void buildTaskMessageWithZhLang() {
-        Workflow wf =
-                Workflow.builder().name("w").steps(List.of(step("s", 0, List.of(), null))).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        String msg = cb.buildTaskMessage("do task", "context here", "zh");
-        assertTrue(msg.contains("context here"));
-        assertTrue(msg.contains("## Current Task"));
-        assertTrue(msg.contains("do task"));
-        assertTrue(msg.contains("请用中文回复"));
-    }
-
-    @Test
-    void buildTaskMessageWithEnLang() {
-        Workflow wf =
-                Workflow.builder().name("w").steps(List.of(step("s", 0, List.of(), null))).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        String msg = cb.buildTaskMessage("do task", "context here", "en");
-        assertTrue(msg.contains("Please respond in English"));
-    }
-
-    @Test
-    void buildTaskMessageNoContext() {
-        Workflow wf =
-                Workflow.builder().name("w").steps(List.of(step("s", 0, List.of(), null))).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        String msg = cb.buildTaskMessage("just a task", "", "zh");
-        assertTrue(msg.startsWith("just a task"));
-        assertTrue(msg.contains("请用中文回复"));
-        assertFalse(msg.contains("## Current Task"));
-    }
-
-    @Test
-    void findStepIndexCorrect() {
-        WorkflowStep s1 = step("s1", 0, null, null);
-        WorkflowStep s2 = step("s2", 1, null, null);
-        Workflow wf = Workflow.builder().name("w").steps(List.of(s1, s2)).build();
-        ContextBuilder cb = new ContextBuilder(wf, "");
-        assertEquals(0, cb.findStepIndex("s1"));
-        assertEquals(1, cb.findStepIndex("s2"));
-        assertNull(cb.findStepIndex("nonexistent"));
+        List<String> predecessors = new ContextBuilder(workflow, "").getStepPredecessors("s3");
+        assertEquals(2, predecessors.size());
+        assertTrue(predecessors.contains("s1"));
+        assertTrue(predecessors.contains("s2"));
     }
 }

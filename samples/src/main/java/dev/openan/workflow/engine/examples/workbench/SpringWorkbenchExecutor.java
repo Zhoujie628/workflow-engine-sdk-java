@@ -109,7 +109,7 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                             resolveCredentialsPath(),
                             properties.isSslVerify(),
                             resolveEnvPath())
-                            .run(input);
+                            .run(input, properties.isDemoNegotiationEnabled());
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put(A2ATExtension.TASK_T.uri(), result);
             List<Part<?>> parts = List.of(new TextPart(result));

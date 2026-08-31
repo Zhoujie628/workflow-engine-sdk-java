@@ -123,6 +123,31 @@ class A2ATransportResponseTest {
                 .build();
     }
 
+    @Test
+    void mixedStreamingTextAndStructuredDataAreBothRetained() {
+        Artifact mixed =
+                Artifact.builder()
+                        .artifactId("mixed")
+                        .parts(
+                                List.of(
+                                        new TextPart("diagnosis"),
+                                        new org.a2aproject.sdk.spec.DataPart(
+                                                Map.of("ports", List.of("a", "b")))))
+                        .build();
+        Task task = task(TaskState.TASK_STATE_WORKING, List.of());
+        var update =
+                TaskArtifactUpdateEvent.builder()
+                        .taskId("task-1")
+                        .contextId("context-1")
+                        .artifact(mixed)
+                        .append(false)
+                        .lastChunk(true)
+                        .build();
+        assertEquals(
+                List.of("diagnosis", Map.of("ports", List.of("a", "b"))),
+                ProtocolResponses.assemble(List.of(new TaskUpdateEvent(task, update))).get(0).outputs());
+    }
+
     private static Message message(String text) {
         return Message.builder()
                 .role(Message.Role.ROLE_AGENT)

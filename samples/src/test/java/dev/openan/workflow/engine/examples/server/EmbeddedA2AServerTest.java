@@ -32,6 +32,15 @@ import dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint;
 import dev.openan.workflow.engine.examples.server.JdkHttpA2AServer;
 import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.ReceivedMessage;
+import dev.openan.workflow.engine.client.A2atMessages;
+import dev.openan.workflow.engine.client.A2ATExtension;
+import dev.openan.workflow.engine.examples.agents.SpnTaskInput;
+import dev.openan.workflow.engine.examples.demo.SpnCasePrompts;
+import net.openan.a2at.sdk.client.A2ATClient;
+import net.openan.a2at.sdk.core.model.*;
+import net.openan.a2at.sdk.negotiation.content.*;
 
 import org.a2aproject.sdk.spec.AgentCard;
 import org.junit.jupiter.api.AfterEach;
@@ -60,6 +69,19 @@ class EmbeddedA2AServerTest {
     private A2ATransport transport;
     private int port;
     private String sdkEnvPath;
+    private AgentCard agentCard;
+    private SpnTaskInput diagnosed;
+    private int diagnosisCount;
+
+    private class RecordingCity1 extends SpnDomainAgentCity1Executor {
+        @Override protected String executeBusiness(
+                org.a2aproject.sdk.server.agentexecution.RequestContext ctx,
+                org.a2aproject.sdk.server.tasks.AgentEmitter emitter, SpnTaskInput input) {
+            diagnosed = input;
+            diagnosisCount++;
+            return super.executeBusiness(ctx, emitter, input);
+        }
+    }
 
     @BeforeAll
     static void installOfflineSdkProvider() {
@@ -155,7 +177,8 @@ class EmbeddedA2AServerTest {
                                                 "tenant",
                                                 "")));
         server =
-                new OmcAgentLauncher().startFromCard(card, new SpnDomainAgentCity1Executor());
+                new OmcAgentLauncher().startFromCard(card, new RecordingCity1());
+        agentCard = mapper.convertValue(card, AgentCard.class);
         Thread.sleep(500);
         transport =
                 new A2ATransport(
@@ -163,10 +186,17 @@ class EmbeddedA2AServerTest {
                         null,
                         WorkflowEngineClientConfig.builder()
                                 .sslVerify(false)
-                                .a2atEnvPath(sdkEnvPath)
+
                                 .build());
         client = new DefaultWorkflowEngineClient(transport);
         client.setControlPoint(new WorkbenchControlPoint(sdkEnvPath));
+    }
+
+    private dev.openan.workflow.engine.model.TaskRequest request() {
+        return dev.openan.workflow.engine.model.TaskRequest.builder().agentName(AGENT_NAME)
+                .executionId("test").taskId("logical-task").stepName("diagnosis_city1").instruction("diagnose SPN fault")
+                .input(dev.openan.workflow.engine.model.BusinessInput.data(
+                        dev.openan.workflow.engine.examples.demo.SpnCasePrompts.privateLineComplaintData())).build();
     }
 
     @AfterEach
@@ -193,7 +223,7 @@ class EmbeddedA2AServerTest {
 
     @Test
     void testSendMessage() throws Exception {
-        SendMessageResult result = client.sendMessage(AGENT_NAME, "diagnose SPN fault").join();
+        SendMessageResult result = client.dispatch(request(), new WorkbenchControlPoint(sdkEnvPath).onTask(request()).join(), new WorkbenchControlPoint(sdkEnvPath)).join();
         assertNotNull(result);
         assertFalse(
                 result.getText().isEmpty(),
@@ -207,16 +237,14 @@ class EmbeddedA2AServerTest {
     }
 
     /**
-     * Negotiation path: when the message metadata carries a Task-T prompt plus the Negotiation-T
-     * extension key, the agent starts a negotiation (propose + INPUT_REQUIRED); the engine's
+     * Negotiation path: incomplete Task-T data starts negotiation (propose + INPUT_REQUIRED); the engine's
      * auto-loop must observe the interruption, ask the (default) control point for a
      * clarification, send the follow-up, and complete with the business result. Guards against
      * the SSE stream hanging open on INPUT_REQUIRED (A2A interrupted states are not final).
      */
     @Test
     void testNegotiationAutoLoopCompletes() {
-        // Task-T prompt with a blank task object so server-side validation would also flag it;
-        // the Negotiation-T key activates the extension on the A2A-Extensions header.
+        // Task-T validation rejects the blank object; no artificial Negotiation-T key is needed.
         String taskPrompt =
                 "## 任务类型(Task Type)\n传输专线业务投诉诊断\n\n"
                         + "## 任务对象(Task Object)\n接入端口名称：\n\n"
@@ -225,12 +253,12 @@ class EmbeddedA2AServerTest {
         metadata.put(
                 "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1",
                 taskPrompt);
-        metadata.put(
-                "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1",
-                "");
+        metadata.put(MetadataContent.TEMPLATE_URI_METADATA_KEY, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
         SendMessageResult result =
                 client
-                        .sendMessage(AGENT_NAME, "diagnose SPN fault", null, metadata)
+                        .dispatch(request(), new dev.openan.workflow.engine.model.MessageContent(
+                                List.of(new org.a2aproject.sdk.spec.TextPart("diagnose SPN fault")), metadata,
+                                java.util.Set.of(A2ATExtension.TASK_T.uri())), new WorkbenchControlPoint(sdkEnvPath))
                         .orTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                         .join();
         assertNotNull(result);
@@ -240,6 +268,152 @@ class EmbeddedA2AServerTest {
         assertTrue(
                 result.getText().contains("诊断结果"),
                 "Final response must be the completed diagnosis, got: " + result.getText());
+    }
+
+
+    private A2ATClient contentSdk() {
+        return dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                () -> new A2ATClient(java.nio.file.Path.of(sdkEnvPath)));
+    }
+
+    private SendMessageResult startIncomplete() {
+        var content = new MessageContent(List.of(new org.a2aproject.sdk.spec.TextPart("diagnose")),
+                SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintPromptBlankObject()),
+                java.util.Set.of(A2ATExtension.TASK_T.uri()));
+        var result = transport.send(agentCard, AGENT_NAME, content, java.util.UUID.randomUUID().toString(), null, null).join();
+        assertEquals("TASK_STATE_INPUT_REQUIRED", result.getTaskState());
+        assertEquals(0, diagnosisCount);
+        return result;
+    }
+
+    private NegotiationContext negotiationContext(SendMessageResult pending) {
+        return pending.getReceivedMessages().stream().map(A2atMessages::contextOf)
+                .filter(java.util.Objects::nonNull).findFirst().orElseThrow();
+    }
+
+    private MetadataContent accept(NegotiationContext context, Map<String, Object> data) {
+        return contentSdk().generateNegotiationAcceptPromptFromData(new NegotiationEndingData(context,
+                new InformationEndingContent(NegotiationConclusion.ACCEPT, data.entrySet().stream()
+                        .map(e -> new NegotiationItem(e.getKey(), e.getValue().toString())).toList())),
+                StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT.uri());
+    }
+
+    private SendMessageResult followUp(SendMessageResult pending, MessageContent content) {
+        return transport.send(agentCard, AGENT_NAME, content, pending.getTask().contextId(),
+                pending.getTask().id(), null).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+    }
+
+    @Test void acceptUsesValidatedMetadataAndPreservesActualIncidentNotPartsSummary() {
+        var pending = startIncomplete();
+        var data = new java.util.LinkedHashMap<>(SpnCasePrompts.privateLineComplaintData());
+        data.put("任务上下文", data.get("任务上下文").toString().replace("event-id-20260511-09013", "incident-actual-42"));
+        var reply = A2atMessages.from(accept(negotiationContext(pending), data),
+                List.of(new org.a2aproject.sdk.spec.TextPart("misleading summary P999-wrong")));
+        var result = followUp(pending, reply);
+        assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+        assertEquals(1, diagnosisCount);
+        assertEquals("incident-actual-42", diagnosed.incidentId());
+        assertEquals(data, diagnosed.parameters());
+        assertFalse(diagnosed.diagnosisInput().contains("misleading summary"));
+    }
+
+    @Test void normalTaskUsesFilledInputWithoutNegotiation() {
+        var data = new java.util.LinkedHashMap<>(SpnCasePrompts.privateLineComplaintData());
+        data.put("任务上下文", data.get("任务上下文").toString().replace("event-id-20260511-09013", "incident-normal-19"));
+        var generated = contentSdk().generateTaskPromptFromDataWithSchema(data,
+                SpnCasePrompts.privateLineComplaintSchema(), StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+        var result = transport.send(agentCard, AGENT_NAME, A2atMessages.from(generated, List.of(new org.a2aproject.sdk.spec.TextPart("business summary"))),
+                java.util.UUID.randomUUID().toString(), null, null).join();
+        assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+        assertEquals(data, diagnosed.parameters());
+        assertEquals("incident-normal-19", diagnosed.incidentId());
+        assertEquals(1, diagnosisCount);
+    }
+
+
+    @Test void unknownPortNegotiatesOnlyObjectAndKeepsValidatedContext() {
+        var original = new java.util.LinkedHashMap<>(SpnCasePrompts.privateLineComplaintDataUnknownPort());
+        original.put("任务上下文", original.get("任务上下文").toString().replace("event-id-20260511-09013", "incident-preserved-73"));
+        var generated = contentSdk().generateTaskPromptFromDataWithSchema(original,
+                SpnCasePrompts.privateLineComplaintSchema(), StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+        var pending = transport.send(agentCard, AGENT_NAME, A2atMessages.from(generated,
+                List.of(new org.a2aproject.sdk.spec.TextPart("diagnose unknown port"))),
+                java.util.UUID.randomUUID().toString(), null, null).join();
+        assertEquals("TASK_STATE_INPUT_REQUIRED", pending.getTaskState());
+        var reply = accept(negotiationContext(pending),
+                Map.of("任务对象", SpnCasePrompts.privateLineComplaintData().get("任务对象")));
+        var result = followUp(pending, A2atMessages.from(reply, List.of(new org.a2aproject.sdk.spec.TextPart("correct port"))));
+        assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+        assertEquals(original.get("任务上下文"), diagnosed.parameters().get("任务上下文"));
+        assertEquals("incident-preserved-73", diagnosed.incidentId());
+        assertEquals(1, diagnosisCount);
+    }
+
+    @Test void taskPartsCannotReplaceMissingFormalTaskMetadata() {
+        var generated = contentSdk().generateTaskPromptFromDataWithSchema(SpnCasePrompts.privateLineComplaintData(),
+                SpnCasePrompts.privateLineComplaintSchema(), StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+        var metadata = new java.util.LinkedHashMap<>(generated.buildMetadataContent());
+        metadata.remove(A2ATExtension.TASK_T.uri());
+        var content = new MessageContent(List.of(new org.a2aproject.sdk.spec.TextPart(generated.promptText())),
+                metadata, java.util.Set.of(A2ATExtension.TASK_T.uri()));
+        var result = transport.send(agentCard, AGENT_NAME, content,
+                java.util.UUID.randomUUID().toString(), null, null).join();
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertEquals(0, diagnosisCount);
+    }
+
+    @Test void partsCannotRescueInvalidFormalNegotiationBody() {
+        var pending = startIncomplete();
+        var generated = accept(negotiationContext(pending), SpnCasePrompts.privateLineComplaintData());
+        var metadata = new java.util.LinkedHashMap<>(generated.buildMetadataContent());
+        metadata.put(A2ATExtension.NEGOTIATION_T.uri(), "补充诊断信息");
+        var result = followUp(pending, new MessageContent(
+                List.of(new org.a2aproject.sdk.spec.TextPart(generated.promptText())), metadata,
+                java.util.Set.of(A2ATExtension.NEGOTIATION_T.uri())));
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertEquals(0, diagnosisCount);
+    }
+
+    @Test void incompleteAcceptDoesNotDiagnose() {
+        var pending = startIncomplete();
+        var generated = accept(negotiationContext(pending), Map.of("任务对象", "接入端口名称：P781-珠江新城-PTN7900-23-TPA1EG24-17"));
+        var result = followUp(pending, A2atMessages.from(generated, List.of(new org.a2aproject.sdk.spec.TextPart("business summary"))));
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertEquals(0, diagnosisCount);
+    }
+
+    @Test void rejectIsValidatedAndEndsWithoutDiagnosis() {
+        var pending = startIncomplete();
+        var generated = contentSdk().generateNegotiationRejectPromptFromData(
+                new NegotiationEndingData(negotiationContext(pending),
+                        new InformationEndingContent(NegotiationConclusion.REJECT,
+                                List.of(new NegotiationItem("拒绝原因", "当前调用方无权提供该端口资料")))),
+                StandardTemplates.INFORMATION_NEGOTIATION_ACCEPT_REJECT.uri());
+        var result = followUp(pending, A2atMessages.from(generated, List.of(new org.a2aproject.sdk.spec.TextPart("business summary"))));
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertTrue(result.getText().contains("Negotiation-T REJECT"), result.getText());
+        assertEquals(0, diagnosisCount);
+    }
+
+    @Test void abortIsValidatedAndEndsWithoutDiagnosis() {
+        var pending = startIncomplete();
+        var generated = contentSdk().generateNegotiationAbortPromptFromData(
+                new NegotiationAbortData(negotiationContext(pending), new NegotiationAbortContent("业务取消本次诊断")),
+                StandardTemplates.NEGOTIATION_ABORT.uri());
+        var result = followUp(pending, A2atMessages.from(generated, List.of(new org.a2aproject.sdk.spec.TextPart("business summary"))));
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertTrue(result.getText().contains("Negotiation-T ABORT"), result.getText());
+        assertEquals(0, diagnosisCount);
+    }
+
+    @Test void replyFromAnotherNegotiationDoesNotDiagnose() {
+        var pending = startIncomplete();
+        var context = negotiationContext(pending);
+        var other = new NegotiationContext(java.util.UUID.randomUUID().toString(), context.round(),
+                context.maxRounds(), context.performative());
+        var result = followUp(pending, A2atMessages.from(accept(other, SpnCasePrompts.privateLineComplaintData()), List.of(new org.a2aproject.sdk.spec.TextPart("reply"))));
+        assertEquals("TASK_STATE_FAILED", result.getTaskState());
+        assertEquals(0, diagnosisCount);
     }
 
     @Test

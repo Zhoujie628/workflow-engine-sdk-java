@@ -1,48 +1,38 @@
 /*
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * All Rights Reserved.
+ *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License"); you may
+ *    not use this file except in compliance with the License. You may obtain
+ *    a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ *    License for the specific language governing permissions and limitations
+ *    under the License.
  */
+
 package dev.openan.workflow.engine.client;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
 import org.junit.jupiter.api.Test;
-
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 class WorkflowEngineClientConfigTest {
-
-    @Test
-    void rejectsInvalidNegotiationRoundLimit() {
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> WorkflowEngineClientConfig.builder().maxNegotiationRounds(0).build());
+    @Test void rejectsInvalidResourceLimits() {
+        assertThrows(IllegalArgumentException.class, () -> WorkflowEngineClientConfig.builder().maxNegotiationExchanges(0).build());
+        assertThrows(IllegalArgumentException.class, () -> WorkflowEngineClientConfig.builder().sendTimeoutSeconds(0).build());
     }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void deeplySnapshotsNegotiationSchema() {
-        List<Object> required = new ArrayList<>(List.of("city"));
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("city", Map.of("type", "string"));
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("required", required);
-        schema.put("properties", properties);
-
-        WorkflowEngineClientConfig config =
-                WorkflowEngineClientConfig.builder().negotiationParamSchema(schema).build();
-        required.add("port");
-        properties.put("port", Map.of("type", "string"));
-
-        Map<String, Object> snapshot = config.getNegotiationParamSchema();
-        assertEquals(List.of("city"), snapshot.get("required"));
-        assertEquals(1, ((Map<String, Object>) snapshot.get("properties")).size());
-        assertThrows(
-                UnsupportedOperationException.class,
-                () -> ((List<Object>) snapshot.get("required")).add("port"));
+    @Test void credentialKeyIsExplicitAndConfigurationIsSnapshotted() {
+        Map<String, Object> scheme = new LinkedHashMap<>(Map.of("username", "test"));
+        var config = WorkflowEngineClientConfig.builder()
+                .credentialsConfig(Map.of("agent", Map.of("auth", scheme))).credentialEncryptionKey("test-key").build();
+        scheme.clear();
+        assertEquals("test", config.getCredentialsConfig().get("agent").get("auth").get("username"));
+        assertEquals("test-key", config.getCredentialEncryptionKey());
     }
 }

@@ -66,7 +66,6 @@ public class ExecutePsop {
      * @param engineClient optional pre-created client (null = auto-create)
      * @param runtimeIntent original user intent
      * @param lang language hint (zh/en)
-     * @param a2atEnvPath path to A2A-T .env file
      * @param credentialsConfigPath path to credentials JSON
      * @param sslVerify whether to verify TLS certificates
      * @param caCertsPath path to CA trust store
@@ -83,7 +82,6 @@ public class ExecutePsop {
             WorkflowEngineClient engineClient,
             String runtimeIntent,
             String lang,
-            String a2atEnvPath,
             String credentialsConfigPath,
             boolean sslVerify,
             String caCertsPath,
@@ -107,7 +105,6 @@ public class ExecutePsop {
                                 sslVerify,
                                 caCertsPath,
                                 credentialsConfigPath,
-                                a2atEnvPath,
                                 collectingCallback);
         boolean closeClientOnFinish = engineClient == null;
         WorkflowExecutor executor =
@@ -139,7 +136,7 @@ public class ExecutePsop {
                                         onFinish));
     }
 
-    /** Simplified overload without SSL/auth/A2AT config (legacy compatibility). */
+    /** Convenience overload using default transport/authentication configuration. */
     public static CompletableFuture<ExecutionResult> execute(
             Workflow psop,
             List<AgentCard> agentCards,
@@ -166,7 +163,6 @@ public class ExecutePsop {
                 engineClient,
                 runtimeIntent,
                 lang,
-                null,
                 null,
                 true,
                 null,
@@ -251,14 +247,12 @@ public class ExecutePsop {
             boolean sslVerify,
             String caCertsPath,
             String credentialsConfigPath,
-            String a2atEnvPath,
             EventCallback callback) {
         WorkflowEngineClientConfig config =
                 WorkflowEngineClientConfig.builder()
                         .sslVerify(sslVerify)
                         .caCertsPath(caCertsPath)
                         .credentialsConfigPath(credentialsConfigPath)
-                        .a2atEnvPath(a2atEnvPath)
                         .build();
         A2ATransport transport =
                 new A2ATransport(agentCards, a2aClientRuntime, config);
@@ -389,7 +383,6 @@ public class ExecutePsop {
         private WorkflowEngineClient engineClient;
         private String runtimeIntent = "";
         private String lang = "zh";
-        private String a2atEnvPath;
         private String credentialsConfigPath;
         private boolean sslVerify = true;
         private String caCertsPath;
@@ -426,11 +419,6 @@ public class ExecutePsop {
 
         public Builder lang(String v) {
             this.lang = v;
-            return this;
-        }
-
-        public Builder a2atEnvPath(String v) {
-            this.a2atEnvPath = v;
             return this;
         }
 
@@ -492,7 +480,6 @@ public class ExecutePsop {
                     engineClient,
                     runtimeIntent,
                     lang,
-                    a2atEnvPath,
                     credentialsConfigPath,
                     sslVerify,
                     caCertsPath,

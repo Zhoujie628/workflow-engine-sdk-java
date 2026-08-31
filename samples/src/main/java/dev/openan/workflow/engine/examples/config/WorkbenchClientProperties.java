@@ -15,6 +15,13 @@ public class WorkbenchClientProperties {
     private String credentialsPath = "";
     private boolean sslVerify;
     private String a2atEnvPath = "";
+    private boolean demoNegotiationEnabled;
+
+    /** Internal sample-host setting; SpringSpnDemo supplies its local-only default per application context. */
+    public boolean isDemoNegotiationEnabled() { return demoNegotiationEnabled; }
+
+    /** Enables missing-input demonstration for this host only, never a JVM-wide switch. */
+    public void setDemoNegotiationEnabled(boolean enabled) { demoNegotiationEnabled = enabled; }
 
     public String getOrchUrl() {
         return orchUrl;

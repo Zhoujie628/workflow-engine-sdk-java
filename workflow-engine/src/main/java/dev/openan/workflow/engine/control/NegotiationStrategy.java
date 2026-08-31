@@ -19,7 +19,7 @@
 
 package dev.openan.workflow.engine.control;
 
-import dev.openan.workflow.engine.model.NegotiationDecision;
+import dev.openan.workflow.engine.model.NegotiationReply;
 import dev.openan.workflow.engine.model.NegotiationRequest;
 
 import java.util.concurrent.CompletableFuture;
@@ -43,7 +43,7 @@ public interface NegotiationStrategy {
      * Make a business decision for the given negotiation request.
      *
      * @param request typed business view of the received negotiation request
-     * @return future completing with an Accept, Reject, or Abort decision
+     * @return future completing with final content to send, or a local stop
      */
-    CompletableFuture<NegotiationDecision> resolve(NegotiationRequest request);
+    CompletableFuture<NegotiationReply> resolve(NegotiationRequest request);
 }

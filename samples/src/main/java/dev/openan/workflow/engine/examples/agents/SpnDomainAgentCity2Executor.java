@@ -82,11 +82,20 @@ public class SpnDomainAgentCity2Executor extends NegotiationBaseAgentExecutor {
     }
 
     @Override
-    protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, String input) {
-        String result = llmDiagnosisResult(input, NORMAL_DIAGNOSIS_RESULT);
+    protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, SpnTaskInput input) {
+        String result = llmDiagnosisResult(input.diagnosisInput(), NORMAL_DIAGNOSIS_RESULT);
         log.info(
                 "[SPN-Domain-Agent-City2] Diagnosis complete (City2), no fault, no recovery needed");
         return result;
+    }
+
+    @Override
+    protected java.util.List<String> invalidTaskFields(Map<String, Object> data) {
+        var invalid = new java.util.ArrayList<>(super.invalidTaskFields(data));
+        // Sample inventory belongs to City2; negotiation must never reuse City1's input.
+        if (!"P882-珠江新城-PTN7900-23-TPA1EG24-11".equals(SpnTaskInput.field(data, "任务对象", "接入端口名称"))
+                && !invalid.contains("任务对象")) invalid.add("任务对象");
+        return invalid;
     }
 
     @Override

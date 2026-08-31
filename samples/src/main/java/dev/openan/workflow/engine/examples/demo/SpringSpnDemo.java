@@ -41,7 +41,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -77,7 +76,11 @@ public class SpringSpnDemo {
     public void run(String... applicationArgs) throws Exception {
         long demoStarted = System.nanoTime();
         ConfigurableApplicationContext ctx = null;
-        boolean success = false;
+       boolean success = false;
+        boolean demoNegotiation = SpnCasePrompts.demoNegotiationEnabled(true);
+        log.info("[Demo] NEGOTIATION_DEMO enabled={}, city={} (local default: City1 negotiates, City2 diagnoses directly; "
+                + "disable with -Da2at.samples.negotiation=false)", demoNegotiation,
+                System.getProperty("a2at.samples.negotiation.city", "city1"));
         log.info(
                 "[Demo] START mode=direct, "
                         + "workbench=https://127.0.0.1:26337/a2a/json, omcPorts=[26335,26336]");
@@ -98,7 +101,11 @@ public class SpringSpnDemo {
 
             stageStarted = System.nanoTime();
             log.info("[Demo] STAGE_START stage=start-spring-workbench");
-            ctx = SpringApplication.run(SpringWorkbenchApplication.class, applicationArgs);
+            SpringApplication application = new SpringApplication(SpringWorkbenchApplication.class);
+            application.addInitializers(context -> context.getEnvironment().getPropertySources().addFirst(
+                    new org.springframework.core.env.MapPropertySource("spnDemoNegotiation",
+                            java.util.Map.of("a2a.demo-negotiation-enabled", demoNegotiation))));
+            ctx = application.run(applicationArgs);
             log.info(
                     "[Demo] STAGE_DONE stage=start-spring-workbench, elapsedMs={}",
                     elapsedMillis(stageStarted));
@@ -122,6 +129,14 @@ public class SpringSpnDemo {
                 log.warn("[Demo] Workbench returned no response text");
             }
             success = true;
+            // Task result is already final. This bounded observation only keeps the local
+            // demonstration alive long enough to show its independent recovery notification.
+            {
+                boolean observed =
+                        ctx.getBean(SpringWorkbenchExtensionLifecycle.class)
+                                .awaitFirstRecovery(java.time.Duration.ofSeconds(10));
+                log.info("[Demo] RECOVERY_OBSERVATION received={}, workflowSuccess=true", observed);
+            }
         } catch (Exception e) {
             log.error(
                     "[Demo] FAILED elapsedMs={}, errorType={}, message={}",
@@ -161,6 +176,9 @@ public class SpringSpnDemo {
                             e);
                 }
                 try {
+                    // Outbound subscriptions are closed. Stop locally owned OMC streams before
+                    // dependent gateway/server infrastructure is disposed.
+                    omc.close();
                     ctx.close();
                 } catch (Exception e) {
                     log.warn("[Demo] Failed to close Spring context: {}", e.getMessage(), e);
@@ -194,7 +212,7 @@ public class SpringSpnDemo {
                         null,
                         WorkflowEngineClientConfig.builder()
                                 .sslVerify(false)
-                                .a2atEnvPath(envPath)
+
                                 .credentialsConfigPath(credPath)
                                 .build());
         DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
@@ -208,13 +226,13 @@ public class SpringSpnDemo {
                             : wbCard.supportedInterfaces().get(0).url(),
                     SpnCasePrompts.TASK_TEXT.length());
             SendMessageResult result =
-                    client.sendMessageFromData(
-                                    WB_AGENT_NAME,
-                                    SpnCasePrompts.TASK_TEXT,
-                                    SpnCasePrompts.privateLineComplaintData(),
-                                    SpnCasePrompts.privateLineComplaintSchema(),
-                                    net.openan.a2at.sdk.core.model.StandardTemplates
-                                            .PRIVATE_LINE_COMPLAINT)
+                    client.sendMessage(WB_AGENT_NAME,
+                            dev.openan.workflow.engine.client.A2atMessages.from(
+                                    dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                                            () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(envPath)))
+                                            .generateTaskPromptFromDataWithSchema(SpnCasePrompts.privateLineComplaintData(), SpnCasePrompts.privateLineComplaintSchema(), net.openan.a2at.sdk.core.model.StandardTemplates
+                                            .PRIVATE_LINE_COMPLAINT.uri()),
+                                    List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
                             .join();
             log.info(
                     "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={}, elapsedMs={}",

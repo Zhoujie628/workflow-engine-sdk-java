@@ -49,13 +49,7 @@ class A2ATransportHeaderTest {
                         .build();
 
         try (A2ATransport transport = new A2ATransport(List.of(card), runtime, config)) {
-            transport.send(
-                            card,
-                            card.name(),
-                            "diagnose",
-                            "context-1",
-                            Map.of(TASK_T_URI, "structured task"),
-                            null)
+            transport.send(card, card.name(), content("diagnose", Map.of(TASK_T_URI, "structured task")), "context-1", null, null)
                     .join();
         }
 
@@ -88,13 +82,7 @@ class A2ATransportHeaderTest {
                     assertThrows(
                             CompletionException.class,
                             () ->
-                                    transport.sendNotificationStream(
-                                                    card,
-                                                    card.name(),
-                                                    "subscribe",
-                                                    "context-1",
-                                                    Map.of(TASK_T_URI, "notification"),
-                                                    null)
+                                    transport.openNotificationStream(card, card.name(), content("subscribe", Map.of(TASK_T_URI, "notification")), "context-1", null).acknowledgement()
                                             .join());
             assertEquals("gateway unavailable", error.getCause().getMessage());
         }
@@ -125,7 +113,7 @@ class A2ATransportHeaderTest {
                     assertThrows(
                             CompletionException.class,
                             () ->
-                                    transport.send(card, card.name(), "diagnose", "context-1", null, null)
+                                    transport.send(card, card.name(), content("diagnose", null), "context-1", null, null)
                                             .join());
             assertTrue(error.getCause() instanceof SecurityException);
             assertTrue(error.getCause().getMessage().contains("none are configured"));
@@ -145,7 +133,7 @@ class A2ATransportHeaderTest {
                         .build();
 
         try (A2ATransport transport = new A2ATransport(List.of(card), runtime, config)) {
-            transport.send(card, card.name(), "diagnose", "context-1", null, null).join();
+            transport.send(card, card.name(), content("diagnose", null), "context-1", null, null).join();
         }
 
         assertEquals("Bearer gateway-token", capturedHeaders.get().get("Authorization"));
@@ -203,8 +191,7 @@ class A2ATransportHeaderTest {
                 new A2ATransport(
                         List.of(card), runtime, WorkflowEngineClientConfig.builder().build());
 
-        transport.openNotificationStream(
-                card, card.name(), "subscribe", "context-1", Map.of(), null);
+        transport.openNotificationStream(card, card.name(), content("subscribe", Map.of()), "context-1", null);
         assertTrue(entered.await(1, TimeUnit.SECONDS));
 
         transport.close();
@@ -245,90 +232,27 @@ class A2ATransportHeaderTest {
     }
 
     @Test
-    void structuredTaskWithoutSdkFailsBeforeRuntimeInvocation() throws Exception {
-        AtomicInteger sendCalls = new AtomicInteger();
-        A2AJavaClientRuntime runtime = new SendCountingRuntime(sendCalls);
-        try (A2ATransport transport =
-                new A2ATransport(
-                        List.of(agentCard()),
-                        runtime,
-                        WorkflowEngineClientConfig.builder().build())) {
-            CompletionException error =
-                    assertThrows(
-                            CompletionException.class,
-                            () ->
-                                    new DefaultWorkflowEngineClient(transport)
-                                            .sendMessageFromData(
-                                                    "Test Agent",
-                                                    "diagnose",
-                                                    Map.of("任务对象", "port-1"),
-                                                    Map.of(
-                                                            "type",
-                                                            "object",
-                                                            "properties",
-                                                            Map.of(
-                                                                    "任务对象",
-                                                                    Map.of("type", "string"))),
-                                                    StandardTemplates.PRIVATE_LINE_COMPLAINT)
-                                            .join());
-
-            assertTrue(error.getCause().getMessage().contains("A2A-T client is required"));
-            assertEquals(0, sendCalls.get());
+    void finalStructuredContentNeedsNoContentSdk() throws Exception {
+        AtomicReference<MessageSendParams> captured = new AtomicReference<>();
+        try (var transport = new A2ATransport(List.of(agentCard()),
+                DefaultWorkflowEngineClientNegotiationTest.runtime(params -> {
+                    captured.set(params);
+                    return List.of();
+                }), WorkflowEngineClientConfig.builder().build())) {
+            var content = new dev.openan.workflow.engine.model.MessageContent(
+                    List.of(new org.a2aproject.sdk.spec.DataPart(Map.of("any", List.of(1, 2)))),
+                    Map.of("contextId", "business-only"), java.util.Set.of("urn:optional:custom"));
+            new DefaultWorkflowEngineClient(transport).sendMessage("Test Agent", content).join();
+            assertEquals(content.parts(), captured.get().message().parts());
+            assertEquals(content.metadata(), captured.get().message().metadata());
+            assertTrue(!"business-only".equals(captured.get().message().contextId()));
         }
     }
 
-    @Test
-    void structuredTaskRequiresAnExplicitCurrentSdkTemplate() throws Exception {
-        AtomicInteger sendCalls = new AtomicInteger();
-        try (A2ATransport transport =
-                new A2ATransport(
-                        List.of(agentCard()),
-                        new SendCountingRuntime(sendCalls),
-                        WorkflowEngineClientConfig.builder().build())) {
-            NullPointerException error =
-                    assertThrows(
-                            NullPointerException.class,
-                            () ->
-                                    new DefaultWorkflowEngineClient(transport)
-                                            .sendMessageFromData(
-                                                    "Test Agent",
-                                                    "diagnose",
-                                                    Map.of("任务对象", "port-1"),
-                                                    Map.of(
-                                                            "type",
-                                                            "object",
-                                                            "properties",
-                                                            Map.of()),
-                                                    null));
-
-            assertTrue(error.getMessage().contains("template URI"));
-            assertEquals(0, sendCalls.get());
-        }
-    }
-
-    @Test
-    void structuredTaskRejectsTemplateFromAnotherExtensionFamily() throws Exception {
-        AtomicInteger sendCalls = new AtomicInteger();
-        try (A2ATransport transport =
-                new A2ATransport(
-                        List.of(agentCard()),
-                        new SendCountingRuntime(sendCalls),
-                        WorkflowEngineClientConfig.builder().build())) {
-            IllegalArgumentException error =
-                    assertThrows(
-                            IllegalArgumentException.class,
-                            () ->
-                                    new DefaultWorkflowEngineClient(transport)
-                                            .sendMessageFromData(
-                                                    "Test Agent",
-                                                    "diagnose",
-                                                    Map.of("任务对象", "port-1"),
-                                                    Map.of("type", "object"),
-                                                    StandardTemplates.SERVICE_RECOVERY));
-
-            assertTrue(error.getMessage().contains("not Task-T"));
-            assertEquals(0, sendCalls.get());
-        }
+    private static dev.openan.workflow.engine.model.MessageContent content(String text, Map<String, Object> metadata) {
+        return new dev.openan.workflow.engine.model.MessageContent(
+                List.of(new org.a2aproject.sdk.spec.TextPart(text)), metadata,
+                metadata == null ? java.util.Set.of() : metadata.keySet());
     }
 
     private static AgentCard agentCard() throws Exception {

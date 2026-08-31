@@ -60,8 +60,12 @@ final class WorkbenchTaskInputParser {
             throw new IllegalStateException(
                     "A2A-T SDK env path is required to validate inbound Workbench Task-T messages");
         }
-        A2ATServer server = new A2ATServer(Path.of(envPath));
-        return new WorkbenchTaskInputParser(server::validateTaskPromptAndDataFilling);
+        A2ATServer server =
+                    dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
+                        () -> new A2ATServer(Path.of(envPath)));
+        return new WorkbenchTaskInputParser(
+                (prompt, schema, uri) ->
+                        server.validateTaskPromptAndDataFilling(prompt, schema, uri.uri()));
     }
 
     ParsedTask parse(String userText, Map<String, Object> metadata) {

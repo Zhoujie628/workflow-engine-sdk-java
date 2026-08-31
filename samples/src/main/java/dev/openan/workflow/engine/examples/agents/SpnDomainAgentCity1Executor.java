@@ -37,7 +37,7 @@ import dev.openan.workflow.engine.examples.util.EnvResolver;
 /**
  * SPN Domain Agent for City1 (City1 OMC).
  *
- * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}): on a new task
+ * <p>Server-side negotiation-capable (extends {@link NegotiationBaseAgentExecutor}): on an incomplete task
  * it replies INPUT_REQUIRED to start a Negotiation-T round, and on the follow-up it runs the
  * diagnosis business. City1 side has a FAULT (port Down, optical power -28dBm). Diagnosis text is
  * LLM-generated when the A2A-T .env is configured, otherwise deterministic. The recovery event
@@ -54,7 +54,6 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                     + "判断原因为对端设备掉电或端口关闭\n"
                     + "3. 修复建议：恢复供电后重新启动网元，或者重新开启端口";
 
-    private static final String OSS_EVENT_ID = "event-id-20260511-09013";
     private static final String ACCESS_PORT = "P781-珠江新城-PTN7900-23-TPA1EG24-17";
     private static final String RECOVERY_DETAIL =
             "将时延越限和丢包越限的受影响隧道调优到新的可用路径，保留原路径用于回退。";
@@ -81,9 +80,9 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     }
 
     @Override
-    protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, String input) {
-        String diagnosisResult = llmDiagnosisResult(input, FAULT_DIAGNOSIS_RESULT);
-        publishRecoveryLifecycle(ctx);
+    protected String executeBusiness(RequestContext ctx, AgentEmitter emitter, SpnTaskInput input) {
+        String diagnosisResult = llmDiagnosisResult(input.diagnosisInput(), FAULT_DIAGNOSIS_RESULT);
+        publishRecoveryLifecycle(ctx, input);
         // Task-T returns diagnosis only. Recovery plan/result belong exclusively to the
         // independently established Notification-T subscription.
         return diagnosisResult;
@@ -93,7 +92,7 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
      * After diagnosis, publish the recovery plan. If it matches the active Authorization-T
      * whitelist, execute it automatically and publish the final result as a second event.
      */
-    private void publishRecoveryLifecycle(RequestContext ctx) {
+    private void publishRecoveryLifecycle(RequestContext ctx, SpnTaskInput input) {
         AuthorizationPolicy policy = getAuthorizationPolicy();
         boolean inWhitelist =
                 policy != null
@@ -103,7 +102,7 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                                 "隧道调优",
                                 LocalDate.now(ZoneId.of("Asia/Shanghai")));
         String taskId = ctx.getTaskId() != null ? ctx.getTaskId() : "unknown-task";
-        pushRecoveryPlan(formatRecoveryEvent("未启动", taskId, inWhitelist, null, null));
+        pushRecoveryPlan(formatRecoveryEvent("未启动", taskId, inWhitelist, null, null, input));
         if (inWhitelist) {
             log.info("[SPN-Domain-Agent] Fault in whitelist, self-triggering recovery");
             String recoveryResult =
@@ -112,7 +111,7 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
                             taskId,
                             true,
                             "成功",
-                            java.time.Instant.now().toString());
+                            java.time.Instant.now().toString(), input);
             log.info(
                     "[SPN-Domain-Agent] Recovery result reported via Notification-T: {}",
                     recoveryResult);
@@ -128,13 +127,13 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
             String taskId,
             boolean authorized,
             String executionResult,
-            String finishedAt) {
+            String finishedAt, SpnTaskInput input) {
         StringBuilder event =
                 new StringBuilder("### 业务抢通事件\n")
                         .append("1. 业务抢通方案执行状态：").append(state).append('\n')
                         .append("2. 投诉诊断任务流水号：").append(taskId).append('\n')
-                        .append("3. OSS侧事件流水号：").append(OSS_EVENT_ID).append('\n')
-                        .append("4. 接入端口名称：").append(ACCESS_PORT).append('\n')
+                        .append("3. OSS侧事件流水号：").append(input.incidentId()).append('\n')
+                        .append("4. 接入端口名称：").append(input.accessPort()).append('\n')
                         .append("5. 是否已授权OMC自动抢通：").append(authorized ? "是" : "否").append('\n')
                         .append("6. 业务抢通方案名称：隧道调优\n")
                         .append("7. 业务抢通方案详情：").append(RECOVERY_DETAIL);
@@ -148,28 +147,12 @@ public class SpnDomainAgentCity1Executor extends NegotiationBaseAgentExecutor {
     }
 
     @Override
-    protected boolean needsNegotiation(String input) {
-        // Case 7.4 represents an inventory-level semantic error that a generic JSON schema cannot
-        // express: this OMC knows port ...-18 is not a valid complaint access port.
-        if (input != null && input.contains("P781-珠江新城-PTN7900-23-TPA1EG24-18")) {
-            log.info("[SPN-Domain-Agent] Unknown access port; Negotiation-T correction required");
-            return true;
-        }
-        return super.needsNegotiation(input);
-    }
-
-    @Override
-    protected net.openan.a2at.sdk.negotiation.content.NegotiationProposeContent buildProposeContent(
-            String input) {
-        // Information negotiation: the two missing parameters required to start diagnosis.
-        return new net.openan.a2at.sdk.negotiation.content.InformationProposeContent(
-                java.util.List.of(
-                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
-                                "接入端口名称",
-                                "举例：P533-珠江旧城-PTN3900-23-TPA1EG24-1"),
-                        new net.openan.a2at.sdk.negotiation.content.NegotiationItem(
-                                "投诉分类", "举例：专线质差")),
-                "以上参数均为必选，缺少无法启动诊断");
+    protected java.util.List<String> invalidTaskFields(Map<String, Object> data) {
+        var invalid = new java.util.ArrayList<>(super.invalidTaskFields(data));
+        // Sample inventory: City1 must not diagnose a foreign or unknown access port.
+        if (!ACCESS_PORT.equals(SpnTaskInput.field(data, "任务对象", "接入端口名称"))
+                && !invalid.contains("任务对象")) invalid.add("任务对象");
+        return invalid;
     }
 
     @Override
