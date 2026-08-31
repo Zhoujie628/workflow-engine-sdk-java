@@ -57,7 +57,7 @@ public class LoadPsop {
           .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
     String url = urlBuilder.toString();
-    log.info("[Registry] Loading PSOP from {} (ssl_verify={})", url, sslVerify);
+    log.info("[Registry] Loading PSOP from {} (ssl_verify={})", anonymousUrl(url, accessToken), sslVerify);
     HttpResult resp = execute("GET", url, null, sslVerify);
     if (resp.statusCode() != 200) {
       throw new RuntimeException("Orchestration center returned " + resp.statusCode());
@@ -85,7 +85,7 @@ public class LoadPsop {
           .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
     String url = urlBuilder.toString();
-    log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", url, intent, topN);
+    log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", anonymousUrl(url, accessToken), intent, topN);
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
     HttpResult resp = execute("POST", url, jsonBody, sslVerify);
     if (resp.statusCode() != 200) {
@@ -113,6 +113,13 @@ public class LoadPsop {
     }
     log.info("[Registry] Search returned {} workflow(s)", results.size());
     return results;
+  }
+
+  /** Preserve token presence for diagnostics without exposing any token characters or length. */
+  static String anonymousUrl(String url, String token) {
+    return token == null || token.isEmpty()
+        ? url
+        : url.substring(0, url.indexOf("?access_token=")) + "?access_token=<anonymous>";
   }
 
   private static HttpResult execute(String method, String url, String jsonBody, boolean sslVerify)

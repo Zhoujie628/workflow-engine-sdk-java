@@ -29,6 +29,14 @@ class CredentialCryptoTest {
   }
 
   @Test
+  void explicitEncryptionKeyDoesNotMutateGlobalConfiguration() {
+    System.setProperty("A2AT_CRED_KEY", OTHER_KEY);
+    String encrypted = CredentialCrypto.encrypt("instance-secret", KEY);
+    assertEquals("instance-secret", CredentialCrypto.decryptIfNeeded(encrypted, KEY));
+    assertEquals(OTHER_KEY, System.getProperty("A2AT_CRED_KEY"));
+  }
+
+  @Test
   void corruptedEncryptedCredentialFailsClosed() {
     System.setProperty("A2AT_CRED_KEY", KEY);
     assertThrows(
