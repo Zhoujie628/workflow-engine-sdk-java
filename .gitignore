@@ -8,6 +8,8 @@
 .project
 .classpath
 .env
+# Private integration notes must never enter a release history.
+对接一台真实OMC的验证情况.md
 QuickTest*.java
 _*.py
 verify_sdk.py

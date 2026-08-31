@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -41,8 +42,7 @@ jobs:
 
   samples-compilation-check:
     runs-on: ubuntu-latest
-    name: Samples Compilation Check (optional)
-    continue-on-error: true
+    name: Direct sample release gate
 
     steps:
       - name: Checkout code
@@ -57,3 +57,10 @@ jobs:
 
       - name: Build and test samples
         run: mvn -B -pl samples -am verify
+
+      - name: Upload sample test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-sample-test-reports
+          path: samples/target/surefire-reports/
