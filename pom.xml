@@ -12,7 +12,7 @@
 
     <name>workflow-engine-parent</name>
     <description>A2A-T workflow execution engine for multi-agent orchestration (Java) - parent</description>
-    <url>https://github.com/Zhoujie628/a2at-engine-java</url>
+    <url>https://github.com/project-openan/workflow-engine-sdk-java</url>
 
     <licenses>
         <license>
