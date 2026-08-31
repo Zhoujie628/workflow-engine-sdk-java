@@ -324,6 +324,11 @@ POST `/api/v1/orchestrate/search`。返回按自然语言意图匹配的工作�
 
 ### RegistryClient
 
+双参数构造默认使用 30 秒完整响应截止时间。可通过
+`new RegistryClient(url, sslVerify, Duration.ofSeconds(15))` 设置正值预算，包含响应正文读取；线程中断会取消待处理请求。
+注册中心方法返回 JSON Map，使用 AgentCardJacksonModule 转换为 AgentCard，详见集成指南。
+
+
 从注册中心获取和注册 AgentCard。
 
 ```java

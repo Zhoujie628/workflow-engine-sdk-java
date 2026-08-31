@@ -21,7 +21,7 @@ flowchart TB
         ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
     end
 
-    subgraph HOST["宿主智能体：传输工作台 / Workbench Agent"]
+    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
         direction TB
         ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
         ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
@@ -34,7 +34,7 @@ flowchart TB
             EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["工作台业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
     end
 
     subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]

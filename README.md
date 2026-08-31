@@ -29,11 +29,11 @@ The SPN sample treats the protocol document as an input, not as executable truth
 schemas, canonical URIs, and validation results are authoritative. Protocol generation and validation fail closed; raw
 text is never sent under an A2A-T URI as a fallback.
 
-In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the workbench. The workbench loads the PSOP, dispatches two
+In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the integrator. The integrator loads the PSOP, dispatches two
 city-specific OMC diagnoses in parallel, joins both branches exactly once, and returns the real merged result. Outbound
 OMC calls support both `direct` and Eastcom `order` modes (`order` is the production-oriented default). Task-T,
 Authorization-T, and Notification-T each use an independent transport/runtime/context. Authorization and Notification
-are independently triggered workbench operations rather than DAG nodes; Notification keeps an explicit long-lived
+are independently triggered integrator operations rather than DAG nodes; Notification keeps an explicit long-lived
 subscription until the recovery result, cancellation, or shutdown.
 
 ## Quick Start
@@ -66,46 +66,22 @@ For Spring Boot server-side integration:
 
 ### 2. Execute a workflow
 
+The complete, compiled example is [HostQuickStart.java](samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
+It converts registry JSON maps to typed AgentCards, runs a remote task and local aggregation, cancels timed-out work,
+and closes caller-owned transport resources. Run its main method in IDEA with three arguments: registry URL,
+target AgentCard name, and credentials JSON path. The registry and target agent must be reachable; TLS verification is enabled.
+
 ```java
-import java.util.concurrent.*;
-
-// 1. Load workflow (PSOP) from orchestration center
-Workflow workflow = LoadPsop.load(
-        "https://127.0.0.1:5001", "psop-id", null, false);
-
-        // 2. Load agent cards
-        RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-        List<AgentCard> agentCards = registry.fetchAgentCards();
-
-        // 3. Create transport + engine client
-        A2ATransport transport = new A2ATransport(agentCards, null,
-                WorkflowEngineClientConfig.builder()
-                        .sslVerify(true)
-                        .credentialsConfigPath("credentials.json")
-                        .build());
-        WorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
-
-        // 4. Ordinary A2A content; host SDK generation is needed for Task-T.
-        ControlPoint controlPoint = ControlPoint.builder()
-                .onTask(request -> CompletableFuture.completedFuture(MessageContent.text(request.getInstruction())))
-                .build();
-// Implement onSelfTask/onRoute/onNegotiation if required; see docs/en/BUSINESS_CALLBACKS.md.
-
-        // 5. Execute
-        ExecutionResult result = ExecutePsop.builder()
-                .psop(workflow)
-                .agentCards(agentCards)
-                .controlPoint(controlPoint)
-                .engineClient(client)
-                .runtimeIntent("Diagnose fault")
-                .lang("zh")
-                .execute()
-                .get(10, TimeUnit.MINUTES);
-
-System.out.
-
-        println("Success: "+result.isSuccess());
+// In the samples module; HostQuickStart is example source, not a class shipped in the SDK jar.
+HostQuickStart.main(new String[] {
+    "https://registry.example.com",
+    "Your Agent Name",
+    "/secure/credentials.json"
+});
 ```
+
+This minimal example sends plain A2A content. For Task-T, Negotiation-T, Authorization-T and Notification-T content
+generation/validation in host business callbacks, follow SpringSpnDemo and the business callback guide.
 
 Final content callbacks, complete dependency inputs and negotiation
 Send/Stop: [English](docs/en/BUSINESS_CALLBACKS.md) / [中文](docs/zh/BUSINESS_CALLBACKS.md).
@@ -173,7 +149,7 @@ graph TD
 ### 中文
 
 - [A2A-T SDK 依赖说明](docs/zh/A2AT-SDK-DEPENDENCY.md) - Maven Central 正式版本及 IDEA 同步说明
-- [工作台集成指南](docs/zh/工作台集成指南.md) - 工作台接入执行引擎的主交付文档
+- [集成方集成指南](docs/zh/集成方场景接入指南.md) - 集成方接入执行引擎的主交付文档
 - [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信 Order 转发配置、实现边界与联调验收
 - [SpringSpnDemo 调用链路](docs/zh/SpringSpnDemo调用链路.md) - 直连与 Order 双模式端到端调用链
 - [业务流](docs/zh/业务流.md) - SPN 跨城诊断和四类 A2A-T 协议边界
@@ -181,9 +157,9 @@ graph TD
 - [API 参考](docs/zh/API_REFERENCE.md) - 公共接口和类文档
 - [架构设计](docs/zh/DESIGN.md) - 架构、模块结构、设计决策
 - [开发者指南](docs/zh/DEVELOPER_GUIDE.md) - 内部架构、贡献、调试
-- [工作台 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - 可选的业务推理框架结合方案，不是 SDK 接入前置条件
+- [集成方 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - 可选的业务推理框架结合方案，不是 SDK 接入前置条件
 
-工作台和东信平台团队按上述前五份中文文档顺序阅读即可完成场景接入。代码检视报告、 已完成的迁移计划和旧协议抓包已从交付目录移除，避免把历史问题或旧报文当成当前接口。
+集成方和东信平台团队按上述前五份中文文档顺序阅读即可完成场景接入。代码检视报告、 已完成的迁移计划和旧协议抓包已从交付目录移除，避免把历史问题或旧报文当成当前接口。
 
 ## Modules
 

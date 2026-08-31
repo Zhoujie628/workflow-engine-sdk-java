@@ -24,21 +24,85 @@ negotiation context and metadata copying, not content generation.
 
 ## 2. Host Integration and Surrounding Systems
 
-![Workflow engine and surrounding-system dependencies](../images/workflow-engine-surrounding-systems.png)
+```mermaid
+%%{
+  init: {
+    "flowchart": {
+      "curve": "basis",
+      "nodeSpacing": 55,
+      "rankSpacing": 75
+    }
+  }
+}%%
+flowchart TB
+    classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
+    classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
+    classDef sdk fill: #ECFDF5, stroke: #059669, color: #052E16, stroke-width: 1.5px
+    classDef local fill: #F8FAFC, stroke: #64748B, color: #0F172A, stroke-dasharray: 5 3
+    classDef agent fill: #F5F3FF, stroke: #7C3AED, color: #2E1065, stroke-width: 1.5px
+
+    subgraph CONTROL["周边控制面与上游系统"]
+        direction LR
+        WAIMO["WAIMO<br/>上游任务发起方"]:::external
+        REG["注册中心 / Registry Center<br/>AgentCard 发布与查询"]:::external
+        ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
+    end
+
+    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
+        direction TB
+        ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
+        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
+
+        subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
+            direction TB
+            LOAD["发现辅助 API<br/>RegistryClient / LoadPsop"]:::sdk
+            RUN["工作流协议调度<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
+            CALLBACK["宿主回调接口<br/>ControlPoint / EventCallback / onFinish"]:::sdk
+            EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
+        end
+
+        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+    end
+
+    subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]
+        direction LR
+        LOCALCARD["本地 AgentCard JSON<br/>WorkbenchAgentCatalog"]:::local
+        LOCALPSOP["本地 PSOP fallback<br/>仅用于离线演示"]:::local
+    end
+
+    subgraph DOWNSTREAM["下游业务智能体"]
+        OMCS["地市 OMC 智能体群<br/>地市 1 OMC ｜ 地市 2 OMC"]:::agent
+    end
+
+    WAIMO <-->|" Task-T 诊断任务 / 汇总 artifact "| ENTRY
+    ENTRY -->|" 运行意图 "| ADAPTER
+    REG -->|" 生产：查询 AgentCard "| LOAD
+    ORCH -->|" search / load PSOP "| LOAD
+    LOCALCARD -.->|" Demo 替代注册中心 "| ADAPTER
+    LOCALPSOP -.->|" Demo 检索失败时 "| ADAPTER
+    LOAD -->|" 发现结果交给宿主 "| ADAPTER
+    ADAPTER -->|" Workflow + AgentCards "| RUN
+    RUN <-->|" 业务决策与执行结果 "| CALLBACK
+    CALLBACK <-->|" 回调 "| BIZ
+    ADAPTER -->|" 独立业务时机 "| EXT
+    RUN <-->|" 向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果 "| OMCS
+    EXT <-->|" Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE "| OMCS
+    BIZ -->|" 汇总结果 "| ENTRY
+```
 
 The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed orchestration
-service. In `SpringSpnDemo`, the transport workbench is the host agent:
+service. In `SpringSpnDemo`, the transport integrator is the host agent:
 
-1. WAIMO invokes the workbench's A2A server endpoint with a Task-T diagnosis request.
-2. The workbench prepares execution inputs. In production it obtains downstream AgentCards from the registry center and
+1. WAIMO invokes the integrator's A2A server endpoint with a Task-T diagnosis request.
+2. The integrator prepares execution inputs. In production it obtains downstream AgentCards from the registry center and
    searches/loads a PSOP from the orchestration center. The SDK offers optional
    `RegistryClient` and `LoadPsop` helpers, while discovery timing, caching, and failure policy remain host
    responsibilities.
-3. The workbench passes the `Workflow`, AgentCards, runtime intent, and business callbacks to
+3. The integrator passes the `Workflow`, AgentCards, runtime intent, and business callbacks to
    `ExecutePsop`. The engine walks the DAG, dispatches both city tasks in parallel, and handles Negotiation-T when
-   needed. `ControlPoint` returns control to the workbench for local aggregation, routing, and clarification decisions.
-4. The workbench returns the aggregate as a Task-T artifact and terminal status to WAIMO.
-5. Authorization-T and Notification-T are invoked by the workbench at independent business times through
+   needed. `ControlPoint` returns control to the integrator for local aggregation, routing, and clarification decisions.
+4. The integrator returns the aggregate as a Task-T artifact and terminal status to WAIMO.
+5. Authorization-T and Notification-T are invoked by the integrator at independent business times through
    `ExtensionSender`. They are outside the PSOP DAG and do not share a transport, runtime, or context with workflow
    tasks.
 

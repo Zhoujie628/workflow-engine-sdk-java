@@ -91,17 +91,6 @@ Authorization-T 只接受当前 SDK 定义的规范数据形态：每条策略�
 日期范围与“永久生效”均支持；裸值列表、分号分隔和旧 `/` 格式不接受。 此前本节关于全角分号的描述不正确，已按 1.1.0 正式 jar 的
 slot.json 修正。
 
-## 1.1.0 升级核对
-
-相对此前 `ec14175` 源码基线，`v1.1.0` 的 core/client/server/llm/prompt/resources/negotiation
-模块源码与资源没有差异；无需修改业务回调或增加版本兼容层。上述 JarFile 初始化隔离仍有必要， LLM close 公共接口缺口也未随发布解决。发布之后当前
-upstream/main 的新增差异仅为开发指南版本说明。
-
-2026-08-31 本地发布制品回归：main 188 项、dev 239 项测试通过，均无失败、错误或跳过。 覆盖正常输入与缺参协商的直连
-SpringSpnDemo，dev 另覆盖 Order SDK 平台模拟路线。 SDK 模板和校验使用正式 jar，LLM 使用离线
-provider，OMC／平台使用本地模拟器；未验证真实模型或现网。 依赖树确认纯引擎只有 a2a-t-core，samples 的全部 A2A-T 组件均为
-1.1.0。 构建日志位于各工作树 `logs/a2at-1.1.0-*-verify.log`，逐项报告在各模块 `target/surefire-reports/`。
-
 ## 示例业务接口调用复核（2026-08-31）
 
 此前发现的正文来源、填充结果丢弃、City2 缺参路径、Reject／Abort 分发及离线宽松校验问题， 现已在 samples
@@ -109,11 +98,11 @@ provider，OMC／平台使用本地模拟器；未验证真实模型或现网。
 
 | 路径                       | 发送端生成                                                                           | 接收端校验／实际使用                                                                             |
 |----------------------------|--------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| WAIMO → 工作台             | generateTaskPromptFromDataWithSchema                                                 | WorkbenchTaskInputParser 使用 validateTaskPromptAndDataFilling 的 filled.data                    |
-| 工作台 → 两地市任务        | WorkbenchControlPoint.onTask：generateTaskPromptFromDataWithSchema                   | 两 OMC 校验 Task-T，使用 filled.data 构造 SpnTaskInput                                           |
-| 两地市 OMC → 工作台协商    | generateNegotiationProposePromptFromData，按实际缺失字段生成                         | validateProposePromptAndDataFilling，按 items 从当前城市输入提取答案                             |
-| 工作台 → OMC Accept        | generateNegotiationAcceptPromptFromData                                              | 从正式 metadata 取正文，validateAcceptPromptAndDataFilling 后合并请求字段并复核业务必填信息      |
-| 工作台 → OMC Reject／Abort | 对应 generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData | 对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling，结束任务且不执行诊断 |
+| WAIMO → 集成方             | generateTaskPromptFromDataWithSchema                                                 | WorkbenchTaskInputParser 使用 validateTaskPromptAndDataFilling 的 filled.data                    |
+| 集成方 → 两地市任务        | WorkbenchControlPoint.onTask：generateTaskPromptFromDataWithSchema                   | 两 OMC 校验 Task-T，使用 filled.data 构造 SpnTaskInput                                           |
+| 两地市 OMC → 集成方协商    | generateNegotiationProposePromptFromData，按实际缺失字段生成                         | validateProposePromptAndDataFilling，按 items 从当前城市输入提取答案                             |
+| 集成方 → OMC Accept        | generateNegotiationAcceptPromptFromData                                              | 从正式 metadata 取正文，validateAcceptPromptAndDataFilling 后合并请求字段并复核业务必填信息      |
+| 集成方 → OMC Reject／Abort | 对应 generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData | 对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling，结束任务且不执行诊断 |
 | 独立授权                   | generateAuthPromptFromDataWithSchema                                                 | validateAuthPromptAndDataFilling 后构造并应用 AuthorizationPolicy                                |
 | 独立订阅                   | generateNotificationPromptFromDataWithSchema                                         | validateNotificationPromptAndDataFilling 后构造 NotificationPolicy                               |
 
@@ -132,36 +121,15 @@ provider，OMC／平台使用本地模拟器；未验证真实模型或现网。
 [业务回调指南第 9 节](BUSINESS_CALLBACKS.md#9-示例业务侧的-a2a-t-110-调用参考)。 严格离线测试只处理明确样例输入，不从模板示例臆造参数；不能代替真实
 LLM 和现网 OMC 联调。
 
-业务调用整改阶段的验证记录（后续默认演示及日志展示变更见下节）：两分支均执行 `mvn -q test`； 补充端口修正／原上下文保留用例后，又分别执行
-`mvn -q -pl samples -am "-Dtest=EmbeddedA2AServerTest" "-Dsurefire.failIfNoSpecifiedTests=false" test`。 最终 Surefire
-汇总为 main 202、dev 254 项，失败／错误／跳过均为 0。 dev 的直连及 Order Spring E2E 各 3 项，接收端真实 SDK 往返用例共 13 项。
-主测试日志位于各运行目录 `logs/business-sdk-*-verified.log`；最后补充用例日志为
-`logs/business-sdk-*-input-preservation.log`，详细报告位于各模块 `target/surefire-reports/`。
+## 发布验证入口
 
-## 默认演示与 SSE 展示更新（2026-08-31）
+执行 `mvn -B clean verify`，必须包含 core、starter 与 samples；测试统计以当前提交的 Surefire XML 为准。
+main 必须通过直连 SpringSpnDemo；dev 还必须通过具备合法供应商 jar 的 Order 模拟平台路线。
+默认本地演示为 City1 缺参协商、City2 完整输入；外部 OMC 不注入演示缺参。
 
-本地 SpringSpnDemo 无需 VM 参数即演示 City1 缺参协商、City2 完整输入直接诊断；
-`-Da2at.samples.negotiation=false` 关闭演示。设置通过当前 Spring 应用实例传递， 不修改 JVM 全局开关，普通宿主默认关闭；外部
-OMC 模式默认关闭并拒绝显式注入。
+SSE pretty 展示保留事件控制字段，JSON 数据区明确标注为展示格式，不逐行重复 data:。
+设置 `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` 可查看脱敏后的原文，容量限制仍生效。
+Header 凭据始终脱敏，编排中心 query token 仅显示匿名标记，不存在敏感头放开开关。
 
-SSE pretty 日志保留事件控制字段，将 JSON 单独放在标明非原始报文的数据区，不再逐行重复 `data:`。 原始观测正文保持不变，
-`WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` 可查看脱敏后的原始正文； 非 JSON／不完整正文保持原样，脱敏和容量限制仍生效。
-
-两分支分别执行 `mvn -q test`：main 208 项、dev 261 项，失败／错误／跳过均为 0。 直连及 Order Spring E2E 各 4 项，包括默认仅
-City1 协商、显式开关及双城市额外回归； 另有外部 OMC 禁止注入、无全局设置污染、SSE 原文不变及事件边界测试。 日志为各分支
-`logs/demo-display-main-verified.log` 或 `logs/demo-display-dev-verified.log`。 仍为真实 SDK 加离线 LLM／本地 OMC
-和平台模拟器验证，不代表现网模型或设备联调。
-
-## 授权格式与协商字段回归（2026-08-31 09:28）
-
-按 1.1.0 正式资源修正授权编号、字段标签、换行和删除选择器，加入直接读取 jar 内多条策略示例的测试。
-真实运行出现的“本地市实际接入端口名称”提取结果已纳入离线 fixture；协商回复保留经 SDK
-语义校验的原始编号信息项名称。详情见 [业务回调指南](BUSINESS_CALLBACKS.md)。
-
-最终版本全量验证：main 221 项、dev 274 项，失败／错误／跳过均为 0（统计包含 Spring starter 模块）。 main 直连与 dev 直连、Order
-平台模拟路线均通过；默认场景确认 City1 Propose/Accept、 City2 无协商，两个 OMC 授权成功、订阅成功，工作流完成并释放连接。 日志为
-main 工作树 `logs/auth-canonical-main-verify.log` 和 dev 工作树
-`logs/auth-canonical-dev-verify.log`，JUnit 明细位于各模块 `target/surefire-reports/`。
-
-这些结果基于正式 SDK jar、离线 LLM provider 和本地 OMC／Order 模拟器，不是现网或真实模型验收。 Notification-T
-同步补齐失败原因字段名和拒绝详情日志，但历史日志没有 slot 错误详情， 不能断言此前真实模型拒绝订阅的唯一原因已经确认；需真实模型重跑核验。
+离线 LLM provider、本地 OMC 和 Order 模拟器结果不能代替真实模型／平台／OMC 验收。
+真实环境验收须单独记录配置来源、版本、操作授权和脱敏报文，私有联调记录不得提交到公共仓库。

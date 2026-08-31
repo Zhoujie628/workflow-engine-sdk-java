@@ -162,7 +162,7 @@ Demo 专门设置的场景，不是引擎默认行为。 要关闭本地缺参�
 默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
 可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` →
 `INPUT_REQUIRED / PROPOSE`
-→ 工作台 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
+→ 集成方 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
 `-Da2at.samples.negotiation=true` 也会被拒绝。 Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
 协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 main 支持直连；dev 默认 order，两种模式使用同一业务回调。
 
@@ -187,11 +187,11 @@ FromText 和 FromData。
 
 | 业务位置                        | 生成／校验入口                                                                                                                                              | 对结果的业务使用                                                                   |
 |---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-| WAIMO → 工作台                  | SpringSpnDemo：generateTaskPromptFromDataWithSchema；WorkbenchTaskInputParser：validateTaskPromptAndDataFilling                                             | 将 filled.data 作为投诉参数，按任务检索工作流                                      |
-| 工作台 onTask → 两地市 OMC      | WorkbenchControlPoint：generateTaskPromptFromDataWithSchema；NegotiationBaseAgentExecutor：validateTaskPromptAndDataFilling                                 | 用 filled.data 构造 SpnTaskInput，交给 executeBusiness；不把原始协议提示词传给诊断 |
-| OMC 缺参 → 工作台 onNegotiation | 两地市共用 generateNegotiationProposePromptFromData；NegotiationStrategy：validateProposePromptAndDataFilling                                               | 从 items 读取实际请求字段，仅从当前城市原始业务输入补充，不使用另一城市的数据      |
-| 工作台补参 → OMC                | generateNegotiationAcceptPromptFromData；validateAcceptPromptAndDataFilling                                                                                 | 合并所请求字段的 filled.data，复核端口、投诉分类及 OSS 流水号后执行诊断            |
-| 工作台拒绝／终止 → OMC          | generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData；对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling | 校验原因后结束当前诊断任务，不进入诊断业务                                         |
+| WAIMO → 集成方                  | SpringSpnDemo：generateTaskPromptFromDataWithSchema；WorkbenchTaskInputParser：validateTaskPromptAndDataFilling                                             | 将 filled.data 作为投诉参数，按任务检索工作流                                      |
+| 集成方 onTask → 两地市 OMC      | WorkbenchControlPoint：generateTaskPromptFromDataWithSchema；NegotiationBaseAgentExecutor：validateTaskPromptAndDataFilling                                 | 用 filled.data 构造 SpnTaskInput，交给 executeBusiness；不把原始协议提示词传给诊断 |
+| OMC 缺参 → 集成方 onNegotiation | 两地市共用 generateNegotiationProposePromptFromData；NegotiationStrategy：validateProposePromptAndDataFilling                                               | 从 items 读取实际请求字段，仅从当前城市原始业务输入补充，不使用另一城市的数据      |
+| 集成方补参 → OMC                | generateNegotiationAcceptPromptFromData；validateAcceptPromptAndDataFilling                                                                                 | 合并所请求字段的 filled.data，复核端口、投诉分类及 OSS 流水号后执行诊断            |
+| 集成方拒绝／终止 → OMC          | generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData；对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling | 校验原因后结束当前诊断任务，不进入诊断业务                                         |
 | 独立白名单授权                  | ExtensionPrePositioner：generateAuthPromptFromDataWithSchema；PrePositionedExtensionHandler：validateAuthPromptAndDataFilling                               | 用 filled.data 构建并应用 AuthorizationPolicy                                      |
 | 独立订阅                        | ExtensionPrePositioner：generateNotificationPromptFromDataWithSchema；PrePositionedExtensionHandler：validateNotificationPromptAndDataFilling               | 用 filled.data 构建 NotificationPolicy，保持独立通知连接                           |
 

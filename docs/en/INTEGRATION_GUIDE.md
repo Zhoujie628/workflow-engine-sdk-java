@@ -30,6 +30,12 @@ callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
 
 Four steps: define workflow -> load AgentCard -> implement ControlPoint -> execute.
 
+Complete runnable source: [HostQuickStart.java](../../samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
+It is compiled and its remote-task/local-aggregation flow is tested by HostQuickStartTest.
+Copy that source into your host project or run it from samples in IDEA (registry URL, target agent name, credentials path).
+The snippets below explain the same API; use one AgentCard loading option, and implement domain-specific content for Task-T.
+Nonempty business conditions require an onRoute policy; this minimal workflow uses unconditional edges.
+
 ### 4.1 Define a Workflow
 
 ```java
@@ -47,7 +53,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("merge")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(0)
                         .build(),
@@ -63,7 +69,7 @@ Workflow workflow = Workflow.builder()
                         .next(List.of(
                                 JumpCondition.builder()
                                         .step("end")
-                                        .condition("success")
+                                        .condition("")
                                         .build()))
                         .layer(1)
                         .contextFrom(List.of("*"))
@@ -83,8 +89,16 @@ AgentCard card = mapper.readValue(
 
 // Option B: From Registry Center
 RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
-List<Map<String, Object>> cards = registry.fetchAgentCards();
+ObjectMapper cardMapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
+List<AgentCard> cards = registry.fetchAgentCards().stream()
+        .map(raw -> cardMapper.convertValue(raw, AgentCard.class)).toList();
 ```
+
+
+
+RegistryClient defaults to a 30-second deadline including response-body consumption. For another budget, use
+`new RegistryClient(url, true, Duration.ofSeconds(15))`; only positive durations are accepted. Query access tokens
+are logged as `<anonymous>`; do not log raw discovery URLs from host code.
 
 ### 4.3 Implement ControlPoint
 
@@ -119,10 +133,10 @@ ControlPoint callbacks = ControlPoint.builder()
 ### 4.4 Execute
 
 ```java
-ExecutionResult result = ExecutePsop.builder()
+CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
         .psop(workflow)
-        .agentCards(List.of(card1, card2))
-        .controlPoint(new MyControlPoint())
+        .agentCards(cards)
+        .controlPoint(callbacks)
         .runtimeIntent("SPN cross-city fault diagnosis")
         .lang("zh")
         .credentialsConfigPath("credentials.json")
@@ -130,8 +144,13 @@ ExecutionResult result = ExecutePsop.builder()
         .onFinish((r, history) -> {
             System.out.println("Result: " + r.isSuccess());
         })
-        .execute()
-        .get(10, TimeUnit.MINUTES);
+        .execute();
+try {
+    ExecutionResult result = execution.get(10, TimeUnit.MINUTES);
+    System.out.println(result.getStepOutputs());
+} finally {
+    if (!execution.isDone()) execution.cancel(true);
+}
 ```
 
 Required: `psop`, `controlPoint`. All other config items have defaults.
@@ -191,21 +210,30 @@ Example output:
 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
-Write the key to the `.env` file:
+Supply the key explicitly as `credentialEncryptionKey`, or set the OS environment variable below.
+Resolution order is explicit instance key > OS environment > JVM property. The engine does not load `.env` automatically:
 
 ```
 A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
+For instance-local encryption, call `CredentialCrypto.encrypt(plaintext, keyHex)`. An explicit key overrides OS/JVM
+configuration without modifying system properties. Never log plaintext or the key.
+
 **Encrypt a password**
+
+Build the jar with `mvn -pl workflow-engine -am package`; commands below run from the repository root.
+`set` is Windows cmd syntax (PowerShell: `$env:A2AT_CRED_KEY='...'`). This CLI needs only the SDK jar and JDK.
+Use disposable example values here: command-line passwords/keys can appear in shell history and process listings.
+For production, obtain secrets securely in the host and use the Java encryption API.
 
 ```bash
 # Option 1: set env var first
 set A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
 
 # Option 2: pass key as second argument
-java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
 Output:
@@ -219,16 +247,16 @@ Paste the output into the `value` field of the credentials JSON.
 **Rotating the key**
 
 1. Generate a new key: `openssl rand -hex 32`
-2. Update `A2AT_CRED_KEY` in `.env`
+2. Update the host secret store / explicit `credentialEncryptionKey`, or its OS/JVM `A2AT_CRED_KEY`
 3. Re-encrypt all passwords:
-   `java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
+   `java -cp workflow-engine/target/workflow-engine-1.0.0.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
 4. Update the `enc:...` results in the credentials JSON file
 
 > The `.env` file should not be committed to version control. Add it to `.gitignore`.
 
 ### 5.3 Custom Authentication (AuthProvider)
 
-When tokens are obtained by the workbench or an external identity service, or the mechanism is non-standard, implement
+When tokens are obtained by the integrator or an external identity service, or the mechanism is non-standard, implement
 the `AuthProvider` interface. It has a single method:
 
 ```java
@@ -626,7 +654,7 @@ HTTP read timeout.
 | `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                           |
 | `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
 | `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)         |
-| `WorkflowEngineClientConfig`                           | Configuration (SSL, auth, A2A-T, negotiation rounds, custom handlers)   |
+| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget)   |
 | `AuthProvider`                                         | Custom authentication                                                   |
 | `EventCallback` / `EventType`                          | Event callback                                                          |
 | `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                   |

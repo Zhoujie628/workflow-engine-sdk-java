@@ -183,7 +183,7 @@ AgentCard card = mapper.readValue(json, AgentCard.class);
 ```
 
 密码支持 AES-GCM 加密（`enc:<iv>:<ciphertext>` 前缀）。解密密钥从 `A2AT_CRED_KEY`
-（环境变量或系统属性，由 `EnvFileLoader` 从 `.env` 加载）读取。
+（显式实例配置 > OS 环境变量 > JVM 属性）读取；集成方负责配置加载，引擎不自动读取 `.env`。
 
 ### 7.2 自定义 AuthProvider
 
@@ -271,8 +271,9 @@ public Flux<String> execute(@PathVariable String psopId) {
 
 ### 取消
 
-`ExecutePsop.builder().execute()` 返回 `CompletableFuture`。可以 `cancel(true)`， 但内部执行器不会主动中断运行中的 A2A
-调用。对于 SSE，丢弃订阅者，让 future 自然完成。
+`ExecutePsop.builder().execute()` 返回 `CompletableFuture`。`cancel(true)` 停止后续本地调度、忽略迟到回调并清理执行器拥有的资源。
+集成方需要自行取消其 LLM/业务操作；已提交到远端的任务可能需要显式 cancelTask，本地取消不等于协议 Abort 或业务回滚。
+`get(timeout)` 超时不会自动取消 Future，应在 finally 中显式取消未完成的执行。取消不会关闭独立授权/订阅通道。
 
 ## 11. 检查清单
 
