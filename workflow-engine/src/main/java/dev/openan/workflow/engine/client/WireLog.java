@@ -36,6 +36,8 @@ public final class WireLog {
   private static final Pattern SECRET_FORM =
       Pattern.compile(
           "(?i)((?:password|passwd|pwd|[\\w-]*token|[\\w-]*secret|accessSession|api[-_]?key)=)[^&\\s]*");
+  private static final Pattern AUTH_VALUE =
+      Pattern.compile("(?i)(\\b(?:Bearer|Basic)[ \\t]+)[^\\s\"\\\\,;]+");
 
   private WireLog() {}
 
@@ -113,7 +115,7 @@ public final class WireLog {
       cursor = end - 1;
     }
     result.append(text, copied, text.length());
-    return SECRET_FORM.matcher(result).replaceAll("$1***");
+    return AUTH_VALUE.matcher(SECRET_FORM.matcher(result).replaceAll("$1***")).replaceAll("$1***");
   }
 
   /** Skip a complete JSON value without reserializing the surrounding wire text. */

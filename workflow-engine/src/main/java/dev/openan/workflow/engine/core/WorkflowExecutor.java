@@ -164,7 +164,9 @@ public class WorkflowExecutor {
 
   private void emit(String type, Map<String, Object> data) {
     try {
-      eventCallback.onEvent(type, data);
+      Map<String, Object> correlated = new LinkedHashMap<>(data);
+      correlated.put("executionId", executionId);
+      eventCallback.onEvent(type, Collections.unmodifiableMap(correlated));
     } catch (Exception e) {
       log.warn("Event callback error: {}", e.getMessage());
     }
@@ -211,11 +213,22 @@ public class WorkflowExecutor {
         executeSteps(pending, scheduled, executed, activated, failed)
             .thenApply(
                 v -> {
-                  emit(EventType.WORKFLOW_COMPLETE, Map.of());
+                  emit(EventType.WORKFLOW_COMPLETE, Map.of("success", !failed.get()));
                   log.info(
-                      "[Executor] Workflow completed: {}, {} task(s) executed",
+                      "[Executor] WORKFLOW_FINISHED executionId={}, workflow={}, success={}, tasks={}",
+                      executionId,
                       workflow.getName(),
+                      !failed.get(),
                       executionHistory.size());
+                  if (failed.get()) {
+                    log.warn(
+                        "[Executor] WORKFLOW_STOPPED executionId={}, reason=step_failed, skippedSteps={}",
+                        executionId,
+                        java.util.stream.IntStream.range(0, workflow.getSteps().size())
+                            .filter(index -> !executed.contains(index))
+                            .mapToObj(index -> workflow.getSteps().get(index).getName())
+                            .toList());
+                  }
                   return ExecutionResult.builder()
                       .success(!failed.get())
                       .history(new ArrayList<>(executionHistory))
@@ -332,8 +345,21 @@ public class WorkflowExecutor {
               stepOutputs.put(step.getName(), result.results());
               stepExecutionResults.put(step.getName(), result.taskResults());
               if (!result.success()) {
-                log.error("Step {} failed, stopping.", step.getName());
-                emit(EventType.ERROR, Map.of("step", step.getName(), "results", result.results()));
+                log.warn(
+                    "[Executor] STEP_FAILED executionId={}, step={}, action=stop-downstream",
+                    executionId,
+                    step.getName());
+                emit(
+                    EventType.ERROR,
+                    Map.of(
+                        "step",
+                        step.getName(),
+                        "results",
+                        result.results(),
+                        "error",
+                        "Step execution failed",
+                        "errorCode",
+                        "workflow.step_failed"));
                 failed.set(true);
                 return CompletableFuture.completedFuture(null);
               }
@@ -571,6 +597,18 @@ public class WorkflowExecutor {
             task.getStatus().getValue()));
     String status = response.isSuccess() ? "success" : "failed";
     log.info("[Executor] Task {} -> {}: {}", task.getDescription(), task.getAgent(), status);
+    if (!response.isSuccess()) {
+      log.warn(
+          "[Executor] TASK_FAILED executionId={}, step={}, taskId={}, agent={}, errorCode={}, reason={}",
+          executionId,
+          step.getName(),
+          taskId(step.getName(), subtaskIndex),
+          task.getAgent(),
+          response.getErrorCode(),
+          dev.openan.workflow.engine.client.WireLog.redact(response.getError())
+              .replace("\r", "\\r")
+              .replace("\n", "\\n"));
+    }
     if (response.isSuccess() && !response.getOutputs().isEmpty()) {
       log.debug("[Executor] Task outputs from {}: [{}]", task.getAgent(), response.getOutputs());
     }
@@ -587,6 +625,8 @@ public class WorkflowExecutor {
             task.getAgent(),
             "status",
             status,
+            "taskId",
+            taskId(step.getName(), subtaskIndex),
             "outputs",
             outputs,
             "error",
@@ -610,6 +650,8 @@ public class WorkflowExecutor {
             outputs,
             "success",
             response.isSuccess(),
+            "taskId",
+            taskId(step.getName(), subtaskIndex),
             "error",
             response.getError() == null ? "" : response.getError(),
             "errorCode",

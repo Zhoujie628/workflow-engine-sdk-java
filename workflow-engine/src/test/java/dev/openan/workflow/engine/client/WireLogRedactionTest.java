@@ -13,6 +13,17 @@ import org.junit.jupiter.api.Test;
 
 class WireLogRedactionTest {
   @Test
+  void masksAuthorizationValuesInRemoteErrorText() {
+    assertEquals(
+        "Rejected Bearer ***; Basic ***",
+        WireLog.redact("Rejected Bearer private-token; Basic c2VjcmV0"));
+    assertTrue(
+        WireLog.redact("{\"detail\":\"Rejected Bearer private-token\"}").contains("Bearer ***"));
+    assertFalse(
+        WireLog.redact("{\"detail\":\"Rejected Bearer private-token\"}").contains("private-token"));
+  }
+
+  @Test
   void largeEscapedContentDoesNotUseRecursiveRegexBacktracking() {
     String payload =
         "{\"result\":\"" + "escaped \\\"text\\\" ".repeat(8000) + "\",\"token\":\"hidden\"}";

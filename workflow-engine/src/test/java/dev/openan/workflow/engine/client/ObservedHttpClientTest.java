@@ -56,6 +56,7 @@ class ObservedHttpClientTest {
           exchange.getResponseHeaders().add("X-Multi", "one");
           exchange.getResponseHeaders().add("X-Multi", "two");
           exchange.getResponseHeaders().add("bearToken", "header-secret");
+          exchange.getResponseHeaders().add("accessSession", "session-header-secret");
           byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
           exchange.sendResponseHeaders(200, bytes.length);
           exchange.getResponseBody().write(bytes);
@@ -97,6 +98,7 @@ class ObservedHttpClientTest {
               .orElseThrow();
       assertEquals(List.of("one", "two"), received.headers().get("x-multi"));
       assertEquals(List.of("***"), received.headers().get("beartoken"));
+      assertEquals(List.of("***"), received.headers().get("accesssession"));
       assertEquals(1, records.stream().map(WireLog.Entry::requestId).distinct().count());
       String logs = records.toString();
       assertFalse(logs.contains("login-secret"));
