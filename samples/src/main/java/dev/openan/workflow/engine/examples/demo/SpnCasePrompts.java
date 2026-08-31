@@ -218,7 +218,10 @@ public final class SpnCasePrompts {
     /** Service-recovery subscription data (spec case 7.8). */
     public static Map<String, Object> subscribeServiceRecoveryData() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("订阅条件", "");
+        // The condition is optional in the SDK slot schema, but an empty value renders a bare section
+        // header that real-LLM semantic validation rejects as a missing parameter; carry an explicit
+        // constraint instead.
+        data.put("订阅条件", "子网名称：SPN承载子网");
         data.put(
                 "上报通知数据格式",
                 "业务抢通事件数据包含：业务抢通方案执行状态（未启动、已结束）、投诉诊断任务流水号、"
