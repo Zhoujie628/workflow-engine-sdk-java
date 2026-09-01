@@ -214,14 +214,25 @@ public class DefaultA2AJavaClientRuntime
           error.getMessage());
     } else {
       String msg = error.getMessage() != null ? error.getMessage() : "";
+      RemoteProblemException problem = RemoteProblemException.findIn(error);
       boolean connectionClosed =
-          msg.contains("connection closed locally")
-              || msg.contains("chunked transfer encoding, state: READING_LENGTH");
+          problem == null
+              && (msg.contains("connection closed locally")
+                  || msg.contains("chunked transfer encoding, state: READING_LENGTH"));
       if (connectionClosed) {
         log.debug("[A2ARuntime] Connection closed for '{}': {}", agentName, msg);
       } else {
         errorRef.set(error);
-        log.error("[A2ARuntime] Error callback for '{}': {}", agentName, error.getMessage(), error);
+        if (problem != null) {
+          log.warn(
+              "[A2ARuntime] REMOTE_PROBLEM agent={}, status={}, reason={}",
+              agentName,
+              problem.getStatus(),
+              problem.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
+        } else {
+          log.error(
+              "[A2ARuntime] Error callback for '{}': {}", agentName, error.getMessage(), error);
+        }
       }
       done.countDown();
     }
@@ -672,7 +683,7 @@ public class DefaultA2AJavaClientRuntime
             crlPath,
             Duration.ofSeconds(60),
             httpClientExecutor);
-    return new JdkA2AHttpClient(new ObservedHttpClient(httpClient));
+    return new ProblemDetectingHttpClient(new JdkA2AHttpClient(new ObservedHttpClient(httpClient)));
   }
 
   private record StreamClientKey(String agentName, String contextId) {}

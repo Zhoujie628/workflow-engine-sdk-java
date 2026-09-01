@@ -272,7 +272,7 @@ public class EventCallback {
 | `AUTHORIZATION_RESOLVED` | 授权决策已做出                                     |
 | `NOTIFICATION`           | 收到智能体通知                                     |
 | `ROUTE_DECISION`         | 路由决策已做出                                     |
-| `WORKFLOW_COMPLETE`      | 工作流完成（所有步骤结束）                         |
+| `WORKFLOW_COMPLETE`      | DAG 调度结束，需检查 success；不代表全部节点成功执行 |
 | `START`                  | 工作流执行开始                                     |
 | `COMPLETE`               | 工作流执行成功完成                                 |
 | `ERROR`                  | 工作流执行失败                                     |
@@ -309,6 +309,11 @@ static List<WorkflowSearchResult> search(
 ```
 
 POST `/api/v1/orchestrate/search`。返回按自然语言意图匹配的工作流摘要列表。
+
+LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验主机名。
+显式传 `false` 时，仅该编排中心 HTTPS 连接跳过证书链和主机名校验，可免配本地 CA 文件联调。
+服务端仍须提供 HTTPS 证书；此开关不绕过 mTLS，也不修改其他客户端或 JVM 的全局 TLS 策略。
+生产环境必须保持验证并配置正确的服务端 SAN 与信任库；本设置不是引擎南向 HTTP/JSON-RPC 的 TLS 策略变更。
 
 ### RegistryClient
 
@@ -535,6 +540,11 @@ getReceivedMessages () 是保留层级的响应来源，getOutputs () 为便利�
 - `EventCallback.onEvent` 从多个线程调用（主线程 + SSE 工作线程），需要时使用同步。
 
 ## 错误处理
+
+- 顶层远端 problem 错误通过 `RemoteProblemException` 保留；可用 `findIn(Throwable)` 查找包装异常中的原因。
+  工作流任务失败信息为 `remote.problem.<status>`，详情进入 history / TASK_RESPONSE，不作为业务 outputs。
+  引擎节点事件携带 executionId，任务结果事件和 history 携带逻辑 taskId。
+  失败传播、双地市汇总规则和日志职责见 [集成指南](INTEGRATION_GUIDE.md#远端错误响应)。
 
 - 回调异常／空值／超时明确失败；SDK 内容错误由宿主转换为 BusinessFailure，必要时保留安全的 code/details。
 - maxNegotiationExchanges 耗尽或本地 Stop 只结束本地交互，不自动发送 Abort。业务 Send (Abort) 不算诊断成功。

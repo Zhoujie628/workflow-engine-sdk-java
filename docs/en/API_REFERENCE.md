@@ -283,7 +283,7 @@ Override to receive real-time execution events. Event types are defined in `Even
 | `AUTHORIZATION_RESOLVED` | Authorization decision was made                              |
 | `NOTIFICATION`           | Notification received from agent                             |
 | `ROUTE_DECISION`         | Route decision was made                                      |
-| `WORKFLOW_COMPLETE`      | The workflow completed (all steps finished)                  |
+| `WORKFLOW_COMPLETE`      | DAG scheduling ended; check success, not all nodes necessarily ran |
 | `START`                  | Workflow execution started                                   |
 | `COMPLETE`               | Workflow execution completed successfully                    |
 | `ERROR`                  | Workflow execution failed                                    |
@@ -320,6 +320,12 @@ static List<WorkflowSearchResult> search(
 ```
 
 POST `/api/v1/orchestrate/search`. Returns ranked workflow summaries matched by natural-language intent.
+
+LoadPsop convenience overloads default to `sslVerify=true`, using JVM trust and hostname checks.
+Explicit `false` skips certificate-chain and hostname verification on that orchestration HTTPS connection only,
+allowing development without a local CA file. The server still needs a TLS certificate; this does not bypass
+mTLS, modify JVM-wide defaults, or change other clients' TLS policies. Production must verify trust and matching SANs.
+This is distinct from the engine's southbound HTTP/JSON-RPC verification policy.
 
 ### RegistryClient
 
@@ -554,6 +560,12 @@ Canonical negotiation metadata is `templateUri` plus
 - `EventCallback.onEvent` is called from multiple threads (main + SSE worker threads). Use synchronization if needed.
 
 ## Error Handling
+
+- Top-level remote problem responses retain their fields in `RemoteProblemException`;
+  `findIn(Throwable)` finds it through wrappers. Workflow failures use `remote.problem.<status>`,
+  with details in history / TASK_RESPONSE rather than business outputs.
+  Executor node events include executionId; task response events and history include the logical taskId.
+  See [integration guidance](INTEGRATION_GUIDE.md#remote-problem-responses) for propagation and logging.
 
 - Missing/null/exceptional/timed-out callbacks fail explicitly. Host SDK errors may be mapped to BusinessFailure with
   safe code/details.

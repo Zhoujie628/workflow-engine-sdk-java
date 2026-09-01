@@ -143,6 +143,8 @@ final class ObservedHttpClient extends HttpClient {
     final String id = UUID.randomUUID().toString();
     final HttpRequest request;
     final Map<String, String> context = WireLog.context();
+    final java.util.concurrent.atomic.AtomicBoolean failureLogged =
+        new java.util.concurrent.atomic.AtomicBoolean();
 
     Exchange(HttpRequest request) {
       this.request = request;
@@ -172,6 +174,8 @@ final class ObservedHttpClient extends HttpClient {
     }
 
     void failure(Throwable error) {
+      // Body subscriber and sendAsync completion can report the same exchange failure.
+      if (!failureLogged.compareAndSet(false, true)) return;
       emit(
           "FAILURE",
           null,

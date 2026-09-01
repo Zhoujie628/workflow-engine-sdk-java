@@ -67,9 +67,10 @@ public final class OmcAgentLauncher implements AutoCloseable {
         (List<Map<String, Object>>) card.getOrDefault("supportedInterfaces", List.of());
     String url =
         ifaces.isEmpty() ? "https://127.0.0.1:0" : String.valueOf(ifaces.get(0).get("url"));
-    java.net.URI uri = java.net.URI.create(url);
+    java.net.URI uri = LocalServerAddress.requireLocalEndpoint(url, "Embedded OMC AgentCard");
     String host = uri.getHost() != null ? uri.getHost() : "127.0.0.1";
-    int port = Math.max(uri.getPort(), 0);
+    int port =
+        uri.getPort() >= 0 ? uri.getPort() : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
     JdkHttpA2AServer server = new JdkHttpA2AServer(host, port, card, executor);
     server.start();
     servers.add(server);
@@ -78,6 +79,16 @@ public final class OmcAgentLauncher implements AutoCloseable {
 
   public List<JdkHttpA2AServer> servers() {
     return servers;
+  }
+
+  /** Starts an already loaded and validated card, including externally configured local cards. */
+  public JdkHttpA2AServer startFromCard(AgentCard card, AgentExecutor executor) throws Exception {
+    return startFromCard(
+        MAPPER.readValue(
+            com.google.protobuf.util.JsonFormat.printer()
+                .print(org.a2aproject.sdk.grpc.utils.ProtoUtils.ToProto.agentCard(card)),
+            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}),
+        executor);
   }
 
   @Override

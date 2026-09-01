@@ -19,16 +19,20 @@
 
 package dev.openan.workflow.engine.core;
 
+import dev.openan.workflow.engine.client.RemoteProblemException;
 import dev.openan.workflow.engine.model.BusinessFailure;
 import dev.openan.workflow.engine.model.TaskResult;
 import java.util.*;
 
-/** Maps only generic failures or explicitly safe host-selected business facts. */
+/** Maps generic failures, remote problem facts, or explicitly safe host-selected business facts. */
 final class FailureMapping {
   static TaskResult from(Throwable error) {
     Throwable root = error;
     Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-    while (root.getCause() != null && seen.add(root) && !(root instanceof BusinessFailure)) {
+    while (root.getCause() != null
+        && seen.add(root)
+        && !(root instanceof BusinessFailure)
+        && !(root instanceof RemoteProblemException)) {
       root = root.getCause();
     }
     if (root instanceof BusinessFailure business) {
@@ -37,6 +41,20 @@ final class FailureMapping {
           .errorCode(business.code())
           .error(business.getMessage())
           .errorDetails(business.details())
+          .build();
+    }
+    if (root instanceof RemoteProblemException problem) {
+      return TaskResult.builder()
+          .success(false)
+          .errorCode("remote.problem." + problem.getStatus())
+          .error(problem.getMessage())
+          .errorDetails(
+              Map.of(
+                  "status", problem.getStatus(),
+                  "title", problem.getTitle(),
+                  "detail", problem.getDetail(),
+                  "type", problem.getType(),
+                  "timestamp", problem.getTimestamp()))
           .build();
     }
     String code =

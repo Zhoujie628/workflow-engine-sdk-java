@@ -25,21 +25,30 @@ import org.junit.jupiter.api.Timeout;
 
 /** Runs the actual northbound Spring demo with local OMCs and the offline SDK provider. */
 class SpringSpnDemoE2ETest {
+  private dev.openan.workflow.engine.examples.testsupport.CapturedLogs captured;
+
+  @org.junit.jupiter.api.BeforeEach
+  void captureLogs() {
+    captured = new dev.openan.workflow.engine.examples.testsupport.CapturedLogs();
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void closeCapture() {
+    captured.close();
+  }
 
   @Test
   @Timeout(120)
   void defaultLocalDemoNegotiatesOnlyCity1WithoutChangingGlobalSwitch() throws Exception {
     String enabled = System.getProperty("a2at.samples.negotiation");
     String city = System.getProperty("a2at.samples.negotiation.city");
-    java.nio.file.Path log = java.nio.file.Path.of("logs/spn-demo.log");
-    long offset = java.nio.file.Files.exists(log) ? java.nio.file.Files.size(log) : 0;
+    int offset = captured.length();
     System.clearProperty("a2at.samples.negotiation");
     System.clearProperty("a2at.samples.negotiation.city");
     try {
       runDemo();
-      try (var input = java.nio.file.Files.newInputStream(log)) {
-        input.skipNBytes(offset);
-        String evidence = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      {
+        String evidence = captured.since(offset);
         org.junit.jupiter.api.Assertions.assertTrue(
             evidence.contains("NEGOTIATION_DEMO enabled=true, city=city1"));
         org.junit.jupiter.api.Assertions.assertTrue(
@@ -76,14 +85,12 @@ class SpringSpnDemoE2ETest {
   @Timeout(120)
   void bothCitiesNegotiateIndependentlyAndComplete() throws Exception {
     String previous = System.getProperty("a2at.samples.negotiation.city");
-    java.nio.file.Path log = java.nio.file.Path.of("logs/spn-demo.log");
-    long offset = java.nio.file.Files.exists(log) ? java.nio.file.Files.size(log) : 0;
+    int offset = captured.length();
     System.setProperty("a2at.samples.negotiation.city", "both");
     try {
       missingPortNegotiatesAndCompletesThroughTheSameSpringWorkflow();
-      try (var input = java.nio.file.Files.newInputStream(log)) {
-        input.skipNBytes(offset);
-        String evidence = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      {
+        String evidence = captured.since(offset);
         for (String city : java.util.List.of("City1", "City2")) {
           org.junit.jupiter.api.Assertions.assertTrue(
               evidence.contains("[SpnDomainAgent" + city + "Executor] NEGOTIATION_APPLIED"), city);
@@ -102,15 +109,13 @@ class SpringSpnDemoE2ETest {
   @Test
   @Timeout(120)
   void missingPortNegotiatesAndCompletesThroughTheSameSpringWorkflow() throws Exception {
-    java.nio.file.Path log = java.nio.file.Path.of("logs/spn-demo.log");
-    long offset = java.nio.file.Files.exists(log) ? java.nio.file.Files.size(log) : 0;
+    int offset = captured.length();
     String previous = System.getProperty("a2at.samples.negotiation");
     System.setProperty("a2at.samples.negotiation", "true");
     try {
       runDemo();
-      try (var input = java.nio.file.Files.newInputStream(log)) {
-        input.skipNBytes(offset);
-        String evidence = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      {
+        String evidence = captured.since(offset);
         org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("DEMO_NEGOTIATION"));
         org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("TASK_STATE_INPUT_REQUIRED"));
         org.junit.jupiter.api.Assertions.assertTrue(
@@ -175,14 +180,12 @@ class SpringSpnDemoE2ETest {
   @Timeout(120)
   void northboundComplaintCompletesAndResourcesClose() throws Exception {
     String previous = System.getProperty("a2at.samples.negotiation");
-    java.nio.file.Path log = java.nio.file.Path.of("logs/spn-demo.log");
-    long offset = java.nio.file.Files.exists(log) ? java.nio.file.Files.size(log) : 0;
+    int offset = captured.length();
     System.setProperty("a2at.samples.negotiation", "false");
     try {
       runDemo();
-      try (var input = java.nio.file.Files.newInputStream(log)) {
-        input.skipNBytes(offset);
-        String evidence = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      {
+        String evidence = captured.since(offset);
         org.junit.jupiter.api.Assertions.assertTrue(
             evidence.contains("NEGOTIATION_DEMO enabled=false"));
         org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("DEMO_NEGOTIATION agent="));
