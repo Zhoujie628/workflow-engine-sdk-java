@@ -103,11 +103,11 @@ A2ATClient in the host, not in WorkflowEngineClientConfig or ExecutePsop.
 ```java
 // sdk, data, schema and template selection are owned by host-agent code.
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, configuredTemplateUri);
+    data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("Process this task")));
 ```
 
-Natural-language equivalent: `sdk.generateTaskPromptFromText(text, configuredTemplateUri)`, then use the same
+Natural-language equivalent: `sdk.generateTaskPromptFromText(text, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri())`, then use the same
 A2atMessages.from conversion.
 
 Natural-language generation/validation and all other A2A-T content APIs are called directly on the host's SDK.
