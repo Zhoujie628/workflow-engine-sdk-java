@@ -61,6 +61,8 @@ ExecutionResult result = ExecutePsop.builder()
 CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
 CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+
+CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
 CompletableFuture<SendMessageResult> subscribeToTask(String agentName, String taskId, Consumer<Map<String,Object>> callback);
 long callbackTimeoutSeconds();
@@ -68,6 +70,11 @@ void setControlPoint(ControlPoint callbacks);
 void setEventCallback(EventCallback callback);
 void close();
 ```
+
+`listTasks` and `cancelTask` expose the standard A2A task-management operations through the same AgentCard,
+authentication and custom runtime as message dispatch. A list result is authorization-scoped:
+it contains only tasks visible to the authenticated identity. Callers must paginate with
+`nextPageToken`; cancellation is not implied by closing a local client or notification stream.
 
 The executor calls dispatch; onTask does not send. Content is final parts/metadata/extensions. The engine manages
 envelopes and interactions, never instantiates A2ATClient or generates content from AgentCard declarations. Template

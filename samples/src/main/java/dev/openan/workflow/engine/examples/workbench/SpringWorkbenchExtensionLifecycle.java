@@ -23,6 +23,7 @@ import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.gateway.ClientRuntimeFactory;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import jakarta.annotation.PreDestroy;
+import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -39,6 +40,7 @@ public final class SpringWorkbenchExtensionLifecycle {
   private final ClientRuntimeFactory runtimeFactory;
   private final ConfigurableListableBeanFactory beanFactory;
   private final WorkbenchClientProperties properties;
+  private final String localAgentName;
 
   private WorkbenchExtensionLifecycle lifecycle;
   private volatile java.util.concurrent.CompletableFuture<Void> firstRecovery =
@@ -47,10 +49,12 @@ public final class SpringWorkbenchExtensionLifecycle {
   public SpringWorkbenchExtensionLifecycle(
       ClientRuntimeFactory runtimeFactory,
       ConfigurableListableBeanFactory beanFactory,
-      WorkbenchClientProperties properties) {
+      WorkbenchClientProperties properties,
+      AgentCard localAgentCard) {
     this.runtimeFactory = runtimeFactory;
     this.beanFactory = beanFactory;
     this.properties = properties;
+    this.localAgentName = localAgentCard.name();
   }
 
   @EventListener(ApplicationReadyEvent.class)
@@ -72,10 +76,19 @@ public final class SpringWorkbenchExtensionLifecycle {
             resolveEnvPath(),
             runtimeFactory::create,
             this::onNotification,
-            runtimeFactory.authProvider());
+            runtimeFactory.authProvider(),
+            properties.isTaskCleanupEnabled(),
+            properties.isTaskCleanupFailFast(),
+            properties.getTaskCleanupPageSize(),
+            properties.getTaskCleanupMaxTasks(),
+            localAgentName);
     try {
       candidate.start();
       lifecycle = candidate;
+    } catch (WorkbenchExtensionLifecycle.TaskCleanupException e) {
+      candidate.close();
+      lifecycle = null;
+      throw e;
     } catch (RuntimeException e) {
       candidate.close();
       lifecycle = null;

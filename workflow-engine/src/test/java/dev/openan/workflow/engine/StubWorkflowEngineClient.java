@@ -143,6 +143,13 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
   }
 
   @Override
+  public CompletableFuture<org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult> listTasks(
+      String agentName, org.a2aproject.sdk.spec.ListTasksParams params) {
+    return CompletableFuture.completedFuture(
+        new org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult(List.of()));
+  }
+
+  @Override
   public CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId) {
     return cannedResult(agentName, "TASK_STATE_CANCELED");
   }

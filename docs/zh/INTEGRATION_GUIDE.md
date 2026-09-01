@@ -502,6 +502,18 @@ LoadPsop 不修改 JVM 全局 SSLContext、默认 SocketFactory 或 HostnameVeri
 
 引擎只消费 AgentCard，不启动被调度智能体服务。宿主智能体负责 AgentCard 发现、端点可达性校验与开发测试资源。使用外部管理的被调度智能体时，不得在相同端点上启动本地测试服务。生产 AgentCard 和凭据应保存在仓库外部。
 
+### 13.3 Demo 启动前任务清理
+
+Demo 在打开独立协议通道和启动工作流之前，先查询每个被调度智能体中处于 `SUBMITTED`、`WORKING`、
+`INPUT_REQUIRED`、`AUTH_REQUIRED` 状态的任务，再通过标准 A2A 任务接口取消当前认证身份可见的全部结果。 查询会跟随
+`nextPageToken`，对扫描过程中发生状态变化的任务去重，并正确处理“查询后、取消前任务已进入终态”的竞态。
+查询和取消使用独立的短生命周期认证传输，不复用工作流、授权或通知的生命周期。
+
+清理默认开启并采用 fail-fast，避免遗留任务静默累积后触发容量错误。可通过
+`A2A_TASK_CLEANUP_ENABLED`、`A2A_TASK_CLEANUP_FAIL_FAST`、`A2A_TASK_CLEANUP_PAGE_SIZE`（1–100）和
+`A2A_TASK_CLEANUP_MAX_TASKS` 配置。任务查询受认证身份权限约束；若多个实例共用同一身份，Demo 可能取消其他实例创建的活跃任务。
+应使用隔离身份，或在提供等价的任务归属清理策略后关闭该功能。
+
 ## 14. 远端错误响应
 
 响应头成功不代表任务成功。HTTP 200 的 SSE data 也可能返回顶层错误对象，例如：

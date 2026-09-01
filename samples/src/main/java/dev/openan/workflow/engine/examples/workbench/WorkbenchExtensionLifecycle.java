@@ -33,6 +33,11 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
   private final boolean sslVerify;
   private final String a2atEnvPath;
   private final Supplier<A2AJavaClientRuntime> runtimeSupplier;
+  private final boolean taskCleanupEnabled;
+  private final boolean taskCleanupFailFast;
+  private final int taskCleanupPageSize;
+  private final int taskCleanupMaxTasks;
+  private final String localAgentName;
   private final java.util.function.BiConsumer<
           NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
       notificationCallback;
@@ -49,7 +54,18 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       java.util.function.BiConsumer<
               NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
           notificationCallback) {
-    this(credentialsPath, sslVerify, a2atEnvPath, runtimeSupplier, notificationCallback, null);
+    this(
+        credentialsPath,
+        sslVerify,
+        a2atEnvPath,
+        runtimeSupplier,
+        notificationCallback,
+        null,
+        false,
+        true,
+        100,
+        1000,
+        null);
   }
 
   public WorkbenchExtensionLifecycle(
@@ -61,12 +77,45 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
               NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
           notificationCallback,
       AuthProvider authProvider) {
+    this(
+        credentialsPath,
+        sslVerify,
+        a2atEnvPath,
+        runtimeSupplier,
+        notificationCallback,
+        authProvider,
+        false,
+        true,
+        100,
+        1000,
+        null);
+  }
+
+  public WorkbenchExtensionLifecycle(
+      String credentialsPath,
+      boolean sslVerify,
+      String a2atEnvPath,
+      Supplier<A2AJavaClientRuntime> runtimeSupplier,
+      java.util.function.BiConsumer<
+              NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
+          notificationCallback,
+      AuthProvider authProvider,
+      boolean taskCleanupEnabled,
+      boolean taskCleanupFailFast,
+      int taskCleanupPageSize,
+      int taskCleanupMaxTasks,
+      String localAgentName) {
     this.credentialsPath = credentialsPath;
     this.sslVerify = sslVerify;
     this.a2atEnvPath = a2atEnvPath;
     this.runtimeSupplier = runtimeSupplier;
     this.notificationCallback = notificationCallback;
     this.authProvider = authProvider;
+    this.taskCleanupEnabled = taskCleanupEnabled;
+    this.taskCleanupFailFast = taskCleanupFailFast;
+    this.taskCleanupPageSize = taskCleanupPageSize;
+    this.taskCleanupMaxTasks = taskCleanupMaxTasks;
+    this.localAgentName = localAgentName;
   }
 
   private static long elapsedMillis(long startedNanos) {
@@ -82,6 +131,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     }
 
     List<AgentCard> agentCards = new WorkbenchAgentCatalog().load();
+    cleanupStaleTasks(agentCards);
     A2AJavaClientRuntime authorizationRuntime = null;
     A2AJavaClientRuntime notificationRuntime = null;
     A2ATransport authorizationTransport = null;
@@ -146,6 +196,55 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     }
   }
 
+  private void cleanupStaleTasks(List<AgentCard> agentCards) {
+    if (!taskCleanupEnabled) {
+      log.info("[TaskCleanup] SKIP reason=disabled");
+      return;
+    }
+    long started = System.nanoTime();
+    A2AJavaClientRuntime cleanupRuntime = null;
+    A2ATransport cleanupTransport = null;
+    try {
+      cleanupRuntime = runtimeSupplier != null ? runtimeSupplier.get() : null;
+      WorkflowEngineClientConfig config =
+          WorkflowEngineClientConfig.builder()
+              .sslVerify(sslVerify)
+              .credentialsConfigPath(credentialsPath)
+              .authProvider(authProvider)
+              .build();
+      cleanupTransport = new A2ATransport(agentCards, cleanupRuntime, config);
+      List<AgentCard> cleanupTargets =
+          localAgentName == null
+              ? agentCards
+              : agentCards.stream().filter(card -> !localAgentName.equals(card.name())).toList();
+      var report =
+          new StaleTaskCleaner(taskCleanupPageSize, taskCleanupMaxTasks)
+              .cleanup(
+                  new dev.openan.workflow.engine.client.DefaultWorkflowEngineClient(
+                      cleanupTransport),
+                  cleanupTargets);
+      log.info(
+          "[TaskCleanup] DONE listed={}, canceled={}, becameTerminal={}, elapsedMs={}",
+          report.listed(),
+          report.canceled(),
+          report.becameTerminal(),
+          elapsedMillis(started));
+    } catch (RuntimeException error) {
+      log.error(
+          "[TaskCleanup] FAILED elapsedMs={}, errorType={}, message={}, failFast={}",
+          elapsedMillis(started),
+          error.getClass().getSimpleName(),
+          error.getMessage(),
+          taskCleanupFailFast,
+          error);
+      if (taskCleanupFailFast) {
+        throw new TaskCleanupException("Failed to clean stale remote tasks", error);
+      }
+    } finally {
+      closeResource(cleanupTransport, cleanupRuntime);
+    }
+  }
+
   private static void closeResource(A2ATransport transport, A2AJavaClientRuntime runtime) {
     try {
       if (transport != null) transport.close();
@@ -195,6 +294,12 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       } catch (RuntimeException error) {
         log.warn("Notification observer failed", error);
       }
+    }
+  }
+
+  public static final class TaskCleanupException extends RuntimeException {
+    TaskCleanupException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 }

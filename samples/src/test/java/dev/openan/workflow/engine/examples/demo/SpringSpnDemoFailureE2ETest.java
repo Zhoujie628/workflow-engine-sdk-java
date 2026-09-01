@@ -116,30 +116,73 @@ class SpringSpnDemoFailureE2ETest {
 
   private static HttpServer omc(int status, AtomicInteger calls) throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext("/", exchange -> {
-      var request = JSON.readTree(exchange.getRequestBody());
-      boolean task = request.path("message").path("metadata").has(A2ATExtension.TASK_T.uri());
-      String response;
-      if (!task) {
-        // Deliberate pre-position failures must not prevent the subsequent workflow tasks.
-        response = JSON.writeValueAsString(Map.of("status", 503, "detail", "Independent operation rejected"));
-      } else if (status != 0) {
-        calls.incrementAndGet();
-        response = JSON.writeValueAsString(Map.of(
-            "status", status, "detail", reason(status), "type", "", "timestamp", "2026-08-31T09:07:35Z"));
-      } else {
-        calls.incrementAndGet();
-        response = JSON.writeValueAsString(Map.of("task", Map.of(
-            "id", "city2-diagnosis", "contextId", request.path("message").path("contextId").asText(),
-            "status", Map.of("state", "TASK_STATE_COMPLETED"),
-            "artifacts", List.of(Map.of("artifactId", "diagnosis", "parts", List.of(Map.of("text", "City2 diagnosis")))))));
-      }
-      byte[] bytes = ("data: " + response + "\n\n").getBytes(StandardCharsets.UTF_8);
-      exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
-      exchange.sendResponseHeaders(200, 0);
-      try (var output = exchange.getResponseBody()) { output.write(bytes); }
-      finally { exchange.close(); }
-    });
+    server.createContext(
+        "/",
+        exchange -> {
+          if ("GET".equals(exchange.getRequestMethod())
+              && exchange.getRequestURI().getPath().endsWith("/tasks")) {
+            byte[] bytes =
+                JSON.writeValueAsBytes(Map.of("tasks", List.of(), "totalSize", 0, "pageSize", 0));
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) {
+              output.write(bytes);
+            } finally {
+              exchange.close();
+            }
+            return;
+          }
+          var request = JSON.readTree(exchange.getRequestBody());
+          boolean task = request.path("message").path("metadata").has(A2ATExtension.TASK_T.uri());
+          String response;
+          if (!task) {
+            // Deliberate pre-position failures must not prevent the subsequent workflow tasks.
+            response =
+                JSON.writeValueAsString(
+                    Map.of("status", 503, "detail", "Independent operation rejected"));
+          } else if (status != 0) {
+            calls.incrementAndGet();
+            response =
+                JSON.writeValueAsString(
+                    Map.of(
+                        "status",
+                        status,
+                        "detail",
+                        reason(status),
+                        "type",
+                        "",
+                        "timestamp",
+                        "2026-08-31T09:07:35Z"));
+          } else {
+            calls.incrementAndGet();
+            response =
+                JSON.writeValueAsString(
+                    Map.of(
+                        "task",
+                        Map.of(
+                            "id",
+                            "city2-diagnosis",
+                            "contextId",
+                            request.path("message").path("contextId").asText(),
+                            "status",
+                            Map.of("state", "TASK_STATE_COMPLETED"),
+                            "artifacts",
+                            List.of(
+                                Map.of(
+                                    "artifactId",
+                                    "diagnosis",
+                                    "parts",
+                                    List.of(Map.of("text", "City2 diagnosis")))))));
+          }
+          byte[] bytes = ("data: " + response + "\n\n").getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
+          exchange.sendResponseHeaders(200, 0);
+          try (var output = exchange.getResponseBody()) {
+            output.write(bytes);
+          } finally {
+            exchange.close();
+          }
+        });
     server.start();
     return server;
   }

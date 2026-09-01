@@ -33,7 +33,9 @@ import net.openan.a2at.sdk.core.model.NegotiationPerformative;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.MessageEvent;
 import org.a2aproject.sdk.client.TaskUpdateEvent;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
 import org.slf4j.Logger;
@@ -440,6 +442,21 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
     }
     return transport.getTask(agentCard, agentName, taskId);
+  }
+
+  @Override
+  public CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params) {
+    if (closed.get())
+      return CompletableFuture.failedFuture(new IllegalStateException("Workflow client closed"));
+    if (agentName == null || agentName.isBlank() || params == null) {
+      return CompletableFuture.failedFuture(
+          new IllegalArgumentException("agentName and params must not be null or blank"));
+    }
+    AgentCard agentCard = transport.getCard(agentName);
+    if (agentCard == null) {
+      return CompletableFuture.failedFuture(new RuntimeException("Agent not found: " + agentName));
+    }
+    return transport.listTasks(agentCard, agentName, params);
   }
 
   @Override

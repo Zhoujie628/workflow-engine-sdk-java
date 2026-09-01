@@ -47,6 +47,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -159,6 +160,36 @@ public class A2AController {
   public ResponseEntity<String> getTask(HttpServletRequest req, @PathVariable("id") String taskId) {
     var ctx = buildContext(req);
     var resp = restHandler.getTask(ctx, "", taskId, null);
+    return ResponseEntity.status(resp.getStatusCode())
+        .contentType(
+            MediaType.parseMediaType(
+                resp.getContentType() != null
+                    ? resp.getContentType()
+                    : MediaType.APPLICATION_JSON_VALUE))
+        .body(resp.getBody());
+  }
+
+  @GetMapping("${a2at.server.path-prefix}/tasks")
+  public ResponseEntity<String> listTasks(
+      HttpServletRequest req,
+      @RequestParam(required = false) String contextId,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) Integer pageSize,
+      @RequestParam(required = false) String pageToken,
+      @RequestParam(required = false) Integer historyLength,
+      @RequestParam(required = false) String statusTimestampAfter,
+      @RequestParam(required = false) Boolean includeArtifacts) {
+    var resp =
+        restHandler.listTasks(
+            buildContext(req),
+            "",
+            contextId,
+            status,
+            pageSize,
+            pageToken,
+            historyLength,
+            statusTimestampAfter,
+            includeArtifacts);
     return ResponseEntity.status(resp.getStatusCode())
         .contentType(
             MediaType.parseMediaType(

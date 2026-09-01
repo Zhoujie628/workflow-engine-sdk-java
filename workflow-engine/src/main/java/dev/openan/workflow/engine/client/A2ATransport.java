@@ -45,8 +45,10 @@ import org.a2aproject.sdk.client.MessageEvent;
 import org.a2aproject.sdk.client.TaskEvent;
 import org.a2aproject.sdk.client.TaskUpdateEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.Artifact;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.Part;
@@ -754,6 +756,30 @@ public class A2ATransport implements AutoCloseable {
                   } catch (Exception e) {
                     throw new RuntimeException(
                         "getTask failed for " + agentName + ": " + e.getMessage(), e);
+                  }
+                }),
+        asyncExecutor);
+  }
+
+  public CompletableFuture<ListTasksResult> listTasks(
+      AgentCard agentCard, String agentName, ListTasksParams params) {
+    if (closed.get()) {
+      return CompletableFuture.failedFuture(new IllegalStateException("A2A transport is closed"));
+    }
+    Map<String, String> trace = new HashMap<>(WireLog.context());
+    trace.put("agent", agentName);
+    trace.put("operation", "listTasks");
+    return CompletableFuture.supplyAsync(
+        () ->
+            WireLog.call(
+                trace,
+                () -> {
+                  try {
+                    ClientCallContext ctx = buildClientCallContext(agentCard, agentName, Map.of());
+                    return a2aClientRuntime.listTasks(agentCard, params, ctx);
+                  } catch (Exception e) {
+                    throw new RuntimeException(
+                        "listTasks failed for " + agentName + ": " + e.getMessage(), e);
                   }
                 }),
         asyncExecutor);

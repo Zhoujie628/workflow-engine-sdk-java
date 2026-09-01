@@ -50,10 +50,12 @@ import org.a2aproject.sdk.client.transport.jsonrpc.JSONRPCTransportConfig;
 import org.a2aproject.sdk.client.transport.rest.RestTransport;
 import org.a2aproject.sdk.client.transport.rest.RestTransportConfig;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.A2AClientException;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.AgentInterface;
 import org.a2aproject.sdk.spec.CancelTaskParams;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.Task;
 import org.a2aproject.sdk.spec.TaskArtifactUpdateEvent;
 import org.a2aproject.sdk.spec.TaskIdParams;
@@ -516,6 +518,19 @@ public class DefaultA2AJavaClientRuntime
     } catch (A2AClientException e) {
       throw new RuntimeException(
           "A2A getTask failed for " + agentCard.name() + ": " + e.getMessage(), e);
+    }
+  }
+
+  @Override
+  public ListTasksResult listTasks(
+      AgentCard agentCard, ListTasksParams params, ClientCallContext callContext) {
+    if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
+    Client client = getOrCreateClient(agentCard, extractAgentUrl(agentCard));
+    try {
+      return client.listTasks(params, callContext);
+    } catch (A2AClientException e) {
+      throw new RuntimeException(
+          "A2A listTasks failed for " + agentCard.name() + ": " + e.getMessage(), e);
     }
   }
 

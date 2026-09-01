@@ -45,6 +45,8 @@ import net.openan.a2at.sdk.client.A2ATClient;
 import net.openan.a2at.sdk.core.model.*;
 import net.openan.a2at.sdk.negotiation.content.*;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.ListTasksParams;
+import org.a2aproject.sdk.spec.TaskState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -529,6 +531,37 @@ class EmbeddedA2AServerTest {
     assertNull(JdkHttpA2AServer.taskIdFromPath("/other/task", null));
     assertNull(JdkHttpA2AServer.taskIdFromPath("/tasks/a/b", null));
     assertNull(JdkHttpA2AServer.taskIdFromPath("/tasks/id:subscribe", ":cancel"));
+  }
+
+  @Test
+  void standardTaskListAndCancelManageAnInputRequiredTask() {
+    SendMessageResult pending = startIncomplete();
+
+    var listed =
+        client
+            .listTasks(
+                AGENT_NAME,
+                ListTasksParams.builder()
+                    .status(TaskState.TASK_STATE_INPUT_REQUIRED)
+                    .pageSize(100)
+                    .build())
+            .join();
+
+    assertTrue(listed.tasks().stream().anyMatch(task -> task.id().equals(pending.getTask().id())));
+    SendMessageResult canceled = client.cancelTask(AGENT_NAME, pending.getTask().id()).join();
+    assertEquals("TASK_STATE_CANCELED", canceled.getTaskState());
+    assertTrue(
+        client
+            .listTasks(
+                AGENT_NAME,
+                ListTasksParams.builder()
+                    .status(TaskState.TASK_STATE_INPUT_REQUIRED)
+                    .pageSize(100)
+                    .build())
+            .join()
+            .tasks()
+            .stream()
+            .noneMatch(task -> task.id().equals(pending.getTask().id())));
   }
 
   private class RecordingCity1 extends SpnDomainAgentCity1Executor {
