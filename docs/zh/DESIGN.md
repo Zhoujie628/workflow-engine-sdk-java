@@ -49,12 +49,12 @@ flowchart TB
         end
 
         BIZ["宿主业务实现<br/>内容、路由、汇聚、持久化"]:::host
-    end
 
-    subgraph SAMPLE["可选本地文件（仅开发用）"]
-        direction LR
-        LOCALCARD["本地 AgentCard JSON"]:::local
-        LOCALPSOP["本地 Workflow 示例文件"]:::local
+        subgraph SAMPLE["可选本地文件（仅开发用）"]
+            direction LR
+            LOCALCARD["本地 AgentCard JSON"]:::local
+            LOCALPSOP["本地 Workflow 示例文件"]:::local
+        end
     end
 
     AGENTS["被调度智能体"]:::agent
@@ -63,8 +63,8 @@ flowchart TB
     ENTRY -->|"已校验的意图与输入"| ADAPTER
     REG -->|"AgentCard 数据"| LOAD
     ORCH -->|"Workflow 定义"| LOAD
-    LOCALCARD -.->|"开发用替代文件"| ADAPTER
-    LOCALPSOP -.->|"开发用替代文件"| ADAPTER
+    LOCALCARD -.->|"开发用替代"| ADAPTER
+    LOCALPSOP -.->|"开发用替代"| ADAPTER
     LOAD -->|"发现结果"| ADAPTER
     ADAPTER -->|"Workflow + AgentCard"| RUN
     RUN <-->|"业务决策 / 结果"| CALLBACK

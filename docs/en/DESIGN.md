@@ -53,12 +53,12 @@ flowchart TB
         end
 
         BIZ["Host business implementation<br/>content, routing, aggregation, persistence"]:::host
-    end
 
-    subgraph SAMPLE["Optional local fixtures (development only)"]
-        direction LR
-        LOCALCARD["Local AgentCard JSON"]:::local
-        LOCALPSOP["Local Workflow fixture"]:::local
+        subgraph SAMPLE["Optional local files (development only)"]
+            direction LR
+            LOCALCARD["Local AgentCard JSON"]:::local
+            LOCALPSOP["Local Workflow example file"]:::local
+        end
     end
 
     AGENTS["Dispatched agents"]:::agent
@@ -67,8 +67,8 @@ flowchart TB
     ENTRY -->|"Validated intent and input"| ADAPTER
     REG -->|"AgentCards"| LOAD
     ORCH -->|"Workflow definitions"| LOAD
-    LOCALCARD -.->|"Development fixture"| ADAPTER
-    LOCALPSOP -.->|"Development fixture"| ADAPTER
+    LOCALCARD -.->|"Development substitute"| ADAPTER
+    LOCALPSOP -.->|"Development substitute"| ADAPTER
     LOAD -->|"Discovery results"| ADAPTER
     ADAPTER -->|"Workflow + AgentCards"| RUN
     RUN <-->|"Business decisions / results"| CALLBACK
