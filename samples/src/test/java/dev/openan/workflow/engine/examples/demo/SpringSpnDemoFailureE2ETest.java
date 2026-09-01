@@ -117,6 +117,20 @@ class SpringSpnDemoFailureE2ETest {
   private static HttpServer omc(int status, AtomicInteger calls) throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/", exchange -> {
+      if ("GET".equals(exchange.getRequestMethod())
+          && exchange.getRequestURI().getPath().endsWith("/tasks")) {
+        byte[] bytes =
+            JSON.writeValueAsBytes(
+                Map.of("tasks", List.of(), "totalSize", 0, "pageSize", 0));
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (var output = exchange.getResponseBody()) {
+          output.write(bytes);
+        } finally {
+          exchange.close();
+        }
+        return;
+      }
       var request = JSON.readTree(exchange.getRequestBody());
       boolean task = request.path("message").path("metadata").has(A2ATExtension.TASK_T.uri());
       String response;

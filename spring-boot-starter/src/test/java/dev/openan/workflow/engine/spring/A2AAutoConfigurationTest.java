@@ -31,6 +31,21 @@ class A2AAutoConfigurationTest {
             .getAnnotation(GetMapping.class)
             .value()[0]);
     assertEquals(
+        placeholder + "/tasks",
+        A2AController.class
+            .getMethod(
+                "listTasks",
+                jakarta.servlet.http.HttpServletRequest.class,
+                String.class,
+                String.class,
+                Integer.class,
+                String.class,
+                Integer.class,
+                String.class,
+                Boolean.class)
+            .getAnnotation(GetMapping.class)
+            .value()[0]);
+    assertEquals(
         placeholder + "/tasks/{id}:cancel",
         A2AController.class
             .getMethod(

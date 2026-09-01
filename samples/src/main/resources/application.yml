@@ -20,3 +20,7 @@ a2at:
 a2a:
   orch-url: https://127.0.0.1:5001
   ssl-verify: ${A2A_SSL_VERIFY:false}
+  task-cleanup-enabled: ${A2A_TASK_CLEANUP_ENABLED:true}
+  task-cleanup-fail-fast: ${A2A_TASK_CLEANUP_FAIL_FAST:true}
+  task-cleanup-page-size: ${A2A_TASK_CLEANUP_PAGE_SIZE:100}
+  task-cleanup-max-tasks: ${A2A_TASK_CLEANUP_MAX_TASKS:1000}

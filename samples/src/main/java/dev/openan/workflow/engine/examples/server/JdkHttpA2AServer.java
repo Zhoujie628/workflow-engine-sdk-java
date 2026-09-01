@@ -419,6 +419,22 @@ public class JdkHttpA2AServer implements AutoCloseable {
         handleStream(exchange, restHandler, readBody(exchange));
         return;
       }
+      if ("GET".equalsIgnoreCase(method) && "/tasks".equals(path)) {
+        Map<String, String> query = queryParams(exchange);
+        var resp =
+            restHandler.listTasks(
+                buildCallContext(exchange),
+                "",
+                query.get("contextId"),
+                query.get("status"),
+                integerParam(query, "pageSize"),
+                query.get("pageToken"),
+                integerParam(query, "historyLength"),
+                query.get("statusTimestampAfter"),
+                booleanParam(query, "includeArtifacts"));
+        sendJson(exchange, resp.getStatusCode(), resp.getBody());
+        return;
+      }
       // Task routes (?? A2A: ??/??/??)
       String taskId = taskIdFromPath(path, null);
       if ("GET".equalsIgnoreCase(method) && taskId != null) {
@@ -447,6 +463,34 @@ public class JdkHttpA2AServer implements AutoCloseable {
     } finally {
       exchange.close();
     }
+  }
+
+  private static Map<String, String> queryParams(HttpExchange exchange) {
+    String rawQuery = exchange.getRequestURI().getRawQuery();
+    if (rawQuery == null || rawQuery.isBlank()) return Map.of();
+    Map<String, String> values = new LinkedHashMap<>();
+    for (String pair : rawQuery.split("&")) {
+      String[] fields = pair.split("=", 2);
+      String key = URLDecoder.decode(fields[0], StandardCharsets.UTF_8);
+      String value =
+          fields.length == 2 ? URLDecoder.decode(fields[1], StandardCharsets.UTF_8) : "";
+      values.put(key, value);
+    }
+    return values;
+  }
+
+  private static Integer integerParam(Map<String, String> query, String name) {
+    String value = query.get(name);
+    return value == null || value.isBlank() ? null : Integer.valueOf(value);
+  }
+
+  private static Boolean booleanParam(Map<String, String> query, String name) {
+    String value = query.get(name);
+    if (value == null || value.isBlank()) return null;
+    if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+      throw new IllegalArgumentException(name + " must be true or false");
+    }
+    return Boolean.valueOf(value);
   }
 
   @SuppressWarnings("unchecked")

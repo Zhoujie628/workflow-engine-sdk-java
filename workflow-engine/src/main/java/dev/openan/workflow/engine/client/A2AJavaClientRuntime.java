@@ -23,7 +23,9 @@ import dev.openan.workflow.engine.model.SendMessageResult;
 import java.util.function.Consumer;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.Task;
 
@@ -61,6 +63,12 @@ public interface A2AJavaClientRuntime {
   /** Get a task by ID (A2A GET tasks/{id}). */
   default Task getTask(AgentCard agentCard, String taskId, ClientCallContext callContext) {
     throw new UnsupportedOperationException("getTask not supported by this runtime");
+  }
+
+  /** List tasks visible to the authenticated caller (A2A GET tasks). */
+  default ListTasksResult listTasks(
+      AgentCard agentCard, ListTasksParams params, ClientCallContext callContext) {
+    throw new UnsupportedOperationException("listTasks not supported by this runtime");
   }
 
   /** Cancel a task by ID (A2A POST tasks/{id}:cancel). */

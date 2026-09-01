@@ -22,7 +22,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.junit.jupiter.api.Test;
 
@@ -223,6 +225,35 @@ class A2ATransportHeaderTest {
   }
 
   @Test
+  void listTasksUsesTheSameAuthenticatedTransportBoundary() throws Exception {
+    AtomicReference<Map<String, String>> capturedHeaders = new AtomicReference<>();
+    A2AJavaClientRuntime runtime =
+        new CapturingRuntime(capturedHeaders) {
+          @Override
+          public ListTasksResult listTasks(
+              AgentCard agentCard, ListTasksParams params, ClientCallContext callContext) {
+            capturedHeaders.set(Map.copyOf(callContext.getHeaders()));
+            return new ListTasksResult(List.of());
+          }
+        };
+    AgentCard card = securedAgentCard();
+    WorkflowEngineClientConfig config =
+        WorkflowEngineClientConfig.builder()
+            .authProvider(
+                (agentName, ignored, headers) ->
+                    headers.put("Authorization", "Bearer cleanup-token"))
+            .build();
+
+    try (A2ATransport transport = new A2ATransport(List.of(card), runtime, config)) {
+      new DefaultWorkflowEngineClient(transport)
+          .listTasks(card.name(), ListTasksParams.builder().pageSize(10).build())
+          .join();
+    }
+
+    assertEquals("Bearer cleanup-token", capturedHeaders.get().get("Authorization"));
+  }
+
+  @Test
   void authenticationHeaderConflictsAreCaseInsensitive() {
     Map<String, String> headers = new HashMap<>();
     headers.put("authorization", "Bearer provider-token");
@@ -335,8 +366,12 @@ class A2ATransportHeaderTest {
     }
   }
 
-  private record CapturingRuntime(AtomicReference<Map<String, String>> capturedHeaders)
-      implements A2AJavaClientRuntime {
+  private static class CapturingRuntime implements A2AJavaClientRuntime {
+    private final AtomicReference<Map<String, String>> capturedHeaders;
+
+    private CapturingRuntime(AtomicReference<Map<String, String>> capturedHeaders) {
+      this.capturedHeaders = capturedHeaders;
+    }
 
     @Override
     public Iterable<ClientEvent> sendMessage(

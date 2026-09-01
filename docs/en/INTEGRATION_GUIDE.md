@@ -535,6 +535,20 @@ The engine consumes AgentCards and never starts dispatched-agent servers. The ho
 endpoint reachability checks, and any development fixtures. When using externally managed dispatched agents, do not
 start local fixtures on the same endpoints. Keep production AgentCards and credentials outside tracked sample resources.
 
+### 13.3 Demo preflight task cleanup
+
+The demo queries each dispatched agent for `SUBMITTED`, `WORKING`, `INPUT_REQUIRED` and `AUTH_REQUIRED` tasks before
+opening extension channels or starting a workflow, then cancels every visible result through the standard A2A task API.
+It follows `nextPageToken`, de-duplicates tasks that change state during the scan, and accepts the race where a task
+becomes terminal before cancellation. Query and cancellation use a dedicated short-lived authenticated transport; they
+never reuse workflow, authorization or notification lifecycles.
+
+Cleanup is enabled and fail-fast by default so stale tasks cannot silently lead to a capacity error. Configure it with
+`A2A_TASK_CLEANUP_ENABLED`, `A2A_TASK_CLEANUP_FAIL_FAST`, `A2A_TASK_CLEANUP_PAGE_SIZE` (1–100), and
+`A2A_TASK_CLEANUP_MAX_TASKS`. The list operation is authorization-scoped. If several installations share one identity,
+the demo may cancel active tasks created by another installation; use an isolated identity or disable cleanup after
+providing an equivalent ownership-aware policy.
+
 ## 14. Remote problem responses
 
 A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level

@@ -7,6 +7,7 @@ package dev.openan.workflow.engine.examples.workbench;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import jakarta.annotation.PreDestroy;
+import org.a2aproject.sdk.spec.AgentCard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -20,12 +21,15 @@ public final class SpringWorkbenchExtensionLifecycle {
       LoggerFactory.getLogger(SpringWorkbenchExtensionLifecycle.class);
 
   private final WorkbenchClientProperties properties;
+  private final String localAgentName;
   private WorkbenchExtensionLifecycle lifecycle;
   private volatile java.util.concurrent.CompletableFuture<Void> firstRecovery =
       new java.util.concurrent.CompletableFuture<>();
 
-  public SpringWorkbenchExtensionLifecycle(WorkbenchClientProperties properties) {
+  public SpringWorkbenchExtensionLifecycle(
+      WorkbenchClientProperties properties, AgentCard localAgentCard) {
     this.properties = properties;
+    this.localAgentName = localAgentCard.name();
   }
 
   @EventListener(ApplicationReadyEvent.class)
@@ -40,10 +44,20 @@ public final class SpringWorkbenchExtensionLifecycle {
             properties.isSslVerify(),
             resolveEnvPath(),
             null,
-            this::onNotification);
+            this::onNotification,
+            null,
+            properties.isTaskCleanupEnabled(),
+            properties.isTaskCleanupFailFast(),
+            properties.getTaskCleanupPageSize(),
+            properties.getTaskCleanupMaxTasks(),
+            localAgentName);
     try {
       candidate.start();
       lifecycle = candidate;
+    } catch (WorkbenchExtensionLifecycle.TaskCleanupException e) {
+      candidate.close();
+      lifecycle = null;
+      throw e;
     } catch (RuntimeException e) {
       candidate.close();
       lifecycle = null;
