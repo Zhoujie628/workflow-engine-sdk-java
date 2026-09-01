@@ -666,11 +666,10 @@ The partner only needs to provide an `AgentExecutor` implementation:
 @Component
 public class MyAgentExecutor implements AgentExecutor {
     @Override
-    public ExecuteResult execute(ExecuteRequest request) {
-        // business logic
-        return ExecuteResult.builder()
-                .addTextPart("result text")
-                .build();
+    public void execute(RequestContext context, AgentEmitter emitter) throws A2AError {
+        // business logic, then emit progress and the final result:
+        emitter.updateStatus(TaskState.WORKING, statusMessage);
+        emitter.addArtifact(List.of(new TextPart("result text")));
     }
 }
 ```

@@ -448,7 +448,7 @@ EventCallback callback = new EventCallback() {
     public void onEvent(String eventType, Map<String, Object> data) {
         switch (eventType) {
             case EventType.STEP_START -> System.out.println("步骤开始: " + data.get("step"));
-            case EventType.AGENT_STATUS_UPDATE -> System.out.println(
+            case EventType.TASK_STATUS_CHANGED -> System.out.println(
                     data.get("agent") + " 状态: " + data.get("state"));
             case EventType.NEGOTIATION_REQUEST -> System.out.println(
                     "协商请求来自 " + data.get("agent"));
@@ -462,8 +462,10 @@ ExecutePsop.builder()
     // ...
 ```
 
-常用事件类型：`STEP_START`、`STEP_COMPLETE`、`AGENT_REQUEST`、`AGENT_RESPONSE`、`NEGOTIATION_REQUEST`、`NEGOTIATION_RESOLVED`、
-`COMPLETE`、`ERROR`。
+常用事件类型：`START`、`STEP_START`、`TASK_REQUEST`、`TASK_RESPONSE`、
+`TASK_STATUS_CHANGED`、`STEP_COMPLETE`、`NEGOTIATION_REQUEST`、
+`NEGOTIATION_RESOLVED`、`NEGOTIATION_FAILED`、`ROUTE_DECISION`、
+`WORKFLOW_COMPLETE`、`COMPLETE`、`ERROR`、`CLOSE`。
 
 ## 11. 从编排中心加载工作流
 
