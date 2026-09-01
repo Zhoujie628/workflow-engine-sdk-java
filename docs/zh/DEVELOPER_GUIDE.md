@@ -14,8 +14,7 @@
 </dependency>
 ```
 
-引擎会传递性引入 A2A 协议 SDK（`a2a-java-sdk-client`，含 REST、JSON-RPC、gRPC 传输） 和最小 A2A-T 核心（`a2a-t-core`
-）。生成内容的宿主显式依赖 a2a-t-client，OMC 接收端另引入 a2a-t-server。
+引擎会传递性引入 A2A 协议 SDK（`a2a-java-sdk-client`，含 REST、JSON-RPC、gRPC 传输） 和最小 A2A-T 核心（`a2a-t-core`）。生成 A2A-T 内容的宿主智能体显式依赖 a2a-t-client，校验接收内容的被调度智能体服务另引入 a2a-t-server。
 
 ## 2. 核心概念
 
@@ -61,7 +60,7 @@ ExecutionResult result = ExecutePsop.builder()
         .psop(workflow)
         .agentCards(agentCards)
         .controlPoint(new MyControlPoint())
-        .runtimeIntent("诊断SPN故障")
+        .runtimeIntent("分析服务异常")
         .lang("zh")
         .sslVerify(false)
         .credentialsConfigPath("agent_credentials.json")
@@ -116,7 +115,7 @@ try (var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
             new MyControlPoint(),
             client,
             new EventCallback(),
-            "诊断故障",
+            "分析请求",
             "zh"
     );
     ExecutionResult result = executor.run().join();
@@ -134,13 +133,13 @@ nextRound 或返回新 Propose。
 Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
-COMPLETED 确认，也不能判为诊断成功。
+COMPLETED 确认，也不能判为任务成功。
 
 ### 6.2 工作流模型字段
 
 | 字段                  | 位置                  | 含义                                                                                                                                                        |
 |-----------------------|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess`（默认）：所有子任务必须成功；`AnySuccess`：任一成功即可；`SelfLoop`：工作流智能体通过 `onSelfTask` 本地处理（不向命名智能体发送 A2A-T 消息）。 |
+| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess`（默认）：所有子任务必须成功；`AnySuccess`：任一成功即可；`SelfLoop`：宿主智能体通过 `onSelfTask` 本地处理（不向命名智能体发送 A2A-T 消息）。 |
 | `steps[].subtasks[]`  | `Task`                | 每个含 `agent`、`skill`、`description`。每个子任务触发一次 `onTask`（或 SelfLoop 的 `onSelfTask`）调用。                                                    |
 | `steps[].next[]`      | `List<JumpCondition>` | 分支目标。`step` = 下一步名称；`condition` = 规则文本。                                                                                                     |
 | `steps[].layer`       | `WorkflowStep`        | 编排层级提示；实际就绪条件由 DAG 前驱关系决定。                                                                                                             |
@@ -167,7 +166,7 @@ AgentCard card = mapper.readValue(json, AgentCard.class);
 
 ```json
 {
-  "SPN Domain Agent": {
+  "Dispatched Agent": {
     "bearerAuth": {
       "login_url": "https://127.0.0.1:8080/auth/login",
       "method": "POST",
@@ -225,9 +224,8 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 
 ## 9. A2A-T 环境（.env）
 
-引擎不读取 A2A-T .env，也不创建 LLM client。业务回调需要 A2A-T 时， 宿主用自己的环境文件初始化 A2ATClient/A2ATServer，配置
-provider/model/key/base URL 和 A2AT_LANGUAGE。 样例的 a2atEnvPath 是宿主／Demo 配置，不是引擎 builder 参数。 OMC 凭据解密不与
-LLM 配置耦合：内置凭据模式通过 WorkflowEngineClientConfig.builder ().credentialEncryptionKey (key) 显式提供密钥， 再将配置好的
+引擎不读取 A2A-T .env，也不创建 LLM client。宿主智能体的业务回调需要 A2A-T 时，由宿主使用自有环境文件初始化 A2ATClient/A2ATServer，配置 provider/model/key/base URL 和 A2AT_LANGUAGE。样例中的 a2atEnvPath 不是引擎 builder 参数。被调度智能体凭据解密不与
+LLM 配置耦合：内置凭据模式通过 WorkflowEngineClientConfig.builder().credentialEncryptionKey (key) 显式提供密钥， 再将配置好的
 engineClient 传给 ExecutePsop。自定义 AuthProvider 自行管理 token 和配置。 测试使用当前 SDK SPI 的离线
 provider，不覆盖模板，也不是生产失败兜底。
 
@@ -279,11 +277,10 @@ public Flux<String> execute(@PathVariable String psopId) {
 ### 协议日志 pretty 展示
 
 协议日志默认以 pretty 形式展示：逐行打印头字段，缩进 JSON 正文。SSE 保留 id/event 等事件信息， JSON 在
-`=== SSE data (JSON display; not wire text) ===` 与 `=== End SSE data ===` 之间单独展示， 不再为展开后的每行 JSON 添加
+`=== SSE data(JSON display; not wire text) ===` 与 `=== End SSE data ===` 之间单独展示， 不再为展开后的每行 JSON 添加
 `data:` 前缀。多个事件各自保留边界。
 `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false`（环境变量或同名 JVM 属性）可保留脱敏后的原始正文展示。 pretty 只影响显示（JSON 缩进及
 SSE 数据区标记），不改实际发送字节、metadata、数值或扩展头； 原始观测正文仍保留，SSE pretty 展示不是可直接重放的抓包。 JSON
-字符串中的 `\\n` 保留转义，避免把业务字符串误写成非法 JSON；非 JSON／不完整正文保持原样。 日志仍执行脱敏和容量限制。Demo 启动记录
-`NEGOTIATION_DEMO enabled=..., city=...`； 本地默认 City1 协商、City2 直接诊断，`-Da2at.samples.negotiation=false` 关闭缺参演示。
-协商激活位于 `A2A-Extensions: .../Negotiation-T/v1`，不存在专用的 Negotiation-T HTTP 头； 正文检查对应 URI 的 metadata 和
+字符串中的 `\\n` 保留转义，避免把业务字符串误写成非法 JSON；非 JSON／不完整正文保持原样。日志仍执行脱敏和容量限制。验证协商流量时，
+检查 `A2A-Extensions: .../Negotiation-T/v1`；不存在专用的 Negotiation-T HTTP 头。正文检查对应 URI 的 metadata 和
 `negotiationContext`，不要只检索大写 `NEGOTIATION-T`。

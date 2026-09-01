@@ -10,6 +10,7 @@
 | `dev.openan.workflow.engine.model`    | Data models (Workflow, Task, results)           |
 | `dev.openan.workflow.engine.registry` | PSOP loading and AgentCard registry             |
 | `dev.openan.workflow.engine.runner`   | Entry point for workflow execution              |
+| `dev.openan.workflow.engine.spring`   | Spring Boot server auto-configuration (starter) |
 
 ---
 
@@ -24,7 +25,7 @@ Entry point for executing a PSOP workflow. Uses the Builder pattern.
 | Method                                   | Type     | Default     | Description                                  |
 |------------------------------------------|----------|-------------|----------------------------------------------|
 | `psop(Workflow)`                         | required | -           | PSOP workflow definition                     |
-| `agentCards(List<AgentCard>)`            | required | `List.of()` | Agent cards for all agents in the workflow   |
+| `agentCards(List<AgentCard>)`            | optional | `List.of()` | Cards for dispatched agents; required for remote steps unless a configured `engineClient` supplies transport |
 | `controlPoint(ControlPoint)`             | required | -           | User decision implementation                 |
 | `engineClient(WorkflowEngineClient)`     | optional | null        | Pre-configured client (null = auto-create)   |
 | `runtimeIntent(String)`                  | optional | `""`        | Natural-language intent for context assembly |
@@ -42,7 +43,7 @@ ExecutionResult result = ExecutePsop.builder()
         .psop(workflow)
         .agentCards(cards)
         .controlPoint(cp)
-        .runtimeIntent("diagnose fault")
+        .runtimeIntent("analyze request")
         .sslVerify(false)
         .execute()
         .get(10, TimeUnit.MINUTES);
@@ -84,7 +85,7 @@ Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
-diagnosis success, even if the remote acknowledges it with COMPLETED.
+task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ### ExtensionSender
 
@@ -96,8 +97,8 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 
 Authorization and notification accept host-generated final content. Use separate transport/runtime/context instances;
 their outcomes do not gate the workflow. openNotification registers a handle before I/O, and passes it plus
-ReceivedMessage directly to the listener. acknowledgement () is the real ACK; timeout fails. close () requests closure;
-completion () observes actual stream termination.
+ReceivedMessage directly to the listener. acknowledgement() is the real ACK; timeout fails. close() requests closure;
+completion() observes actual stream termination.
 
 ### WorkflowEngineClientConfig
 
@@ -153,9 +154,9 @@ the same header name throw `SecurityException` instead of silently overwriting e
 
 ### A2atMessages
 
-Submit custom extensions via MessageContent (parts, metadata, extensions); no engine content-handler registration.
-A2atMessages.from (MetadataContent, List<Part<?>>) preserves SDK metadata and activates the corresponding URI; contextOf
-(ReceivedMessage) or contextOf (Map<String,Object>) reads/checks canonical negotiation context. This adapter uses
+Submit custom extensions via MessageContent(parts, metadata, extensions); no engine content-handler registration.
+A2atMessages.from(MetadataContent, List<Part<?>>) preserves SDK metadata and activates the corresponding URI; contextOf
+(ReceivedMessage) or contextOf(Map<String,Object>) reads/checks canonical negotiation context. This adapter uses
 a2a-t-core only, never content generation or semantic validation.
 
 ### A2AJavaClientRuntime
@@ -231,6 +232,26 @@ custom normalization:
 Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 ```
 
+### Supporting public client types
+
+The following public types support advanced integrations. Prefer the higher-level interfaces above unless a custom
+runtime, diagnostic adapter, or explicit lifecycle requires them.
+
+| Type                          | Purpose |
+|-------------------------------|---------|
+| `A2ATExtension`               | Canonical extension names and URIs |
+| `A2ATransport`                | Low-level transport, authentication, response assembly, and subscription lifecycle |
+| `DefaultWorkflowEngineClient` | Default `WorkflowEngineClient` implementation |
+| `DefaultExtensionSender`      | Default `ExtensionSender` implementation backed by an `A2ATransport` |
+| `DefaultA2AJavaClientRuntime`  | Default A2A Java SDK runtime for HTTP/JSON-RPC/gRPC |
+| `CredentialCrypto`            | AES-GCM credential encryption utility and command-line entry point |
+| `EnvFileLoader`               | Explicit `.env` parser for host-owned configuration |
+| `SslContextFactory`           | TLS context construction used by transport and discovery helpers |
+| `ProtocolResponses`           | A2A event/result assembly helpers |
+| `ClientEventMapper`           | Stable event projection for callbacks and diagnostics |
+| `WireLog`                     | Correlation context and protocol-observation facade |
+| `RemoteProblemException`      | Structured remote problem response (`status`, `title`, `detail`, `type`, `timestamp`) |
+
 ---
 
 ## dev.openan.workflow.engine.control
@@ -249,6 +270,10 @@ interface ControlPoint {
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
 onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
 Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+
+`DefaultControlPoint` preserves those fail-fast defaults and can delegate `onNegotiation` to an injected
+`NegotiationStrategy`. Implement `NegotiationStrategy.resolve(NegotiationRequest)` when negotiation policy is the only
+custom decision; implement or build a full `ControlPoint` when task, self-task, or routing behavior also changes.
 See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ### EventCallback
@@ -373,12 +398,6 @@ WorkflowExecutor executor = new WorkflowExecutor(
 ExecutionResult result = executor.run().join();
 ```
 
-### ContextBuilder
-
-Package-private helper that selects upstream step results and creates a `WorkflowInput` according to `contextFrom`
-(omitted = direct predecessors, `[]` = no upstream input, `"*"` = all ancestors, explicit names = selective
-inheritance). It does not render prompts and is not part of the public API surface.
-
 ---
 
 ## dev.openan.workflow.engine.model
@@ -411,7 +430,7 @@ Static factory: `Workflow.fromMap(Map<String, Object>)` parses from orchestratio
 |---------------|------------------------------------------------------------------------------------------------------------------------|
 | `ALL_SUCCESS` | All subtasks must succeed                                                                                              |
 | `ANY_SUCCESS` | Any subtask success is sufficient                                                                                      |
-| `SELF_LOOP`   | The workflow agent handles the task locally via `onSelfTask`; no A2A-T message is sent. Success follows `ALL_SUCCESS`. |
+| `SELF_LOOP`   | The host agent handles the task locally via `onSelfTask`; no A2A-T message is sent. Success follows `ALL_SUCCESS`. |
 
 ### TaskStatus
 
@@ -441,7 +460,7 @@ Task lifecycle status, used in `TASK_STATUS_CHANGED` events for cross-SDK consis
 
 ### TaskRequest / BusinessInput
 
-TaskRequest uses getXxx () accessors:
+TaskRequest uses getXxx() accessors:
 
 | Field                        | Meaning                                                                           |
 |------------------------------|-----------------------------------------------------------------------------------|
@@ -451,8 +470,10 @@ TaskRequest uses getXxx () accessors:
 | input                        | BusinessInput: exactly one of text or arbitrary JSON-serializable data; no schema |
 | workflowInput                | WorkflowInput(runtimeIntent, upstreamResults), separate from current input        |
 
-BusinessInput.text (value) / BusinessInput.data (value) create input snapshots. WorkflowInput, UpstreamStepResult,
-ReceivedMessage and NegotiationRequest use record field () accessors.
+BusinessInput.text(value) / BusinessInput.data(value) create input snapshots. WorkflowInput, UpstreamStepResult,
+ReceivedMessage and NegotiationRequest use record field() accessors.
+`BusinessValues.snapshot`, `map`, and `list` expose the same defensive JSON snapshot behavior for host-owned values;
+nested arrays remain individual values and returned collections are unmodifiable.
 
 | contextFrom             | Upstream selection                           |
 |-------------------------|----------------------------------------------|
@@ -477,7 +498,7 @@ record MessageContent(List<Part<?>> parts, Map<String,Object> metadata, Set<Stri
 record ReceivedMessage(MessageContent message, Map<String,Object> taskMetadata, List<Artifact> artifacts) {}
 ```
 
-MessageContent.text (text), MessageContent.parts (parts), or the canonical constructor create snapshots. TextPart,
+MessageContent.text(text), MessageContent.parts(parts), or the canonical constructor create snapshots. TextPart,
 DataPart and FilePart preserve order and part metadata. File references are not fetched. MessageContent has no role,
 target, messageId, taskId, contextId or auth headers. A business metadata key named contextId does not override the A2A
 envelope.
@@ -490,7 +511,7 @@ adjacent-part concatenation or nested-array flattening. Failed task status messa
 partial artifacts are retained. Streaming append/replace is assembled per artifact; terminal snapshots do not duplicate
 earlier chunks.
 
-TaskResult.success (List<Object>) represents local output, including an empty list. TaskResult.failure (code, message)
+TaskResult.success(List<Object>) represents local output, including an empty list. TaskResult.failure(code, message)
 separates failure from output; its builder can retain valid partial outputs. TaskResult includes receivedMessages for
 remote evidence; remote convenience outputs derive from that view. A remote task succeeds only in COMPLETED, or a
 standalone A2A Message can complete the interaction. Progress and negotiation are never a successful workflow task
@@ -502,7 +523,7 @@ See [BUSINESS_CALLBACKS](BUSINESS_CALLBACKS.md).
 
 ### SendMessageResult
 
-getReceivedMessages () preserves response levels; getOutputs () is a convenience projection. getTask ()/getTaskState ()
+getReceivedMessages() preserves response levels; getOutputs() is a convenience projection. getTask()/getTaskState()
 retain actual remote state; failureCode/failureMessage describe independent local interaction failure. text and
 flattened metadata are transport diagnostics, not substitutes for the complete business response.
 
@@ -548,8 +569,9 @@ flattened metadata are transport diagnostics, not substitutes for the complete b
 | Authorization-T | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1` |
 | Notification-T  | `https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1`  |
 
-Canonical negotiation metadata is `templateUri` plus
-`negotiationContext={id,round,maxRounds,performative}`. Legacy state-machine keys are not accepted.
+Canonical negotiation metadata uses `templateUri` and `negotiationContext`. The latter carries
+`{id, round, maxRounds, performative}` and is required when the engine parses a negotiation message. The engine does
+not add private negotiation-state keys to the wire message.
 
 ---
 
@@ -565,12 +587,11 @@ Canonical negotiation metadata is `templateUri` plus
   `findIn(Throwable)` finds it through wrappers. Workflow failures use `remote.problem.<status>`,
   with details in history / TASK_RESPONSE rather than business outputs.
   Executor node events include executionId; task response events and history include the logical taskId.
-  See [integration guidance](INTEGRATION_GUIDE.md#remote-problem-responses) for propagation and logging.
+  See [integration guidance](INTEGRATION_GUIDE.md#14-remote-problem-responses) for propagation and logging.
 
 - Missing/null/exceptional/timed-out callbacks fail explicitly. Host SDK errors may be mapped to BusinessFailure with
   safe code/details.
-- Exhausted maxNegotiationExchanges or local Stop does not generate Abort. Business Send (Abort) is never diagnosis
-  success.
+- Exhausted maxNegotiationExchanges or local Stop does not generate Abort. Business Send(Abort) is never task success.
 - Remote state/errors stay separate from outputs; failed status text is evidence, while partial artifacts remain
   available.
 - Missing required credentials reject the request; the engine never silently sends unauthenticated.
@@ -645,11 +666,10 @@ The partner only needs to provide an `AgentExecutor` implementation:
 @Component
 public class MyAgentExecutor implements AgentExecutor {
     @Override
-    public ExecuteResult execute(ExecuteRequest request) {
-        // business logic
-        return ExecuteResult.builder()
-                .addTextPart("result text")
-                .build();
+    public void execute(RequestContext context, AgentEmitter emitter) throws A2AError {
+        // business logic, then emit progress and the final result:
+        emitter.updateStatus(TaskState.WORKING, statusMessage);
+        emitter.addArtifact(List.of(new TextPart("result text")));
     }
 }
 ```

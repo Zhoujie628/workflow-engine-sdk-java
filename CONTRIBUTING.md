@@ -22,7 +22,7 @@ mvn -B clean verify
 workflow-engine-sdk-java/
 |-- workflow-engine/       SDK engine module
 |   +-- src/main/java/dev/openan/workflow/engine/
-|       |-- client/       A2A transport, auth, extensions (package-private internals)
+|       |-- client/       A2A transport, authentication, extensions, runtime APIs
 |       |-- control/      User-facing: ControlPoint, EventCallback, EventType
 |       |-- core/         Internal: WorkflowExecutor, ContextBuilder (package-private)
 |       |-- model/        Data models
@@ -137,8 +137,9 @@ Every Java file must start with the Apache 2.0 license header:
 
 - Run the complete `mvn -B clean verify` reactor; sample failures block release.
 - Documentation code snippets are compiled by DocumentedCallbackExampleTest; HostQuickStartTest executes the minimal host flow.
-- Check default single-city negotiation, final serialized protocol logs, independent extension lifecycle, cancellation and secret anonymization.
+- Check required-input negotiation, final serialized protocol logs, independent extension lifecycle, cancellation and secret anonymization.
 - Verify published POM coordinates, sources/Javadoc artifacts and the absence of private configuration/reference documents.
-- Record the tested commit and Surefire reports. Offline providers and local OMC simulators are not live acceptance.
-- Live model/OMC validation requires authorized endpoints and a separate acceptance record. Never commit customer integration notes.
+- Record the tested commit and Surefire reports. Offline providers and local protocol simulators are not live acceptance.
+- Live model and dispatched-agent validation requires authorized endpoints and a separate acceptance record. Never
+  commit customer integration notes.
 - Do not publish, tag, or push as a side effect of running tests.

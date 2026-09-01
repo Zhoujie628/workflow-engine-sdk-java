@@ -37,7 +37,7 @@ ControlPoint callbacks = ControlPoint.builder()
 
 ## 2. TaskRequest 与上游窗口
 
-TaskRequest 使用 getXxx () 访问器：
+TaskRequest 使用 getXxx() 访问器：
 
 | 字段                         | 含义                                                             |
 |------------------------------|------------------------------------------------------------------|
@@ -47,8 +47,8 @@ TaskRequest 使用 getXxx () 访问器：
 | input                        | BusinessInput：文本或任意 JSON 可序列化数据，二选一，不含 schema |
 | workflowInput                | WorkflowInput(runtimeIntent, upstreamResults)，与当前输入分离    |
 
-BusinessInput.text (value) / BusinessInput.data (value) 创建输入快照。
-WorkflowInput、UpstreamStepResult、ReceivedMessage、NegotiationRequest 等 record 使用 field () 访问器。
+BusinessInput.text(value) / BusinessInput.data(value) 创建输入快照。
+WorkflowInput、UpstreamStepResult、ReceivedMessage、NegotiationRequest 等 record 使用 field() 访问器。
 
 | contextFrom   | 上游选择                         |
 |---------------|----------------------------------|
@@ -61,8 +61,8 @@ contextFrom 只选择证据，不建立执行依赖；依赖由 next 定义。 �
 引擎不把窗口附加到 instruction/parts，也不调用 LLM 映射上游；由宿主决定怎么消费或映射下游输入。
 
 窗口结构：stepName → taskResults[] → outputs[] / receivedMessages[]。 TaskExecutionResult 还保留 agentName、skill、逻辑
-taskId、taskDescription、status、 error、errorCode、errorDetails。多子任务不混合，嵌套数组仍作为一个输出项。 输出不要求来自
-LLM，也不要求符合投诉模板。
+taskId、taskDescription、status、error、errorCode、errorDetails。多子任务不混合，嵌套数组仍作为一个输出项。输出不要求来自
+LLM，也不要求符合特定领域模板。
 
 ## 3. 最终内容与完整响应
 
@@ -71,7 +71,7 @@ record MessageContent(List<Part<?>> parts, Map<String,Object> metadata, Set<Stri
 record ReceivedMessage(MessageContent message, Map<String,Object> taskMetadata, List<Artifact> artifacts) {}
 ```
 
-通过 MessageContent.text (text)、MessageContent.parts (parts) 或构造器创建快照。 TextPart、DataPart、FilePart 保留顺序及各自
+通过 MessageContent.text(text)、MessageContent.parts(parts) 或构造器创建快照。 TextPart、DataPart、FilePart 保留顺序及各自
 metadata，文件引用不会自动下载。 MessageContent 不提供 role、目标、messageId、taskId、contextId 或认证头。 业务 metadata 中即使存在
 contextId 字段，也不能覆盖真实 A2A 信封。
 
@@ -80,7 +80,7 @@ metadata 的业务结果仍可从完整视图读取。 便利 outputs 按 artifa
 artifact 时，可提取成功终态或独立 Message 的正文。 FilePart 仅在完整视图提供。不解析文本、不拼接相邻文本、不拍平嵌套业务数组。
 失败状态消息只保留作证据，不进入 outputs；已返回的有效部分 artifact 仍保留。 SSE append/replace 按 artifact 组装，最终快照不重复累加。
 
-本地 onSelfTask 返回 TaskResult.success (List<Object>)，允许空列表； TaskResult.failure (code, message) 将错误与输出分开，builder
+本地 onSelfTask 返回 TaskResult.success(List<Object>)，允许空列表； TaskResult.failure(code, message) 将错误与输出分开，builder
 可保留有效部分输出。 远端 TaskResult 的 receivedMessages 是完整证据，便利输出由它派生。 远端 Task 只有 COMPLETED 才成功，独立
 A2A Message 也可完成交互。 进度／协商提示不会因为含文本就变成工作流成功。
 
@@ -90,22 +90,19 @@ A2A Message 也可完成交互。 进度／协商提示不会因为含文本就�
 WorkflowEngineClientConfig 或 ExecutePsop 承载 LLM 配置。
 
 ```java
-// sdk、data、schema、模板选择均属于宿主。
+// sdk、data、schema、模板选择均属于宿主智能体。
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
     data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
-MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("诊断当前专线")));
+MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("处理当前任务")));
 ```
 
-自然语言入口为 `sdk.generateTaskPromptFromText(text, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri())`，随后同样调用
-A2atMessages.from。
+自然语言入口为 `sdk.generateTaskPromptFromText(text, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri())`，随后同样调用 A2atMessages.from。
 
-自然语言、结构化生成和校验等能力直接调用宿主 SDK。 A2atMessages.from 只复制生成的 metadata 并激活对应扩展，parts 保持业务提供的内容；
-不生成、不校验业务语义。模板使用 StandardTemplates，不自行猜 URI。 可运行 SPN 示例见 WorkbenchControlPoint 和
-examples.negotiation.NegotiationStrategy。 A2ATInitialization 是 samples 宿主对锁定 SDK 的 JarFile 初始化隔离，不属于引擎。
+自然语言、结构化生成和校验等能力直接调用宿主 SDK。A2atMessages.from 只复制生成的 metadata 并激活对应扩展，parts 保持业务提供的内容；不生成、不校验业务语义。应选择当前 A2A-T SDK 发布的模板 URI，不自行构造。样例初始化工具属于宿主示例，不是引擎依赖。
 
 ## 5. 协商
 
-NegotiationRequest (task, originalSubmission, received, previousExchanges, remainingWait)： task 是原始
+NegotiationRequest(task, originalSubmission, received, previousExchanges, remainingWait)： task 是原始
 TaskRequest，originalSubmission 是首次最终提交， received 是当前完整响应，previousExchanges 只含该会话的 Exchange
 (received, reply)， remainingWait 是本次交互剩余时间。引擎不规定业务 proposal 分类或 schema。
 
@@ -118,158 +115,59 @@ nextRound 或返回新 Propose。
 Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
-COMPLETED 确认，也不能判为诊断成功。
+COMPLETED 确认，也不能判为任务成功。
 
 业务可调用 validateProposePromptAndDataFilling，再选择 SDK 强类型 fromData 或自然语言生成接口。
-不得虚构缺失客户事实；样例只从本地当前地市任务输入提取实际请求的字段。 SDK 内容异常由宿主映射成 BusinessFailure (code,
+不得虚构缺失业务事实；只从当前任务的权威输入中提取实际请求的字段。SDK 内容异常由宿主映射成 BusinessFailure(code,
 safeMessage, safeDetails)； 引擎不识别 SDK 专属内容异常类，也不自动转存可能含敏感数据的原异常。
 
 ## 6. 路由、并发与失败
 
-RouteRequest (executionId, stepName, workflowInput, currentResults, candidates)。 候选为 RouteOption (nextStep,
-condition)，返回 RouteDecision.builder ().nextStep (允许目标).build ()。 无条件边自动并行推进，条件分支只接受候选中的目标。
+RouteRequest(executionId, stepName, workflowInput, currentResults, candidates)。 候选为 RouteOption(nextStep,
+condition)，返回 RouteDecision.builder().nextStep(允许目标).build()。 无条件边自动并行推进，条件分支只接受候选中的目标。
 
-回调可能并发，不要共享可变“当前任务／城市”字段。 每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
+回调可能并发，不要共享可变的“当前任务”状态。每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
 sendTimeoutSeconds=600； 路由单独限制回调等待时间，dispatch／协商另有总等待截止时间。取消／超时后晚到结果不发送，
 但不等于自动取消宿主正在运行的 LLM 或业务操作，宿主负责清理其资源。 同步回调入口应迅速返回，阻塞任务应交给异步执行器。
 回调缺失、返回 null 或异常均明确失败；不确定发送失败不自动重发。
 
 ## 7. 独立授权与订阅
 
-ExtensionSender.sendAuthorization (agentName, finalContent) 返回 CompletableFuture<SendMessageResult>。
-ExtensionSender.openNotification (agentName, finalContent, (handle, received) -> ...) 立即返回 handle。
-传入宿主生成的最终授权／订阅内容并激活对应扩展。 I/O 前注册 handle，早到事件可直接 handle.close ()，不用捕获尚未赋值的外部变量。
-acknowledgement () 代表真实 ACK 或失败；超时不伪造成功。 close () 请求关闭，completion () 在流实际退出后完成。
-订阅保持到抢通结果、显式取消或宿主退出，不随单次工作流结束自动关闭。
+ExtensionSender.sendAuthorization(agentName, finalContent) 返回 CompletableFuture<SendMessageResult>。
+ExtensionSender.openNotification(agentName, finalContent, (handle, received) -> ...) 立即返回 handle。
+传入宿主生成的最终授权／订阅内容并激活对应扩展。 I/O 前注册 handle，早到事件可直接 handle.close()，不用捕获尚未赋值的外部变量。
+acknowledgement() 代表真实 ACK 或失败；超时不伪造成功。 close() 请求关闭，completion() 在流实际退出后完成。
+订阅保持到宿主定义的终态事件、显式取消或宿主退出，不随单次工作流结束自动关闭。
 
-任务、授权、通知使用独立 transport/runtime/context。 授权和订阅成功与否均不作为工作流执行前提； 有效白名单只决定 OMC
-是否允许额外的自动抢通操作。
+任务、授权、通知使用独立 transport/runtime/context。授权和订阅成功与否均不作为工作流执行前提；授权策略只控制与该策略关联的宿主自定义业务操作。
 
 ## 8. 验证和日志
 
-### 查看真实协商与协议日志
+执行 `mvn -B clean verify`。Reactor 覆盖回调契约、完整响应组装、协商关联、独立扩展生命周期、失败传播、取消和协议日志脱敏。测试使用受控测试数据，不覆盖 SDK schema 或模板；这些是发布回归证据，不等于生产端点或真实模型语义认证。日志与认证配置见 [集成指南](INTEGRATION_GUIDE.md)。
 
-直接运行本地 SpringSpnDemo，默认 City1 缺参并协商、City2 参数完整直接诊断，无需添加 VM 参数。 Negotiation-T 扩展激活本身不强制协商；这是本地
-Demo 专门设置的场景，不是引擎默认行为。 要关闭本地缺参演示、让两城市都直接诊断，在 IDEA **VM options** 增加：
+## 9. 业务侧 A2A-T 1.1.0 调用参考
 
-```text
--Da2at.samples.negotiation=false
-```
+引擎只调度最终 A2A 消息；生成、校验、填充和业务判断属于宿主智能体与被调度智能体的业务代码。每个角色只调用自己所有消息需要的 API。
 
-默认仅移除 City1 的 Task-T 任务对象；启用状态下增加 `-Da2at.samples.negotiation.city=city2` 或 `both`
-可演示 City2 或两城市同时缺参。宿主仍保留各城市的正确输入，原投诉上下文不变。预期链路是 `DEMO_NEGOTIATION` →
-`INPUT_REQUIRED / PROPOSE`
-→ 集成方 onNegotiation → `ACCEPT` → 两城市完成 → 一次汇总。 非内嵌 OMC 模式默认不注入缺参，显式设置
-`-Da2at.samples.negotiation=true` 也会被拒绝。 Demo 将开关传入当前 Spring 应用实例，不设置或修改 JVM 全局开关，不影响其他宿主。
-协议日志在控制台及以运行目录为基准的 `logs/spn-demo.log`。 本分支使用直连模式。
+| 业务位置                          | 生成／接收校验入口                                                                                      | 对结果的业务使用 |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------|----------------------|
+| 宿主智能体入站任务            | validateTaskPromptAndDataFilling                                                                            | 使用已校验 `filled.data` 选择工作流并构建业务输入 |
+| onTask → 被调度智能体         | generateTaskPromptFromDataWithSchema 或 generateTaskPromptFromText → validateTaskPromptAndDataFilling | 从已校验数据构建输入，不直接使用扩展原文 |
+| 被调度智能体 → 宿主协商     | generateNegotiationProposePromptFromData 或 FromText → validateProposePromptAndDataFilling            | 仅从当前任务权威数据回答实际请求项 |
+| 宿主 Accept → 被调度智能体  | generateNegotiationAcceptPromptFromData 或 FromText → validateAcceptPromptAndDataFilling              | 合并已校验的请求字段，再执行领域校验 |
+| 宿主 Reject / Abort → 被调度智能体 | 阶段对应生成入口 → 阶段对应校验入口                                                            | 校验原因并终止当前任务路径 |
+| 独立授权                          | generateAuthPromptFromDataWithSchema → validateAuthPromptAndDataFilling                                    | 从 `filled.data` 构建并应用 AuthorizationPolicy |
+| 独立订阅                          | generateNotificationPromptFromDataWithSchema → validateNotificationPromptAndDataFilling                    | 构建 NotificationPolicy 并保持独立连接 |
 
-离线重复验证：
-
-```powershell
-mvn -q -pl samples -am "-Dtest=SpringSpnDemoE2ETest" "-Dsurefire.failIfNoSpecifiedTests=false" test
-```
-
-每个测试类覆盖无 VM 参数的默认单城市协商、显式关闭、显式开启及两城市同时缺参。测试使用离线 LLM provider，但实际运行当前 SDK
-的 模板、校验和 HTTP/SSE；不是现网 OMC、平台或真实模型语义的验证。
-
-启动测试使用公开模拟凭据，不覆盖 SDK 模板或 schema。 运行时固定测试端口需空闲；本地工作流完成后最多观察首次抢通通知十秒，
-没有抢通通知不改变工作流结果。认证和日志配置详见 [集成指南](INTEGRATION_GUIDE.md)。
-
-## 9. 示例业务侧的 A2A-T 1.1.0 调用参考
-
-引擎只调度最终 A2A 消息；下列生成、校验、填充和业务判断都在 samples 中完成。 不是每个智能体都调用全部 API，也不是同一消息依次调用
-FromText 和 FromData。
-
-| 业务位置                        | 生成／校验入口                                                                                                                                              | 对结果的业务使用                                                                   |
-|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-| WAIMO → 集成方                  | SpringSpnDemo：generateTaskPromptFromDataWithSchema；WorkbenchTaskInputParser：validateTaskPromptAndDataFilling                                             | 将 filled.data 作为投诉参数，按任务检索工作流                                      |
-| 集成方 onTask → 两地市 OMC      | WorkbenchControlPoint：generateTaskPromptFromDataWithSchema；NegotiationBaseAgentExecutor：validateTaskPromptAndDataFilling                                 | 用 filled.data 构造 SpnTaskInput，交给 executeBusiness；不把原始协议提示词传给诊断 |
-| OMC 缺参 → 集成方 onNegotiation | 两地市共用 generateNegotiationProposePromptFromData；NegotiationStrategy：validateProposePromptAndDataFilling                                               | 从 items 读取实际请求字段，仅从当前城市原始业务输入补充，不使用另一城市的数据      |
-| 集成方补参 → OMC                | generateNegotiationAcceptPromptFromData；validateAcceptPromptAndDataFilling                                                                                 | 合并所请求字段的 filled.data，复核端口、投诉分类及 OSS 流水号后执行诊断            |
-| 集成方拒绝／终止 → OMC          | generateNegotiationRejectPromptFromData／generateNegotiationAbortPromptFromData；对应 validateRejectPromptAndDataFilling／validateAbortPromptAndDataFilling | 校验原因后结束当前诊断任务，不进入诊断业务                                         |
-| 独立白名单授权                  | ExtensionPrePositioner：generateAuthPromptFromDataWithSchema；PrePositionedExtensionHandler：validateAuthPromptAndDataFilling                               | 用 filled.data 构建并应用 AuthorizationPolicy                                      |
-| 独立订阅                        | ExtensionPrePositioner：generateNotificationPromptFromDataWithSchema；PrePositionedExtensionHandler：validateNotificationPromptAndDataFilling               | 用 filled.data 构建 NotificationPolicy，保持独立通知连接                           |
-
-### 输入选择与消息封装
-
-有结构化业务参数时使用上述 FromDataWithSchema；只有自然语言时，业务可改用 generateTaskPromptFromText (text, templateUri)
-、generateAuthPromptFromText (text, templateUri)、 generateNotificationPromptFromText (text, templateUri)。协商同时提供各阶段
+有结构化业务参数时使用上述 FromDataWithSchema；只有自然语言时，业务可改用 generateTaskPromptFromText(text, templateUri)
+、generateAuthPromptFromText(text, templateUri)、 generateNotificationPromptFromText(text, templateUri)。协商同时提供各阶段
 FromText 和强类型 FromData。 这些是输入方式的选择，不是每条消息必须全部执行的流水线。FromDataWithSchema 也可能调用 SDK 配置的
 LLM， 不能等同于完全不调用模型。
 
-无论选择哪一种生成入口，都保留返回 MetadataContent 的完整 metadata，再通过 A2atMessages.from (generated, List.of (new
-TextPart ("业务摘要"))) 转成引擎 MessageContent。 parts 必须有合法内容；摘要不是正式扩展正文，不能拿摘要替代校验输入。不要只复制
+无论选择哪一种生成入口，都保留返回 MetadataContent 的完整 metadata，再通过 A2atMessages.from(generated, List.of (new
+TextPart("业务摘要"))) 转成引擎 MessageContent。 parts 必须有合法内容；摘要不是正式扩展正文，不能拿摘要替代校验输入。不要只复制
 promptText 而丢失 templateUri、negotiationContext 或扩展 URI。
-
-### 信息协商的数据与失败边界
-
-本场景按 SDK 投诉模板的业务字段协商：任务对象中包含本地市接入端口，任务上下文中包含投诉分类、
-OSS侧事件流水号及已有的时间和详情。已验证任务只有部分字段不足时仅请求这些字段； SDK 拒绝整个原始输入时不信任其中的局部内容，重新请求完整业务字段。当前请求项采用
-AND，所有请求字段必需。
-
-接收 Propose 的参数 schema 中，items 是非空字段名数组，relationship 是可空逻辑关系字符串； 其 description 说明“实际请求字段”和
-AND／OR 含义。Accept 校验 schema 则按本轮请求动态生成， 字段为非空字符串并列入 required。SpnTaskInput 的端口、流水号等规则仅是
-SPN 示例业务规则， 不是通用执行引擎的输出格式约束；正式 OMC 应接入自身资源清单与领域校验。
-
 回复必须匹配 A2A taskId/contextId 及协商 id/round/maxRounds，正式正文从 Negotiation-T metadata 读取。
-一次有效回复只消费一次。错误正文、漏填、外地市端口或跨协商回复不能进入诊断。 Reject 表示业务拒绝提供；Abort
-表示无法核实信息或终止协商，均不是诊断成功。
+一次有效回复只消费一次。正文错误、字段不完整、任务不匹配或跨协商的回复不得执行业务。无法核实权威信息时生成 SDK Abort，不编造数据；宿主披露策略拒绝时生成 SDK Reject。授权策略是独立关注点。
 
-默认 NegotiationStrategy 允许提供已掌握的当前任务字段；无法核实时生成 Abort，不编造字段。 宿主可通过 mayProvideField (task,
-fieldName) 注入披露策略，拒绝时由示例生成 Reject：
-
-```java
-var strategy = new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(envPath) {
-    @Override
-    protected boolean mayProvideField(
-            dev.openan.workflow.engine.model.TaskRequest task, String fieldName) {
-        return allowedFields.contains(fieldName); // 宿主已计算的业务允许字段集合
-    }
-};
-var callbacks = new dev.openan.workflow.engine.examples.workbench.WorkbenchControlPoint(envPath, strategy);
-```
-
-这里的字段披露策略与 Authorization-T 的“自动抢通白名单”是两件事。
-
-### 结果和通知不要错用请求生成接口
-
-诊断结果、授权回执、业务抢通事件由 OMC 业务生成。1.1.0 的上述授权／通知入口面向授权操作和订阅请求， 不能把抢通事件再次交给订阅请求生成／校验接口。示例
-RecoveryNotification 按 SPN 业务事件格式检查正式 Notification-T artifact metadata：包含任务流水号、OSS流水号、端口、方案及完成结果等必要字段且状态为已结束，
-才确认收到最终结果并关闭该订阅；成功和失败都是“执行已结束”，不把失败结果冒充成功。 单独 artifact 名称、parts 摘要、订阅
-ACK、未启动方案均不能触发关闭。不完整事件仍交给通知回调观察。
-
-City1 上报的端口和 OSS 流水号来自本次已校验 SpnTaskInput，不再固定写成样例常量。 City2
-没有故障可以不产生抢通结果；授权／订阅失败和是否收到抢通通知，均不决定工作流诊断是否启动或成功。
-
-### 可重复验证范围
-
-EmbeddedA2AServerTest 覆盖正常填充数据、Accept 填充数据保留、错误正文、漏填、跨协商回复、 Reject 和
-Abort；NegotiationStrategyTest 覆盖城市输入隔离、不可核实的 Abort 和业务拒绝的 Reject； RecoveryNotificationTest
-覆盖完整成功／失败结果、仅摘要、错误命名和不完整事件。 SpringSpnDemoE2ETest 覆盖完整输入、City1 缺参、两城市同时缺参。 完整业务抢通链路由 SpnCrossCityE2ETest 验证。
-
-这些测试用真实 SDK 1.1.0 的生成和校验管线、真实 A2A HTTP/SSE。 离线 LLM provider
-仅解析明确的样例输入，拒绝错误摘要／缺参，不代表真实模型的语义质量或现网联调已通过。
-
-### 授权策略格式与协商字段（SDK 1.1.0）
-
-新增授权使用 SDK 当前的编号、标签、换行格式，不能传四个无标签的裸值：
-
-```text
-1. 业务场景是业务投诉诊断，处置类型是业务抢通，操作名称是隧道调优，有效期是2026-06-01~2030-06-18
-2. 业务场景是视频保障，处置类型是故障切换，操作名称是频谱重耕，有效期是永久生效
-```
-
-OMC 示例仅从 SDK validate-and-fill 的数据构造白名单，逐字段提取标签后的值， 按业务场景、处置类型、操作名称精确匹配，有效期包含起止日。全部规则解析成功才替换原策略；
-任意一条非法均保持原策略，不降级成默认授权。
-
-示例只保存一组内存白名单（固定示例 ID），不代表生产策略库： 删除请求使用 `1. 策略标识是<当前策略UUID>`；仅支持单个精确
-ID，不支持批量或条件删除。 查询省略策略列表或传空字符串，返回全部当前规则；不支持带条件查询，不会静默忽略条件。
-修改、条件查询、批量／条件删除需由集成方的策略库实现。该业务限制不代表 A2A-T SDK 不支持这些操作。
-
-信息协商仍先调用 SDK `validateProposePromptAndDataFilling`。当前中文信息协商模板由 typed API
-生成，示例从已通过语义校验的“所需信息项”中保留编号后的原始名称（如“任务对象”）用于回复，
-不把模型提取出的说明文字（如“本地市实际接入端口名称”）当成新字段，也不模糊映射到其他数据。 未知字段或本地数据缺失时
-Abort，业务披露策略拒绝时 Reject；不能用其他地市的信息补齐。 这些处理均在 samples 的业务层，不进入通用引擎。
-
-Notification-T 的失败原因字段使用完整名称“业务抢通方案执行失败原因”，执行失败时必填。 SDK 校验拒绝时记录错误码、slot
-错误和已提取参数的键名，方便定位；不绕过校验。 授权、订阅的成功与否仍不阻断独立工作流。
+Authorization-T 和 Notification-T 的生成接口用于生成请求，不用于包装任意业务结果。授权回执与通知事件是被调度智能体的业务输出，必须遵循选定模板和应用契约。订阅只在宿主定义的终态事件、显式取消或关闭时结束；ACK 本身不是终态业务事件。SDK 拒绝应保留安全的错误码、slot 错误与已提取参数键。授权或订阅失败仍不阻断工作流执行。
