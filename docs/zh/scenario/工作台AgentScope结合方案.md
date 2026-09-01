@@ -1,7 +1,7 @@
 ﻿# A2A-T 执行引擎 SDK 与 AgentScope 结合方案
 
 本文为宿主接入推理服务的设计指引，不是已实现的 AgentScope 模块；仓库没有绑定 AgentScope 版本或提供可部署的 Python 服务。
-工作台需要实现桥接、模型配置、工具权限、超时、取消与持久化。接口基线见 [业务回调契约](BUSINESS_CALLBACKS.md)。
+工作台需要实现桥接、模型配置、工具权限、超时、取消与持久化。接口基线见 [业务回调契约](../BUSINESS_CALLBACKS.md)。
 
 ## 1. 集成边界
 

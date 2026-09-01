@@ -59,7 +59,7 @@ schema-aware `fromData` 跳过场景识别，但 slot 映射仍可使用 SDK 配
 
 工作台 onTask 用宿主 A2ATClient 生成最终 MessageContent，引擎只封装发送、保留完整响应。 onSelfTask 返回 TaskResult，多输出通过
 WorkflowInput 按 contextFrom 提供，不拼 instruction。 onNegotiation 由宿主校验并生成最终回复，返回 Send (content) 或本地
-Stop，不固定补同一端口。 字段见 [业务回调契约](BUSINESS_CALLBACKS.md)。
+Stop，不固定补同一端口。 字段见 [业务回调契约](../BUSINESS_CALLBACKS.md)。
 
 ```mermaid
 flowchart LR
@@ -106,7 +106,7 @@ propose 渲染 SDK prompt，工作台校验
 `templateUri` 和 `negotiationContext={id,round,maxRounds,performative}`，再用 typed accept/reject/abort 回复。 引擎不使用
 SDK 的废弃状态机接口，不存在原始文本 fallback。 两个 OMC 都消费 SDK 填充后的任务数据；Accept 也从正式 Negotiation-T
 metadata 校验并合并填充字段， 不再把 parts 摘要或原始回复拼接给诊断。Reject／Abort 分别校验并结束任务，不执行诊断。 具体 SDK
-入口、业务数据与拒绝策略见 [业务回调调用参考](BUSINESS_CALLBACKS.md#9-示例业务侧的-a2a-t-110-调用参考)。
+入口、业务数据与拒绝策略见 [业务回调调用参考](../BUSINESS_CALLBACKS.md#9-业务侧-a2a-t-110-调用参考)。
 
 本地 SpringSpnDemo 默认让 City1 的 Task-T 缺少任务对象以演示协商，City2 参数完整直接诊断。
 `-Da2at.samples.negotiation=false` 可切回两城市完整输入；对接外部 OMC 默认不注入缺参。

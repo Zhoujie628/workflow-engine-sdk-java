@@ -28,7 +28,7 @@ closed。 samples 宿主 A2ATInitialization 在初始化线程临时包装资源
 URL 缓存或 SDK jar。 每次 SDK 升级需重新验证该隔离是否仍必要。
 
 SDK 内容接口由宿主通过 StandardTemplates.*.uri () 选择模板；业务自行生成最终内容，再用 A2atMessages.from 包装。
-引擎只检查协商上下文关联，不解释业务内容。 完整契约见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
+引擎只检查协商上下文关联，不解释业务内容。 完整契约见 [业务回调集成契约](../BUSINESS_CALLBACKS.md)。
 
 ## Maven / IDEA 接入
 
@@ -118,7 +118,7 @@ slot.json 修正。
 名称／摘要就关闭订阅。 这不是对任意外部通知的通用语义验证，也不在工作流引擎内实施。
 
 完整角色映射、字段规则、FromText／FromData 选择、宿主拒绝策略和可重复验证范围见
-[业务回调指南第 9 节](BUSINESS_CALLBACKS.md#9-示例业务侧的-a2a-t-110-调用参考)。 严格离线测试只处理明确样例输入，不从模板示例臆造参数；不能代替真实
+[业务回调指南第 9 节](../BUSINESS_CALLBACKS.md#9-业务侧-a2a-t-110-调用参考)。 严格离线测试只处理明确样例输入，不从模板示例臆造参数；不能代替真实
 LLM 和现网 OMC 联调。
 
 ## 发布验证入口
