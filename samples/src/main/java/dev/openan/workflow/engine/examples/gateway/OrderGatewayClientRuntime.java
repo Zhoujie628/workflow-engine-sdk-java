@@ -29,6 +29,8 @@ import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.ConversationScopedA2AJavaClientRuntime;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -47,7 +49,9 @@ import org.a2aproject.sdk.client.ClientEvent;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
 import org.a2aproject.sdk.grpc.SendMessageRequest;
 import org.a2aproject.sdk.grpc.utils.ProtoUtils;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.Task;
 import org.slf4j.Logger;
@@ -491,6 +495,21 @@ public final class OrderGatewayClientRuntime
     }
   }
 
+  private static String listTasksPath(AgentGatewayRoute route, ListTasksParams params) {
+    List<String> query = new java.util.ArrayList<>();
+    addQuery(query, "contextId", params.contextId());
+    addQuery(query, "status", params.status() != null ? params.status().name() : null);
+    addQuery(query, "pageSize", params.pageSize());
+    addQuery(query, "pageToken", params.pageToken());
+    addQuery(query, "historyLength", params.historyLength());
+    addQuery(query, "statusTimestampAfter", params.statusTimestampAfter());
+    if (Boolean.TRUE.equals(params.includeArtifacts())) {
+      addQuery(query, "includeArtifacts", true);
+    }
+    String path = route.taskCollectionPath(params.tenant());
+    return query.isEmpty() ? path : path + "?" + String.join("&", query);
+  }
+
   @Override
   public org.a2aproject.sdk.spec.Task getTask(
       AgentCard agentCard,
@@ -515,6 +534,65 @@ public final class OrderGatewayClientRuntime
         route.taskPath(null, taskId, ":cancel"),
         "{}",
         callContext);
+  }
+
+  private static void addQuery(List<String> query, String name, Object value) {
+    if (value == null) {
+      return;
+    }
+    String encoded =
+        URLEncoder.encode(String.valueOf(value), StandardCharsets.UTF_8).replace("+", "%20");
+    query.add(name + "=" + encoded);
+  }
+
+  @Override
+  public ListTasksResult listTasks(
+      AgentCard agentCard, ListTasksParams params, ClientCallContext callContext) {
+    Objects.requireNonNull(params, "params");
+    AgentGatewayRoute route = routeResolver.resolve(agentCard);
+    String path = listTasksPath(route, params);
+    String requestId = java.util.UUID.randomUUID().toString();
+    ConversationSessionHandle handle = null;
+    try {
+      // Listing is a management operation without a conversation id. Its short-lived
+      // authenticated session must not share lifecycle state with workflow or notification lanes.
+      handle = sessionManager.acquire(null, route, REQUEST_CHANNEL);
+      OrderHttpSessionStrRequest request =
+          OrderHttpSessionStrRequest.newBuilder()
+              .setUriPath(path)
+              .setMethod("GET")
+              .putAllHeaders(extractHeaders(callContext, false))
+              .setBody("")
+              .build();
+      logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
+      OrderResponse response = handle.session().execute(request, config.timeoutMillis);
+      logProtocolResponse(requestId, agentCard.name(), 1, response);
+      validateResponse(response);
+      org.a2aproject.sdk.grpc.ListTasksResponse.Builder result =
+          org.a2aproject.sdk.grpc.ListTasksResponse.newBuilder();
+      JsonFormat.parser().merge(response.body(), result);
+      handle.release();
+      handle = null;
+      log.info(
+          "[OrderGateway] TASK_LIST requestId={}, agent={}, ne={}, status={}, tasks={}, "
+              + "nextPage={}, path={}",
+          requestId,
+          agentCard.name(),
+          route.ne(),
+          params.status(),
+          result.getTasksCount(),
+          !result.getNextPageToken().isEmpty(),
+          path);
+      return new ListTasksResult(
+          result.getTasksList().stream().map(ProtoUtils.FromProto::task).toList(),
+          result.getTotalSize(),
+          result.getTasksCount(),
+          result.getNextPageToken().isEmpty() ? null : result.getNextPageToken());
+    } catch (Exception e) {
+      if (handle != null) handle.invalidate();
+      throw new IllegalStateException(
+          "Eastcom gateway task list failed for " + agentCard.name() + ": " + e.getMessage(), e);
+    }
   }
 
   @Override

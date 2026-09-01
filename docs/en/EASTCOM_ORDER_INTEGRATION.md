@@ -212,6 +212,11 @@ capability. Streaming events are delivered as they arrive. A terminal A2A state 
 vendor `sendSse` call waits for natural platform stream completion. Timeout values are configured in seconds and passed
 to the vendor SDK in milliseconds.
 
+Standard task management uses the same route and authentication: `GET /tasks` forwards filters and pagination tokens,
+while `POST /tasks/{id}:cancel` cancels a selected task. These calls use independent short-lived Order sessions, so demo
+preflight cleanup cannot reuse or close workflow and Notification-T channels. The live platform must preserve query
+parameters and forward both methods; validate this before relying on cleanup to prevent active-task capacity errors.
+
 Task-T and Negotiation-T follow-ups are separate self-contained HTTP calls with the same logical A2A conversation.
 `OrderHttpClientAdapter.close()` is a logical no-op because the public HTTP API exposes no instance logout.
 
@@ -259,25 +264,26 @@ to a one-request resource because safe round association is impossible.
 
 ## Live-platform acceptance matrix
 
-| ID | Confirm with Eastcom / OMC | Current client behavior | Acceptance criterion |
-|----|----------------------------|-------------------------|----------------------|
-| L-01 | SSE chunks are forwarded immediately | Incremental SSE framing across arbitrary chunks | WORKING/artifacts arrive before COMPLETED with acceptable delay |
-| L-02 | First/subsequent item status, headers, cookies | Requires 2xx when status is present; later status `0` is tolerated | Real frames cannot be misclassified |
-| L-03 | Stream closes promptly after terminal state | Preserves terminal event and waits for natural Flux completion | Stream closes within the agreed interval |
-| L-04 | Idle limit and heartbeat syntax | Ignores empty heartbeats as business events | Subscription survives the agreed idle interval |
-| L-05 | Blocking `/message:send` response forms | Parses A2A Message or Task and rejects business problems | Message, Task, and failure cases are covered |
-| L-06 | Base path and tenant override rules | Request tenant overrides AgentInterface tenant | Default, override, and empty tenant route correctly |
-| L-07 | A2A/auth header forwarding | Sends content, accept, version, extension, and call-context headers | OMC receives required headers without platform replacement |
-| L-08 | Timeout origin and cancellation signal | Converts seconds to vendor timeout; propagates failure | Timing matches configuration and no call is left behind |
-| L-09 | Caller interruption/close propagation | Cancels the affected logical conversation | Platform and OMC stop the affected call only |
-| L-10 | Multi-Agent/NE concurrency limits | Isolates by `contextId + NE + channel` | No NE/task/context crossover or connection growth |
-| L-11 | Platform, OMC, network, half-open errors | Non-2xx, empty, parse, and stream errors fail the send | Retryability and correlation are observable without secrets |
-| L-12 | Frame/response size, UTF-8, SSE delimiters | Supports split UTF-8 and LF/CRLF frame delimiters | Chinese and large artifacts are not corrupted or truncated |
-| L-13 | TLS/mTLS requirements | Target HTTPS comes from AgentInterface; vendor SDK owns platform transport | Certificate validation and rotation are agreed |
-| L-14 | Idle/restart reconnect behavior | Creates/sends only through public `HttpClient` | Next request succeeds after idle, sleep, or platform restart |
-| L-15 | Negotiation follow-up routing | Uses same context/task in a new self-contained call | Follow-up reaches the same A2A task exactly once |
-| L-16 | HttpClient reuse and connection-pool lifecycle | Serializes per key; installs 1.1.18 buffer workaround | Vendor confirms ownership; long-run resources stay bounded |
-| L-17 | Notification reconnect/idempotency | Does not auto-resubscribe under unknown semantics | Vendor defines subscription ID, deduplication, and backoff |
+| ID   | Confirm with Eastcom / OMC                                       | Current client behavior                                                    | Acceptance criterion                                                                              |
+|------|------------------------------------------------------------------|----------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| L-01 | SSE chunks are forwarded immediately                             | Incremental SSE framing across arbitrary chunks                            | WORKING/artifacts arrive before COMPLETED with acceptable delay                                   |
+| L-02 | First/subsequent item status, headers, cookies                   | Requires 2xx when status is present; later status `0` is tolerated         | Real frames cannot be misclassified                                                               |
+| L-03 | Stream closes promptly after terminal state                      | Preserves terminal event and waits for natural Flux completion             | Stream closes within the agreed interval                                                          |
+| L-04 | Idle limit and heartbeat syntax                                  | Ignores empty heartbeats as business events                                | Subscription survives the agreed idle interval                                                    |
+| L-05 | Blocking `/message:send` response forms                          | Parses A2A Message or Task and rejects business problems                   | Message, Task, and failure cases are covered                                                      |
+| L-06 | Base path and tenant override rules                              | Request tenant overrides AgentInterface tenant                             | Default, override, and empty tenant route correctly                                               |
+| L-07 | A2A/auth header forwarding                                       | Sends content, accept, version, extension, and call-context headers        | OMC receives required headers without platform replacement                                        |
+| L-08 | Timeout origin and cancellation signal                           | Converts seconds to vendor timeout; propagates failure                     | Timing matches configuration and no call is left behind                                           |
+| L-09 | Caller interruption/close propagation                            | Cancels the affected logical conversation                                  | Platform and OMC stop the affected call only                                                      |
+| L-10 | Multi-Agent/NE concurrency limits                                | Isolates by `contextId + NE + channel`                                     | No NE/task/context crossover or connection growth                                                 |
+| L-11 | Platform, OMC, network, half-open errors                         | Non-2xx, empty, parse, and stream errors fail the send                     | Retryability and correlation are observable without secrets                                       |
+| L-12 | Frame/response size, UTF-8, SSE delimiters                       | Supports split UTF-8 and LF/CRLF frame delimiters                          | Chinese and large artifacts are not corrupted or truncated                                        |
+| L-13 | TLS/mTLS requirements                                            | Target HTTPS comes from AgentInterface; vendor SDK owns platform transport | Certificate validation and rotation are agreed                                                    |
+| L-14 | Idle/restart reconnect behavior                                  | Creates/sends only through public `HttpClient`                             | Next request succeeds after idle, sleep, or platform restart                                      |
+| L-15 | Negotiation follow-up routing                                    | Uses same context/task in a new self-contained call                        | Follow-up reaches the same A2A task exactly once                                                  |
+| L-16 | HttpClient reuse and connection-pool lifecycle                   | Serializes per key; installs 1.1.18 buffer workaround                      | Vendor confirms ownership; long-run resources stay bounded                                        |
+| L-17 | Notification reconnect/idempotency                               | Does not auto-resubscribe under unknown semantics                          | Vendor defines subscription ID, deduplication, and backoff                                        |
+| L-18 | `GET /tasks` pagination and `POST /tasks/{id}:cancel` forwarding | Uses short-lived authenticated sessions and preserves query/path encoding  | All visible active tasks are listed and canceled without affecting workflow or notification lanes |
 
 ### Evidence requirements
 

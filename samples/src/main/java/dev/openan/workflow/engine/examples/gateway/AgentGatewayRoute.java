@@ -45,6 +45,11 @@ public record AgentGatewayRoute(String ne, AgentInterface agentInterface) {
     return basePath(requestTenant) + (streaming ? "/message:stream" : "/message:send");
   }
 
+  /** Builds the A2A task collection path used by the standard list-tasks operation. */
+  public String taskCollectionPath(String requestTenant) {
+    return basePath(requestTenant) + "/tasks";
+  }
+
   /** Builds an A2A task-management path from the same advertised AgentInterface base. */
   public String taskPath(String requestTenant, String taskId, String operationSuffix) {
     if (taskId == null || taskId.isBlank()) {

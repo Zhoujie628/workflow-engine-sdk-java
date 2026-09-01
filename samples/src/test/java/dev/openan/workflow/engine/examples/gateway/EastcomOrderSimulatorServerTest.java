@@ -82,6 +82,58 @@ class EastcomOrderSimulatorServerTest {
   }
 
   @Test
+  void simulatorForwardsBodylessGetRequestsWithoutChangingTheMethod() throws Exception {
+    int platformPort = availablePort();
+    int omcPort = availablePort();
+    com.sun.net.httpserver.HttpServer omc =
+        com.sun.net.httpserver.HttpServer.create(
+            new java.net.InetSocketAddress("127.0.0.1", omcPort), 0);
+    omc.createContext(
+        "/a2a/json/tasks",
+        exchange -> {
+          assertEquals("GET", exchange.getRequestMethod());
+          assertEquals("status=TASK_STATE_WORKING", exchange.getRequestURI().getRawQuery());
+          byte[] response =
+              "{\"tasks\":[],\"totalSize\":0,\"pageSize\":0}".getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    omc.start();
+    try (EastcomOrderSimulatorServer server =
+        new EastcomOrderSimulatorServer(
+            "127.0.0.1",
+            platformPort,
+            "sim-user",
+            "sim-password",
+            "sim-client",
+            "sim-secret",
+            Map.of("sim-city1", "http://127.0.0.1:" + omcPort))) {
+      server.start();
+      ServerInfo serverInfo =
+          ServerInfo.builder()
+              .host("127.0.0.1")
+              .port(platformPort)
+              .username("sim-user")
+              .password("sim-password")
+              .clientId("sim-client")
+              .clientSecret("sim-secret")
+              .build();
+      HttpClient client =
+          HttpClient.create(
+              serverInfo, HttpRequestConfig.builder().deviceName("sim-city1").build());
+
+      var response = client.get().uri("/a2a/json/tasks?status=TASK_STATE_WORKING").send();
+
+      assertEquals(200, response.statusCode());
+      assertTrue(response.responseContent().asString().contains("\"tasks\":[]"));
+    } finally {
+      omc.stop(0);
+    }
+  }
+
+  @Test
   void simulatorCanRestartOnSameAddressAfterClosing() throws Exception {
     int port = availablePort();
     EastcomOrderSimulatorServer first = simulator(port);

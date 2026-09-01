@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
 import com.google.protobuf.util.JsonFormat;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -22,6 +23,7 @@ import org.a2aproject.sdk.grpc.utils.ProtoUtils;
 import org.a2aproject.sdk.spec.AgentCapabilities;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.AgentInterface;
+import org.a2aproject.sdk.spec.ListTasksParams;
 import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.Task;
@@ -61,6 +63,16 @@ class OrderGatewayClientRuntimeTest {
             .status(new TaskStatus(TaskState.TASK_STATE_COMPLETED))
             .build();
     return JsonFormat.printer().print(ProtoUtils.ToProto.task(task));
+  }
+
+  private static String listTasksJson(Task task, String nextPageToken) throws Exception {
+    var response =
+        org.a2aproject.sdk.grpc.ListTasksResponse.newBuilder()
+            .addTasks(ProtoUtils.ToProto.task(task))
+            .setTotalSize(2)
+            .setNextPageToken(nextPageToken)
+            .build();
+    return JsonFormat.printer().print(response);
   }
 
   private static int count(Iterable<ClientEvent> events) {
@@ -474,6 +486,69 @@ class OrderGatewayClientRuntimeTest {
     assertEquals("/a2a/json/tasks/task%20with%20space:cancel", requests.get(1).getUriPath());
     assertEquals("{}", requests.get(1).getBody());
     assertEquals(2, closeCount.get(), "query/cancel sessions must be ephemeral");
+  }
+
+  @Test
+  void taskListUsesGatewayRestQueryAndParsesPage() throws Exception {
+    var requests = new CopyOnWriteArrayList<OrderHttpSessionStrRequest>();
+    var closeCount = new AtomicInteger();
+    Task task =
+        Task.builder()
+            .id("task-1")
+            .contextId("ctx/one")
+            .status(new TaskStatus(TaskState.TASK_STATE_WORKING))
+            .build();
+    String responseBody = listTasksJson(task, "next page");
+    OrderGatewayClientRuntime.OrderSessionFactory sessions =
+        route ->
+            new OrderGatewayClientRuntime.OrderSession() {
+              @Override
+              public OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis) {
+                requests.add(request);
+                return new OrderResponse(200, responseBody, Map.of(), "test-data");
+              }
+
+              @Override
+              public void executeStreaming(
+                  OrderHttpSessionStrRequest request,
+                  int timeoutMillis,
+                  Predicate<OrderResponse> responseSink) {
+                throw new AssertionError();
+              }
+
+              @Override
+              public void close() {
+                closeCount.incrementAndGet();
+              }
+            };
+    var runtime = runtime(sessions);
+
+    var result =
+        runtime.listTasks(
+            card("city1", 26335, false),
+            new ListTasksParams(
+                "ctx/one",
+                TaskState.TASK_STATE_WORKING,
+                10,
+                "page token",
+                0,
+                Instant.parse("2026-08-31T09:07:35Z"),
+                true,
+                null),
+            null);
+
+    assertEquals(List.of("task-1"), result.tasks().stream().map(Task::id).toList());
+    assertEquals(2, result.totalSize());
+    assertEquals("next page", result.nextPageToken());
+    assertEquals(1, requests.size());
+    assertEquals("GET", requests.get(0).getMethod());
+    assertEquals(
+        "/a2a/json/tasks?contextId=ctx%2Fone&status=TASK_STATE_WORKING&pageSize=10"
+            + "&pageToken=page%20token&historyLength=0"
+            + "&statusTimestampAfter=2026-08-31T09%3A07%3A35Z&includeArtifacts=true",
+        requests.get(0).getUriPath());
+    assertEquals("", requests.get(0).getBody());
+    assertEquals(1, closeCount.get(), "list session must be ephemeral");
   }
 
   @Test

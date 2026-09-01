@@ -704,8 +704,12 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                       } else {
                         bodyBuf.append(data);
                       }
-                      // Forward once we have headers and sufficient body
-                      if (!forwarded.get() && headersParsed.get() && bodyBuf.length() > 10) {
+                      // GET requests have no body. Forward them as soon as their headers are
+                      // available; body-bearing requests wait for the SDK's body packet.
+                      boolean requestReady =
+                          headersParsed.get()
+                              && ("GET".equalsIgnoreCase(parsedMethod[0]) || bodyBuf.length() > 10);
+                      if (!forwarded.get() && requestReady) {
                         forwarded.set(true);
                         String httpMethod = parsedMethod[0];
                         String httpPath = parsedPath[0];
@@ -813,7 +817,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
               sink.onCancel(disconnect::run);
               sink.onDispose(disconnect::run);
               connection.setRequestMethod(fMethod.isBlank() ? "POST" : fMethod);
-              connection.setDoOutput(true);
+              boolean hasRequestBody = !"GET".equalsIgnoreCase(fMethod) && !fBody.isEmpty();
+              connection.setDoOutput(hasRequestBody);
               connection.setConnectTimeout(connectTimeoutMillis);
               // Cover connection establishment and the first response headers from a
               // remote, LLM-backed OMC. Once a streaming response starts, switch to a
@@ -822,8 +827,10 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
               connection.setReadTimeout(
                   streaming ? readTimeoutMillis : Math.max(readTimeoutMillis, 65_000));
               copyHeaders(fHeaders, connection);
-              try (OutputStream output = connection.getOutputStream()) {
-                output.write(fBody.getBytes(StandardCharsets.UTF_8));
+              if (hasRequestBody) {
+                try (OutputStream output = connection.getOutputStream()) {
+                  output.write(fBody.getBytes(StandardCharsets.UTF_8));
+                }
               }
               int status = connection.getResponseCode();
               InputStream input =
