@@ -92,11 +92,11 @@ WorkflowEngineClientConfig 或 ExecutePsop 承载 LLM 配置。
 ```java
 // sdk、data、schema、模板选择均属于宿主智能体。
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, configuredTemplateUri);
+    data, schema, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("处理当前任务")));
 ```
 
-自然语言入口为 `sdk.generateTaskPromptFromText(text, configuredTemplateUri)`，随后同样调用 A2atMessages.from。
+自然语言入口为 `sdk.generateTaskPromptFromText(text, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri())`，随后同样调用 A2atMessages.from。
 
 自然语言、结构化生成和校验等能力直接调用宿主 SDK。A2atMessages.from 只复制生成的 metadata 并激活对应扩展，parts 保持业务提供的内容；不生成、不校验业务语义。应选择当前 A2A-T SDK 发布的模板 URI，不自行构造。样例初始化工具属于宿主示例，不是引擎依赖。
 
