@@ -477,7 +477,7 @@ EventCallback callback = new EventCallback() {
     public void onEvent(String eventType, Map<String, Object> data) {
         switch (eventType) {
             case EventType.STEP_START -> System.out.println("Step started: " + data.get("step"));
-            case EventType.AGENT_STATUS_UPDATE -> System.out.println(
+            case EventType.TASK_STATUS_CHANGED -> System.out.println(
                     data.get("agent") + " state: " + data.get("state"));
             case EventType.NEGOTIATION_REQUEST -> System.out.println(
                     "Negotiation from " + data.get("agent"));
@@ -491,9 +491,10 @@ ExecutePsop.builder()
     // ...
 ```
 
-Common event types: `STEP_START`, `STEP_COMPLETE`, `AGENT_REQUEST`,
-`AGENT_RESPONSE`, `NEGOTIATION_REQUEST`, `NEGOTIATION_RESOLVED`,
-`COMPLETE`, `ERROR`.
+Common event types: `START`, `STEP_START`, `TASK_REQUEST`,
+`TASK_RESPONSE`, `TASK_STATUS_CHANGED`, `STEP_COMPLETE`,
+`NEGOTIATION_REQUEST`, `NEGOTIATION_RESOLVED`, `NEGOTIATION_FAILED`,
+`ROUTE_DECISION`, `WORKFLOW_COMPLETE`, `COMPLETE`, `ERROR`, `CLOSE`.
 
 ## 11. Load Workflows from Orchestration Center
 
