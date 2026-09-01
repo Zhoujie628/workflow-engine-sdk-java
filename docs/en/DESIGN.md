@@ -41,74 +41,71 @@ flowchart TB
     classDef local fill: #F8FAFC, stroke: #64748B, color: #0F172A, stroke-dasharray: 5 3
     classDef agent fill: #F5F3FF, stroke: #7C3AED, color: #2E1065, stroke-width: 1.5px
 
-    subgraph CONTROL["周边控制面与上游系统"]
+    subgraph CONTROL["External systems"]
         direction LR
-        WAIMO["WAIMO<br/>上游任务发起方"]:::external
-        REG["注册中心 / Registry Center<br/>AgentCard 发布与查询"]:::external
-        ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
+        CALLER["External A2A requester<br/>Task request and final response"]:::external
+        REG["Registry center<br/>AgentCard publication and discovery"]:::external
+        ORCH["Orchestration center<br/>Workflow search and loading"]:::external
     end
 
-    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
+    subgraph HOST["Host agent"]
         direction TB
-        ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
-        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
+        ENTRY["A2A server entry<br/>Receive and validate inbound tasks"]:::host
+        ADAPTER["Host integration layer<br/>Prepare AgentCards, Workflow, configuration and context"]:::host
 
-        subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
+        subgraph ENGINE["Embedded Workflow Execution Engine SDK"]
             direction TB
-            LOAD["发现辅助 API<br/>RegistryClient / LoadPsop"]:::sdk
-            RUN["工作流协议调度<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
-            CALLBACK["宿主回调接口<br/>ControlPoint / EventCallback / onFinish"]:::sdk
-            EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
+            LOAD["Discovery helpers<br/>RegistryClient / LoadPsop"]:::sdk
+            RUN["Workflow protocol scheduling<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
+            CALLBACK["Host callbacks<br/>ControlPoint / EventCallback / onFinish"]:::sdk
+            EXT["Independent protocol operations<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+        BIZ["Host business implementation<br/>Content, routing, aggregation, persistence and notification handling"]:::host
     end
 
-    subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]
+    subgraph SAMPLE["Optional local fixtures (non-production)"]
         direction LR
-        LOCALCARD["本地 AgentCard JSON<br/>WorkbenchAgentCatalog"]:::local
-        LOCALPSOP["本地 PSOP fallback<br/>仅用于离线演示"]:::local
+        LOCALCARD["Local AgentCard JSON"]:::local
+        LOCALPSOP["Local Workflow fixture"]:::local
     end
 
-    subgraph DOWNSTREAM["下游业务智能体"]
-        OMCS["地市 OMC 智能体群<br/>地市 1 OMC ｜ 地市 2 OMC"]:::agent
+    subgraph DOWNSTREAM["Dispatched agents"]
+        AGENTS["One or more dispatched agents"]:::agent
     end
 
-    WAIMO <-->|" Task-T 诊断任务 / 汇总 artifact "| ENTRY
-    ENTRY -->|" 运行意图 "| ADAPTER
-    REG -->|" 生产：查询 AgentCard "| LOAD
-    ORCH -->|" search / load PSOP "| LOAD
-    LOCALCARD -.->|" Demo 替代注册中心 "| ADAPTER
-    LOCALPSOP -.->|" Demo 检索失败时 "| ADAPTER
-    LOAD -->|" 发现结果交给宿主 "| ADAPTER
+    CALLER <-->|"A2A request / final result"| ENTRY
+    ENTRY -->|"Validated intent and input"| ADAPTER
+    REG -->|"Discover AgentCards"| LOAD
+    ORCH -->|"Search / load Workflow"| LOAD
+    LOCALCARD -.->|"Development fixture"| ADAPTER
+    LOCALPSOP -.->|"Development fixture"| ADAPTER
+    LOAD -->|"Discovery results"| ADAPTER
     ADAPTER -->|" Workflow + AgentCards "| RUN
-    RUN <-->|" 业务决策与执行结果 "| CALLBACK
-    CALLBACK <-->|" 回调 "| BIZ
-    ADAPTER -->|" 独立业务时机 "| EXT
-    RUN <-->|" 向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果 "| OMCS
-    EXT <-->|" Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE "| OMCS
-    BIZ -->|" 汇总结果 "| ENTRY
+    RUN <-->|"Business decisions and results"| CALLBACK
+    CALLBACK <-->|"Callbacks"| BIZ
+    ADAPTER -->|"Independent business timing"| EXT
+    RUN <-->|"Task-T; Negotiation-T when required"| AGENTS
+    EXT <-->|"Authorization-T / Notification-T"| AGENTS
+    BIZ -->|"Final business result"| ENTRY
 ```
 
 The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed orchestration
-service. In `SpringSpnDemo`, the transport integrator is the host agent:
+service:
 
-1. WAIMO invokes the integrator's A2A server endpoint with a Task-T diagnosis request.
-2. The integrator prepares execution inputs. In production it obtains downstream AgentCards from the registry center and
-   searches/loads a PSOP from the orchestration center. The SDK offers optional
-   `RegistryClient` and `LoadPsop` helpers, while discovery timing, caching, and failure policy remain host
+1. The host agent receives and validates an inbound A2A task, then prepares the execution intent and business input.
+2. The host agent obtains dispatched-agent cards from a registry and loads a `Workflow` from an orchestration center.
+   `RegistryClient` and `LoadPsop` are optional helpers; discovery timing, caching, and failure policy remain host-agent
    responsibilities.
-3. The integrator passes the `Workflow`, AgentCards, runtime intent, and business callbacks to
-   `ExecutePsop`. The engine walks the DAG, dispatches both city tasks in parallel, and handles Negotiation-T when
-   needed. `ControlPoint` returns control to the integrator for local aggregation, routing, and clarification decisions.
-4. The integrator returns the aggregate as a Task-T artifact and terminal status to WAIMO.
-5. Authorization-T and Notification-T are invoked by the integrator at independent business times through
-   `ExtensionSender`. They are outside the PSOP DAG and do not share a transport, runtime, or context with workflow
-   tasks.
+3. The host agent passes the `Workflow`, AgentCards, runtime intent, and callbacks to `ExecutePsop`. The engine walks the
+   DAG, dispatches ready tasks concurrently, and handles Negotiation-T when required. `ControlPoint` returns business
+   content, local results, routing decisions, and negotiation replies.
+4. The host agent consumes `ExecutionResult` and returns or persists the final business result.
+5. Authorization-T and Notification-T are invoked by the host agent at independent business times through
+   `ExtensionSender`. They are outside the DAG and do not share a transport, runtime, or context with workflow tasks.
 
-For offline execution, the demo loads AgentCards from the classpath through `WorkbenchAgentCatalog`
-and uses a local PSOP fallback only if orchestration-center search or load fails. These are sample substitutes, not
-production discovery or disaster-recovery rules. The editable diagram source is
+Local AgentCards and workflows are development fixtures, not production discovery or disaster-recovery rules. The
+editable diagram source is
 [`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd).
 
 ---
@@ -199,11 +196,11 @@ Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
-diagnosis success, even if the remote acknowledges it with COMPLETED.
+task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 Authorization-T and Notification-T are independent of the DAG. The host generates content and uses dedicated senders;
-failure does not affect the workflow. Whitelists only control optional OMC recovery. Subscriptions stay open until the
-host closes them.
+failure does not affect the workflow. Authorization policy controls only its own business action. Subscriptions stay
+open until the host closes them.
 
 ## 6. Condition Routing
 
@@ -246,7 +243,7 @@ through the `ExtensionSender` result, and subscription events through the
 sequenceDiagram
     participant H as Host callbacks + A2A-T client
     participant E as Workflow engine
-    participant A as Remote agent
+    participant A as Dispatched agent
     E->>H: onTask(TaskRequest + upstream window)
     H->>H: Generate/validate final content
     H-->>E: MessageContent
@@ -267,7 +264,7 @@ sequenceDiagram
 sequenceDiagram
     participant H as Host + A2A-T client
     participant ES as Independent ExtensionSender
-    participant A as OMC
+    participant A as Dispatched agent
     H->>H: Generate final authorization content
     H->>ES: sendAuthorization(agent, content)
     ES->>A: One-shot authorization
@@ -278,7 +275,7 @@ sequenceDiagram
     ES->>A: Independent long-lived stream
     A-->>H: ACK via acknowledgement()
     A-->>H: listener(handle, ReceivedMessage)
-    H->>ES: handle.close() on recovery/cancel/shutdown
+    H->>ES: handle.close() on terminal event/cancel/shutdown
     ES-->>H: completion() after stream exits
 ```
 
@@ -286,8 +283,9 @@ sequenceDiagram
 
 workflow-engine uses A2A Java `1.2.0.Final` (REST/JSON-RPC/gRPC), a matching gRPC runtime,
 `net.openan.a2a-t.sdk:a2a-t-core:1.1.0`, Jackson and SLF4J. Pure engine consumers do not transitively receive A2A-T
-client/server, LLM, prompt or resources. samples/hosts explicitly depend on a2a-t-client, and OMC receivers additionally
-use a2a-t-server. Registry/orchestration discovery is host-owned; RegistryClient/LoadPsop are optional helpers.
+client/server, LLM, prompt or resources. Host agents explicitly depend on a2a-t-client; dispatched-agent services that
+validate received content additionally use a2a-t-server. Registry/orchestration discovery is host-owned;
+RegistryClient/LoadPsop are optional helpers.
 Templates and slot schemas come from the pinned SDK jar, not sample resource overrides.
 
 ## 10. Design Decisions Summary

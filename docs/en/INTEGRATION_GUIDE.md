@@ -40,15 +40,15 @@ Nonempty business conditions require an onRoute policy; this minimal workflow us
 
 ```java
 Workflow workflow = Workflow.builder()
-        .name("Fault Diagnosis")
+        .name("Service Analysis")
         .steps(List.of(
                 WorkflowStep.builder()
-                        .name("diagnose")
+                        .name("analyze")
                         .subtasks(List.of(
                                 Task.builder()
-                                        .agent("SPN Domain Agent")
-                                        .skill("diagnosis")
-                                        .description("Diagnose fault")
+                                        .agent("Dispatched Agent")
+                                        .skill("analysis")
+                                        .description("Analyze the request")
                                         .build()))
                         .next(List.of(
                                 JumpCondition.builder()
@@ -59,10 +59,10 @@ Workflow workflow = Workflow.builder()
                         .build(),
                 WorkflowStep.builder()
                         .name("merge")
-                        .stepType(StepType.SELF_LOOP)   // self-loop: workbench merges locally, no A2A-T to self
+                        .stepType(StepType.SELF_LOOP)   // host-agent local step; no A2A-T send
                         .subtasks(List.of(
                                 Task.builder()
-                                        .agent("Transport Workbench Agent")
+                                        .agent("Host Agent")
                                         .skill("aggregate")
                                         .description("Merge results")
                                         .build()))
@@ -137,7 +137,7 @@ CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
         .psop(workflow)
         .agentCards(cards)
         .controlPoint(callbacks)
-        .runtimeIntent("SPN cross-city fault diagnosis")
+        .runtimeIntent("Analyze the service request")
         .lang("zh")
         .credentialsConfigPath("credentials.json")
         .sslVerify(true)
@@ -159,10 +159,10 @@ Required: `psop`, `controlPoint`. All other config items have defaults.
 
 ### 5.1 .env File
 
-The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T, initialize
-A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. The
-sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option. Do not put OMC credential
-decryption ownership in LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder ()
+The engine does not read A2A-T .env files or create LLM clients. If host-agent callbacks use A2A-T, initialize
+A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. A
+sample-specific a2atEnvPath is not an engine builder option. Keep dispatched-agent credential decryption separate from
+LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder()
 .credentialEncryptionKey (key) when using encrypted built-in credentials, then pass that configured engineClient to
 ExecutePsop. Custom AuthProvider owns its own token/configuration. Tests use the current SDK SPI with an offline
 provider, not template overrides or production fallbacks.
@@ -173,15 +173,13 @@ For agents requiring authentication, provide a JSON credentials file:
 
 ```json
 {
-  "SPN Domain Agent": {
+  "Dispatched Agent": {
     "bearerAuth": {
-      "login_url": "https://127.0.0.1:26335/rest/plat/smapp/v1/oauth/token",
-      "method": "PUT",
+      "login_url": "https://agent.example.com/oauth/token",
+      "method": "POST",
       "request_fields": {
-        "grantType": "password",
-        "userName": "admin",
-        "value": "enc:<base64-iv>:<base64-ciphertext>",
-        "ipaddr": "*"
+        "username": "service-account",
+        "password": "enc:<base64-iv>:<base64-ciphertext>"
       },
       "token_field": "accessSession",
       "token_ttl": 3600
@@ -322,7 +320,7 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 - `AuthProvider` can be the sole authentication source even when `securityRequirements` is non-empty
 - If both credentials and `AuthProvider` are configured, their headers are generated independently and merged; different
   values for the same header fail fast
-- On auth failure (e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
+- On auth failure(e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
 
 ## 6. AgentCard Definition
 
@@ -330,7 +328,7 @@ AgentCards declare extensions via `capabilities.extensions`:
 
 ```json
 {
-  "name": "SPN Domain Agent",
+  "name": "Dispatched Agent",
   "capabilities": {
     "streaming": true,
     "extensions": [
@@ -346,12 +344,12 @@ AgentCards declare extensions via `capabilities.extensions`:
       },
       {
         "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1",
-        "description": "Authorization whitelist",
+        "description": "Authorization operation",
         "required": false
       },
       {
         "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1",
-        "description": "Result notification subscription",
+        "description": "Notification subscription",
         "required": false
       }
     ]
@@ -399,7 +397,7 @@ Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
-diagnosis success, even if the remote acknowledges it with COMPLETED.
+task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -407,10 +405,10 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-The host generates final Authorization-T/Notification-T content and calls these methods on separate
-transport/runtime/context instances. The listener receives handle and complete ReceivedMessage and closes on the
-business recovery event. acknowledgement () and completion () separately represent ACK and actual stream exit, never
-workflow prerequisites.
+The host agent generates final Authorization-T/Notification-T content and calls these methods on separate
+transport/runtime/context instances. The listener receives the handle and complete ReceivedMessage, and closes on the
+host-defined terminal event. acknowledgement() and completion() separately represent ACK and actual stream exit;
+neither is a workflow prerequisite.
 
 ## 8. HTTPS Configuration
 
@@ -462,25 +460,12 @@ chunks. Observers cannot fail delivery. File references are recorded as referenc
 requestId correlates each call; workflow calls additionally carry executionId/logicalTaskId/attempt,
 agent/contextId/channel and remoteTaskId when known. These are local log fields, not wire metadata.
 
-### Inspect negotiation in the local Demo
+### Verify protocol and negotiation logs
 
-Running the local SpringSpnDemo without VM options now negotiates missing City1 input; City2 diagnoses directly. This is
-a local sample scenario, not an engine default. To use complete inputs in both cities, add this IDEA **VM option**:
-
-```text
--Da2at.samples.negotiation=false
-```
-
-By default only City1 loses its Task-T task object. Add `-Da2at.samples.negotiation.city=city2` or `both`
-to exercise City2 or both cities. The host retains city-scoped authoritative input and the complaint context is
-preserved. Expect DEMO_NEGOTIATION → INPUT_REQUIRED/PROPOSE → onNegotiation → ACCEPT → both diagnoses → one aggregate.
-External-OMC mode defaults to no injection and rejects an explicit true switch. The Demo passes its setting into the
-current Spring application context without modifying JVM-wide properties. Protocol observations are in the console and
-`logs/spn-demo.log` relative to the run directory.
-
-Run `SpringSpnDemoE2ETest` for direct transport. It tests the no-VM-option
-single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
-provider. This is local protocol E2E evidence, not real model/platform/OMC validation.
+Use a controlled test in which one dispatched agent returns `INPUT_REQUIRED` with a valid Negotiation-T Propose. The
+expected sequence is request → Propose → `onNegotiation` → final Send/Stop → terminal task result. The `PROTOCOL` logger
+must show the observed request/response boundaries and correlation fields without exposing credentials. A declared
+Negotiation-T capability alone does not force negotiation.
 
 ## 10. Event Callback
 
@@ -515,50 +500,41 @@ Common event types: `STEP_START`, `STEP_COMPLETE`, `AGENT_REQUEST`,
 ```java
 // Search by intent
 List<WorkflowSearchResult> results = LoadPsop.search(
-                "https://127.0.0.1:5001", "SPN cross-city fault diagnosis", 5, null, false);
+                "https://orchestration.example.com", "analyze service request", 5, null, true);
 
 // Load full workflow by ID
 Workflow workflow = LoadPsop.load(
-        "https://127.0.0.1:5001", results.get(0).getWorkflowId(), null, false);
+        "https://orchestration.example.com", results.get(0).getWorkflowId(), null, true);
 ```
 
 ## 12. Custom Extensions
 
-Construct final MessageContent (parts, metadata, extensions), with host-owned content generation/validation. No engine
+Construct final MessageContent(parts, metadata, extensions), with host-owned content generation/validation. No engine
 handler or SDK instance registration. A2atMessages.from copies A2A-T metadata; other extensions can directly supply
 metadata and activation URIs. AgentCard declarations never cause implicit generation.
 
-## External OMC startup checks
+## 13. External endpoints and startup ownership
 
-### Orchestration-center HTTPS development
+### 13.1 Orchestration-center HTTPS development
 
-The demo passes `A2A_SSL_VERIFY` (Spring property `a2a.ssl-verify`) to LoadPsop.search/load.
-For controlled development, set `A2A_SSL_VERIFY=false` or `--a2a.ssl-verify=false`.
-No local orchestration CA file is required: both calls skip chain and hostname checks, including
-self-signed certificates, missing SANs and mismatched SANs, and emit a `[Registry] INSECURE_TLS` warning.
+`LoadPsop.search/load` receives an explicit `sslVerify` argument. Keep it `true` in production. In a controlled
+development environment, `false` disables certificate-chain and hostname checks for that connection only and emits a
+`[Registry] INSECURE_TLS` warning. It does not modify JVM-wide TLS defaults.
 
 The HTTPS server must still present a certificate, and client-certificate requirements (mTLS) still apply.
 This mode cannot authenticate the server and is vulnerable to interception; do not use it in production.
 Keep verification enabled in production, configure matching server SANs and trust its CA in the running JVM.
-The southbound `caCertsPath` setting is not forwarded to LoadPsop.
+The dispatched-agent `caCertsPath` setting is not forwarded to LoadPsop.
 LoadPsop never changes JVM-wide SSLContext, SocketFactory or HostnameVerifier defaults.
-Southbound HTTP/JSON-RPC retains hostname checks when chain verification is disabled; vendor forwarding TLS
-remains managed by the vendor SDK/platform.
+Dispatched-agent HTTP/JSON-RPC retains hostname checks when chain verification is disabled.
 
-### Downstream OMC startup
+### 13.2 Dispatched-agent endpoints
 
-Set `A2A_AGENT_CARD_LOCATIONS` in the environment or local .env to comma-separated external
-AgentCard file locations. For SpringSpnDemo, set `A2A_EMBEDDED_OMC_ENABLED=false` or pass
-`--a2a.embedded-omc-enabled=false` when using externally managed OMCs.
-Use SpringWorkbenchApplication for a persistent host; the demo exits after its task.
+The engine consumes AgentCards and never starts dispatched-agent servers. The host agent owns AgentCard discovery,
+endpoint reachability checks, and any development fixtures. When using externally managed dispatched agents, do not
+start local fixtures on the same endpoints. Keep production AgentCards and credentials outside tracked sample resources.
 
-Embedded startup validates both effective city cards before starting either OMC, then uses those
-cards to bind. Missing cards, invalid URLs and non-local addresses fail early. Loopback and local
-network-interface addresses are accepted; non-loopback does not automatically mean remote.
-This does not probe OMCs or detect existing services. Disable embedded startup even when an externally
-managed OMC runs on this same machine. Keep real cards and credentials outside tracked sample resources.
-
-## Remote problem responses
+## 14. Remote problem responses
 
 A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level
 problem object such as `{"status":429,"detail":"Active task limit reached","type":""}`.
@@ -570,7 +546,7 @@ first as an HTTP/authentication error by the SDK or adapter, without exposing it
 such failures retain the generic failure path rather than fabricating errorDetails.
 
 The error fails the call without fabricating a successful task, invoking onNegotiation, or automatically
-resubmitting it. For 400, inspect business inputs; for 429, inspect OMC capacity and existing tasks or
+resubmitting it. For 400, inspect business inputs; for 429, inspect dispatched-agent capacity and active tasks or
 subscriptions before deciding whether to retry. Negotiation still requires a valid Negotiation-T Propose.
 Use `RemoteProblemException.findIn(error)` to inspect the cause chain (null means no problem found);
 workflow execution follows its existing failure path.
@@ -581,18 +557,16 @@ unrecognized SDK exceptions still expose only the exception type.
 Independent authorization/subscription failures do not determine the workflow result.
 Pretty logging does not modify the received problem payload.
 
-In the two-city sample, one failed diagnosis does not interrupt the other already dispatched call:
-its result or timeout is collected before the workflow returns `success=false`.
-The merge_analysis onSelfTask/LLM is not invoked; successful peer results remain in history,
-not in a fabricated overall diagnosis. There is no automatic retry, queuing or partial-success merge.
-Generic AnySuccess nodes retain their existing first-success semantics.
+For an `ALL_SUCCESS` step, one failed task does not retroactively cancel a peer call that was already dispatched: the
+peer result or timeout is collected before the workflow returns `success=false`. Downstream steps are not invoked;
+successful peer results remain in history rather than being turned into a fabricated aggregate. There is no automatic
+retry, queuing, or partial-success merge. `ANY_SUCCESS` nodes retain their declared first-success semantics.
 
 Observe failures through TASK_RESPONSE or inspect result.history in `onFinish(result, events)`;
 onTask prepares outbound content and is not an error-retry callback.
 Executor node events include executionId; TASK_RESPONSE and history also include the logical taskId.
-The sample's northbound A2A task returns FAILED with per-agent errorCode, error and errorDetails
-in its status message, without a success-summary artifact. Demo shutdown closes subscriptions;
-a persistent host owns them independently of workflow results.
+The host agent decides how to expose a failed execution to its caller. It must not convert a failed execution into a
+success artifact. A persistent host owns notification subscriptions independently of workflow results.
 
 Logging responsibilities: PROTOCOL captures observed traffic, correlated by requestId rather than
 adjacent log entries; REMOTE_PROBLEM reports transport rejection; TASK_FAILED identifies the execution,
@@ -601,7 +575,7 @@ Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized remote pr
 while unexpected exceptions retain ERROR stack traces. Known credentials and Bearer/Basic values are redacted.
 Logging configuration, pretty display and observer callbacks do not determine task outcomes.
 
-## 13. Interface Reference
+## 15. Interface Reference
 
 | Interface/Class                                        | Purpose                                                                 |
 |--------------------------------------------------------|-------------------------------------------------------------------------|

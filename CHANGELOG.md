@@ -12,8 +12,8 @@
 - Separate authorization/notification lifecycle from workflow outcomes; never synthesize a subscription ACK.
 - Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and
   bounded SSE.
-- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation
-  remains separate.
+- Add missing-input negotiation and independent transport-path regression tests; live model and production endpoint
+  validation remains separate.
 - Refresh bilingual callback, architecture and integration contracts. No older SDK compatibility layer.
 
 ### Release hardening
