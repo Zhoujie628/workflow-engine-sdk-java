@@ -37,17 +37,17 @@ flowchart TB
     classDef local fill: #F8FAFC, stroke: #64748B, color: #0F172A, stroke-dasharray: 5 3
     classDef agent fill: #F5F3FF, stroke: #7C3AED, color: #2E1065, stroke-width: 1.5px
 
-    subgraph CONTROL["周边控制面与上游系统"]
+    subgraph CONTROL["外部系统"]
         direction LR
-        WAIMO["WAIMO<br/>上游任务发起方"]:::external
-        REG["注册中心 / Registry Center<br/>AgentCard 发布与查询"]:::external
-        ORCH["编排中心 / Orchestration Center<br/>工作流检索与 PSOP 加载"]:::external
+        CALLER["外部 A2A 请求方<br/>任务请求与最终响应"]:::external
+        REG["注册中心<br/>AgentCard 发布与发现"]:::external
+        ORCH["编排中心<br/>工作流检索与加载"]:::external
     end
 
-    subgraph HOST["宿主智能体：集成方 / Integrator Agent"]
+    subgraph HOST["宿主智能体"]
         direction TB
-        ENTRY["A2A 服务端入口<br/>接收 Task-T，解析诊断意图"]:::host
-        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和业务上下文"]:::host
+        ENTRY["A2A 服务端入口<br/>接收并校验入站任务"]:::host
+        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和上下文"]:::host
 
         subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
             direction TB
@@ -57,49 +57,45 @@ flowchart TB
             EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["集成方业务实现<br/>业务接管、路由、汇总、持久化、通知处理"]:::host
+        BIZ["宿主业务实现<br/>内容、路由、汇总、持久化与通知处理"]:::host
     end
 
-    subgraph SAMPLE["Demo 本地替代路径（非生产数据源）"]
+    subgraph SAMPLE["可选本地测试资源（非生产数据源）"]
         direction LR
-        LOCALCARD["本地 AgentCard JSON<br/>WorkbenchAgentCatalog"]:::local
-        LOCALPSOP["本地 PSOP fallback<br/>仅用于离线演示"]:::local
+        LOCALCARD["本地 AgentCard JSON"]:::local
+        LOCALPSOP["本地 Workflow 测试数据"]:::local
     end
 
-    subgraph DOWNSTREAM["下游业务智能体"]
-        OMCS["地市 OMC 智能体群<br/>地市 1 OMC ｜ 地市 2 OMC"]:::agent
+    subgraph DOWNSTREAM["被调度智能体"]
+        AGENTS["一个或多个被调度智能体"]:::agent
     end
 
-    WAIMO <-->|" Task-T 诊断任务 / 汇总 artifact "| ENTRY
-    ENTRY -->|" 运行意图 "| ADAPTER
-    REG -->|" 生产：查询 AgentCard "| LOAD
-    ORCH -->|" search / load PSOP "| LOAD
-    LOCALCARD -.->|" Demo 替代注册中心 "| ADAPTER
-    LOCALPSOP -.->|" Demo 检索失败时 "| ADAPTER
-    LOAD -->|" 发现结果交给宿主 "| ADAPTER
+    CALLER <-->|"A2A 任务 / 最终结果"| ENTRY
+    ENTRY -->|"已校验的意图与输入"| ADAPTER
+    REG -->|"发现 AgentCard"| LOAD
+    ORCH -->|"检索 / 加载 Workflow"| LOAD
+    LOCALCARD -.->|"开发测试数据"| ADAPTER
+    LOCALPSOP -.->|"开发测试数据"| ADAPTER
+    LOAD -->|"发现结果"| ADAPTER
     ADAPTER -->|" Workflow + AgentCards "| RUN
     RUN <-->|" 业务决策与执行结果 "| CALLBACK
     CALLBACK <-->|" 回调 "| BIZ
     ADAPTER -->|" 独立业务时机 "| EXT
-    RUN <-->|" 向两地市并行 Task-T<br/>必要时 Negotiation-T / 返回诊断结果 "| OMCS
-    EXT <-->|" Authorization-T 一次性授权<br/>Notification-T 长连接订阅与结果 SSE "| OMCS
-    BIZ -->|" 汇总结果 "| ENTRY
+    RUN <-->|"Task-T；必要时 Negotiation-T"| AGENTS
+    EXT <-->|"Authorization-T / Notification-T"| AGENTS
+    BIZ -->|"最终业务结果"| ENTRY
 ```
 
-上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务。当前
-`SpringSpnDemo` 的宿主是集成方智能体，实际责任链如下：
+上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务：
 
-1. WAIMO 通过 A2A Task-T 调用集成方的服务端入口。
-2. 集成方准备执行输入：生产环境从注册中心获取下游 AgentCard，并根据任务意图从编排中心 搜索、加载 PSOP；SDK 提供可选的
-   `RegistryClient` 和 `LoadPsop` 辅助 API，但何时发现、如何缓存、 失败策略均由宿主决定。
-3. 集成方把 `Workflow`、AgentCard、运行意图和业务回调交给 `ExecutePsop`。执行引擎遍历 DAG， 并行向两个地市 OMC 下发任务，并在必要时处理
-   Negotiation-T；集成方通过 `ControlPoint` 接管 本地汇总、路由和澄清等业务操作。
-4. 集成方把汇总结果作为 Task-T artifact 和完成状态返回 WAIMO。
-5. Authorization-T 与 Notification-T 由集成方在各自业务时机通过 `ExtensionSender` 单独触发， 不属于 PSOP DAG，也不与工作流任务复用
-   transport/runtime/context。
+1. 宿主智能体接收并校验入站 A2A 任务，准备执行意图和业务输入。
+2. 宿主智能体从注册中心获取被调度智能体的 AgentCard，并从编排中心加载 `Workflow`。
+   `RegistryClient` 和 `LoadPsop` 是可选辅助 API；发现时机、缓存与失败策略仍由宿主智能体负责。
+3. 宿主智能体把 `Workflow`、AgentCard、运行意图和回调交给 `ExecutePsop`。引擎遍历 DAG、并行下发就绪任务，并在需要时处理 Negotiation-T；`ControlPoint` 返回业务内容、本地结果、路由决策和协商回复。
+4. 宿主智能体消费 `ExecutionResult`，返回或持久化最终业务结果。
+5. Authorization-T 与 Notification-T 由宿主智能体在独立业务时机通过 `ExtensionSender` 触发，不属于 DAG，也不与工作流任务复用 transport/runtime/context。
 
-Demo 为保证离线可运行，`WorkbenchAgentCatalog` 从 classpath 加载 AgentCard；仅在编排中心搜索或 加载失败时使用本地 PSOP
-fallback。这两项是样例替代路径，不代表生产环境的数据来源或容灾策略。 图的可编辑源文件见
+本地 AgentCard 和 Workflow 只是开发测试资源，不代表生产发现或容灾策略。图的可编辑源文件见
 [`docs/diagrams/workflow-engine-surrounding-systems.mmd`](../diagrams/workflow-engine-surrounding-systems.mmd)。
 
 ---
@@ -177,10 +173,9 @@ nextRound 或返回新 Propose。
 Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
-COMPLETED 确认，也不能判为诊断成功。
+COMPLETED 确认，也不能判为任务成功。
 
-Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿主生成内容并使用独立发送器；失败不影响工作流。白名单仅影响
-OMC 自动抢通，订阅保持到业务主动关闭。
+Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿主生成内容并使用独立发送器；失败不影响工作流。授权策略只控制自身的业务操作，订阅保持到宿主主动关闭。
 
 ## 6. 条件路由
 
@@ -219,7 +214,7 @@ OMC 自动抢通，订阅保持到业务主动关闭。
 sequenceDiagram
     participant H as Host callbacks + A2A-T client
     participant E as Workflow engine
-    participant A as Remote agent
+    participant A as Dispatched agent
     E->>H: onTask(TaskRequest + upstream window)
     H->>H: Generate/validate final content
     H-->>E: MessageContent
@@ -240,7 +235,7 @@ sequenceDiagram
 sequenceDiagram
     participant H as Host + A2A-T client
     participant ES as Independent ExtensionSender
-    participant A as OMC
+    participant A as Dispatched agent
     H->>H: Generate final authorization content
     H->>ES: sendAuthorization(agent, content)
     ES->>A: One-shot authorization
@@ -251,7 +246,7 @@ sequenceDiagram
     ES->>A: Independent long-lived stream
     A-->>H: ACK via acknowledgement()
     A-->>H: listener(handle, ReceivedMessage)
-    H->>ES: handle.close() on recovery/cancel/shutdown
+    H->>ES: 终态事件 / 取消 / 停机时 handle.close()
     ES-->>H: completion() after stream exits
 ```
 
@@ -259,11 +254,10 @@ sequenceDiagram
 
 workflow-engine：A2A Java `1.2.0.Final`（REST/JSON-RPC/gRPC）、匹配的 gRPC runtime、
 `net.openan.a2a-t.sdk:a2a-t-core:1.1.0`、Jackson、SLF4J。 纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或
-resources。 samples／宿主显式依赖 a2a-t-client，需要实现 OMC 接收端时另依赖 a2a-t-server。 注册中心和编排中心由宿主调用，可选择
+resources。宿主智能体显式依赖 a2a-t-client，校验接收内容的被调度智能体服务另依赖 a2a-t-server。注册中心和编排中心由宿主调用，可选择
 RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 来自锁定 SDK jar，样例不覆盖同名资源。
 
 ## 10. 设计决策总结
 
 最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，直连与 dev
-东信转发继续共享回调。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。

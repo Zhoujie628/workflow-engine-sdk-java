@@ -4,20 +4,20 @@
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://adoptium.net/)
 [![Maven](https://img.shields.io/badge/Maven-3.6+-red.svg)](https://maven.apache.org/)
 
-A standalone SDK for executing multi-agent workflows over the [A2A protocol](https://a2aproject.github.io/a2a-java/)
+A Java SDK embedded in a host agent for executing multi-agent workflows over the [A2A protocol](https://a2aproject.github.io/a2a-java/)
 with [A2A-T](https://projects.tmforum.org/a2aproject/telecommunication/extensions/) telecom extensions.
 
 The engine handles workflow scheduling, A2A envelopes, transport, task waiting, authentication and TLS. Host callbacks
-return final content and own A2A-T generation, schemas, semantic validation and LLM calls.
+return final message content and own any A2A-T generation, schema, validation or LLM calls.
 
 ## Features
 
 - **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (stateless auto negotiation loop),
-  Authorization-T (independent whitelist operation), Notification-T (independent long-lived SSE subscription)
-- **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local TaskResult and explicit
-  NegotiationReply.Send/Stop
-- **Minimal content dependency**: only a2a-t-core in the engine; generation and template queries belong to the host's
-  a2a-t-client
+  Authorization-T (independent authorization operation), Notification-T (independent long-lived SSE subscription)
+- **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local multi-output TaskResult and
+  explicit NegotiationReply.Send/Stop
+- **Minimal A2A-T dependency**: a2a-t-core only in the engine; content generation and template queries use the host's
+  explicit a2a-t-client dependency
 - **DAG Workflow Execution**: Parallel dispatch, self-loop steps, conditional routing
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
@@ -25,7 +25,7 @@ return final content and own A2A-T generation, schemas, semantic validation and 
 - **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf and dev vendor SDK observations; bodies
   enabled at DEBUG, mandatory redaction
 
-The SPN sample treats the protocol document as an input, not as executable truth. The pinned A2A-T SDK templates, slot
+The sample treats protocol documents as integration inputs, not executable truth. The pinned A2A-T SDK templates, slot
 schemas, canonical URIs, and validation results are authoritative. Protocol generation and validation fail closed; raw
 text is never sent under an A2A-T URI as a fallback.
 
@@ -42,9 +42,9 @@ subscription until the recovery result, cancellation, or shutdown.
 
 A2A-T SDK `1.1.0` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
-`a2a-t-core`; hosts using content generation explicitly add `a2a-t-client:1.1.0`
-(and `a2a-t-server:1.1.0` for receiving-side validation). See
-the [A2A-T SDK dependency guide](docs/zh/A2AT-SDK-DEPENDENCY.md) for IDEA setup and upgrade checks.
+`a2a-t-core`; host agents using content generation explicitly add `a2a-t-client:1.1.0`. A receiving service that
+validates extension content adds `a2a-t-server:1.1.0`. See the bilingual
+[Developer Guide](docs/en/DEVELOPER_GUIDE.md) / [开发者指南](docs/zh/DEVELOPER_GUIDE.md) for IDEA and upgrade checks.
 
 ```xml
 <dependency>
@@ -81,7 +81,7 @@ HostQuickStart.main(new String[] {
 ```
 
 This minimal example sends plain A2A content. For Task-T, Negotiation-T, Authorization-T and Notification-T content
-generation/validation in host business callbacks, follow SpringSpnDemo and the business callback guide.
+generation/validation in host-agent business callbacks, follow SpringSpnDemo and the business callback guide.
 
 Final content callbacks, complete dependency inputs and negotiation
 Send/Stop: [English](docs/en/BUSINESS_CALLBACKS.md) / [中文](docs/zh/BUSINESS_CALLBACKS.md).
@@ -127,7 +127,7 @@ graph TD
 
 | Package    | Key Classes                                                                                                                                                                                              | Description                                                 |
 |------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
-| `client`   | `WorkflowEngineClient`, `DefaultWorkflowEngineClient`, `ExtensionSender`, `A2ATransport`, `AuthProvider`, `AgentAuthManager`, `WorkflowEngineClientConfig`, `CredentialCrypto`, `AgentCardJacksonModule` | A2A transport, auth, extensions (package-private internals) |
+| `client`   | `WorkflowEngineClient`, `DefaultWorkflowEngineClient`, `ExtensionSender`, `A2ATransport`, `AuthProvider`, `WorkflowEngineClientConfig`, `CredentialCrypto`, `AgentCardJacksonModule` | Public transport, authentication, extension, and runtime APIs |
 | `control`  | `ControlPoint`, `DefaultControlPoint`, `EventCallback`, `EventType`, `NegotiationStrategy`                                                                                                               | User-facing decision interfaces                             |
 | `core`     | `WorkflowExecutor`, `ContextBuilder`                                                                                                                                                                     | DAG traversal, context assembly                             |
 | `model`    | `Workflow`, `WorkflowStep`, `Task`, `TaskRequest`, `MessageContent`, `TaskResult`, `NegotiationRequest`, `NegotiationReply`, `ExecutionResult`                                                           | Data models                                                 |
@@ -143,23 +143,21 @@ graph TD
 
 - [Integration Guide](docs/en/INTEGRATION_GUIDE.md) - Setup, configuration, secondary development
 - [API Reference](docs/en/API_REFERENCE.md) - Public interface and class documentation
+- [Business Callback Contract](docs/en/BUSINESS_CALLBACKS.md) - Host-agent callback inputs, outputs, and ownership
 - [Design Document](docs/en/DESIGN.md) - Architecture, module structure, design decisions
 - [Developer Guide](docs/en/DEVELOPER_GUIDE.md) - Internal architecture, contribution, debugging
+- [Eastcom Integration Guide](docs/en/EASTCOM_ORDER_INTEGRATION.md) - Order forwarding, configuration, and live acceptance
 
 ### 中文
 
-- [A2A-T SDK 依赖说明](docs/zh/A2AT-SDK-DEPENDENCY.md) - Maven Central 正式版本及 IDEA 同步说明
-- [集成方集成指南](docs/zh/集成方场景接入指南.md) - 集成方接入执行引擎的主交付文档
-- [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信 Order 转发配置、实现边界与联调验收
-- [SpringSpnDemo 调用链路](docs/zh/SpringSpnDemo调用链路.md) - 直连与 Order 双模式端到端调用链
-- [业务流](docs/zh/业务流.md) - SPN 跨城诊断和四类 A2A-T 协议边界
 - [集成指南](docs/zh/INTEGRATION_GUIDE.md) - 通用安装、配置和二次开发
 - [API 参考](docs/zh/API_REFERENCE.md) - 公共接口和类文档
+- [业务回调集成契约](docs/zh/BUSINESS_CALLBACKS.md) - 宿主智能体回调的输入、输出与职责边界
 - [架构设计](docs/zh/DESIGN.md) - 架构、模块结构、设计决策
 - [开发者指南](docs/zh/DEVELOPER_GUIDE.md) - 内部架构、贡献、调试
-- [集成方 AgentScope 结合方案](docs/zh/工作台AgentScope结合方案.md) - 可选的业务推理框架结合方案，不是 SDK 接入前置条件
+- [指令平台适配指南](docs/zh/指令平台适配指南.md) - 东信 Order 转发配置、实现边界与现场验收
 
-集成方和东信平台团队按上述前五份中文文档顺序阅读即可完成场景接入。代码检视报告、 已完成的迁移计划和旧协议抓包已从交付目录移除，避免把历史问题或旧报文当成当前接口。
+通用 SDK 契约以五组双语文档为准；东信专用适配也提供内容对应的中英文指南。设计草稿、重复业务流和历史迁移说明不作为交付材料。
 
 ## Modules
 

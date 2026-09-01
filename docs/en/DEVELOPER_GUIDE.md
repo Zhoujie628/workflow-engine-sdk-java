@@ -15,8 +15,8 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
-The engine pulls in A2A protocol transports and a2a-t-core only. Hosts generating A2A-T content explicitly add
-a2a-t-client; receiving hosts may also add a2a-t-server.
+The engine pulls in A2A protocol transports and a2a-t-core only. Host agents generating A2A-T content explicitly add
+a2a-t-client; dispatched-agent services that validate received content also add a2a-t-server.
 
 ## 2. Core Concepts
 
@@ -44,16 +44,16 @@ See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working e
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-        .onTask(request -> CompletableFuture.completedFuture(
-                MessageContent.text(request.getInstruction())))
-        .onSelfTask(request -> CompletableFuture.completedFuture(
-                TaskResult.success(List.of(Map.of(
-                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
-        .onRoute(request -> CompletableFuture.failedFuture(
-                new IllegalStateException("Supply a routing policy for " + request.stepName())))
-        .onNegotiation(request -> CompletableFuture.completedFuture(
-                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-        .build();
+    .onTask(request -> CompletableFuture.completedFuture(
+        MessageContent.text(request.getInstruction())))
+    .onSelfTask(request -> CompletableFuture.completedFuture(
+        TaskResult.success(List.of(Map.of(
+            "sourceResults", request.getWorkflowInput().upstreamResults())))))
+    .onRoute(request -> CompletableFuture.failedFuture(
+        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onNegotiation(request -> CompletableFuture.completedFuture(
+        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+    .build();
 ```
 
 ## 4. Execute via Builder (recommended)
@@ -63,7 +63,7 @@ ExecutionResult result = ExecutePsop.builder()
         .psop(workflow)
         .agentCards(agentCards)
         .controlPoint(new MyControlPoint())
-        .runtimeIntent("Diagnose SPN fault")
+        .runtimeIntent("Analyze a service anomaly")
         .lang("zh")
         .sslVerify(false)
         .credentialsConfigPath("agent_credentials.json")
@@ -119,7 +119,7 @@ WorkflowExecutor executor = new WorkflowExecutor(
         new MyControlPoint(),
         client,
         new EventCallback(),
-        "Diagnose fault",
+        "Analyze request",
         "zh"
 );
 ExecutionResult result = executor.run().join();
@@ -140,13 +140,13 @@ Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
-diagnosis success, even if the remote acknowledges it with COMPLETED.
+task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ### 6.2 Workflow Model Fields
 
 | Field                 | Where                 | Meaning                                                                                                                                                                                                         |
 |-----------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess` (default): every subtask must succeed; `AnySuccess`: any subtask success suffices; `SelfLoop`: the workflow agent handles the step locally via `onSelfTask` (no A2A-T message to the named agent). |
+| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess` (default): every subtask must succeed; `AnySuccess`: any subtask success suffices; `SelfLoop`: the host agent handles the step locally via `onSelfTask` (no A2A-T message to the named agent). |
 | `steps[].subtasks[]`  | `Task`                | Each has `agent`, `skill`, `description`. One `onTask` (or `onSelfTask` for SelfLoop) call per subtask.                                                                                                         |
 | `steps[].next[]`      | `List<JumpCondition>` | Branch targets. `step` = next step name; `condition` = rule text.                                                                                                                                               |
 | `steps[].layer`       | `WorkflowStep`        | Orchestration-level hint; actual readiness is derived from DAG predecessors.                                                                                                                                    |
@@ -175,7 +175,7 @@ seconds, and attaches the auth header to outbound requests.
 
 ```json
 {
-  "SPN Domain Agent": {
+  "Dispatched Agent": {
     "bearerAuth": {
       "login_url": "https://127.0.0.1:8080/auth/login",
       "method": "POST",
@@ -199,19 +199,11 @@ For non-standard auth (SSO, API keys, custom headers):
 
 ```java
 WorkflowEngineClientConfig.builder()
-    .
-
-authProvider((agentName, agentCard, headers) ->{
-        headers.
-
-put("Authorization","Bearer "+mySsoToken);
-        headers.
-
-put("X-Custom","value");
+    .authProvider((agentName, agentCard, headers) -> {
+        headers.put("Authorization", "Bearer " + mySsoToken);
+        headers.put("X-Custom", "value");
     })
-            .
-
-build();
+    .build();
 ```
 
 ### 7.3 Credential File Fields
@@ -241,10 +233,10 @@ Set `sslVerify=false` only for dev with self-signed certs.
 
 ## 9. A2A-T Environment (.env)
 
-The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T, initialize
-A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. The
-sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option. Do not put OMC credential
-decryption ownership in LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder ()
+The engine does not read A2A-T .env files or create LLM clients. If host-agent callbacks use A2A-T, initialize
+A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. A
+sample-specific a2atEnvPath is not an engine builder option. Keep dispatched-agent credential decryption separate from
+LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder()
 .credentialEncryptionKey (key) when using encrypted built-in credentials, then pass that configured engineClient to
 ExecutePsop. Custom AuthProvider owns its own token/configuration. Tests use the current SDK SPI with an offline
 provider, not template overrides or production fallbacks.
@@ -281,8 +273,8 @@ public Flux<String> execute(@PathVariable String psopId) {
 
 ### Cancellation
 
-ExecutePsop.builder ().execute () returns a CompletableFuture. Cancellation prevents late callback results from being
-sent and requests conversation cleanup. Hosts must separately cancel their own LLM/business work. A remote task already
+ExecutePsop.builder().execute() returns a CompletableFuture. Cancellation prevents late callback results from being
+ sent and requests conversation cleanup. Host agents must separately cancel their own LLM/business work. A dispatched task already
 submitted may require an explicit cancelTask operation; local cancellation is not protocol Abort.
 
 ## 11. Checklist
@@ -299,13 +291,12 @@ submitted may require an explicit cancelTask operation; local cancellation is no
 ### Pretty protocol log display
 
 Protocol logs default to pretty display: one header value per line and indented JSON bodies. SSE keeps event controls
-(id/event/comments); JSON appears between `=== SSE data (JSON display; not wire text) ===`
+(id/event/comments); JSON appears between `=== SSE data(JSON display; not wire text) ===`
 and `=== End SSE data ===`, without repeating `data:` on every JSON line. Event boundaries remain separate. Set the
 environment variable or JVM property `WORKFLOW_ENGINE_PROTOCOL_PRETTY=false` to retain redacted raw body text.
 Formatting changes presentation only (JSON whitespace and SSE display labels), never transmitted bytes, metadata, number
-tokens or extension headers. The raw observer content remains unchanged. SSE pretty output is a display, not a
-replayable packet capture. Escaped newlines inside JSON strings stay escaped; invalid/incomplete or non-JSON content
-stays raw. Redaction and capacity limits still apply. The demo logs `NEGOTIATION_DEMO enabled=..., city=...` at startup.
-Locally City1 negotiates by default while City2 diagnoses directly;
-`-Da2at.samples.negotiation=false` disables the missing-input scenario. Look for `A2A-Extensions: .../Negotiation-T/v1`,
-the matching metadata key and `negotiationContext`; there is no dedicated Negotiation-T HTTP header.
+ tokens or extension headers. The raw observer content remains unchanged. SSE pretty output is a display, not a
+ replayable packet capture. Escaped newlines inside JSON strings stay escaped; invalid/incomplete or non-JSON content
+ stays raw. Redaction and capacity limits still apply. To verify negotiation traffic, look for
+ `A2A-Extensions: .../Negotiation-T/v1`, the matching metadata key and `negotiationContext`; there is no dedicated
+ Negotiation-T HTTP header.

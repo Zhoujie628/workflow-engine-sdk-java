@@ -40,15 +40,15 @@ Nonempty business conditions require an onRoute policy; this minimal workflow us
 
 ```java
 Workflow workflow = Workflow.builder()
-        .name("Fault Diagnosis")
+        .name("Service Analysis")
         .steps(List.of(
                 WorkflowStep.builder()
-                        .name("diagnose")
+                        .name("analyze")
                         .subtasks(List.of(
                                 Task.builder()
-                                        .agent("SPN Domain Agent")
-                                        .skill("diagnosis")
-                                        .description("Diagnose fault")
+                                        .agent("Dispatched Agent")
+                                        .skill("analysis")
+                                        .description("Analyze the request")
                                         .build()))
                         .next(List.of(
                                 JumpCondition.builder()
@@ -59,10 +59,10 @@ Workflow workflow = Workflow.builder()
                         .build(),
                 WorkflowStep.builder()
                         .name("merge")
-                        .stepType(StepType.SELF_LOOP)   // self-loop: workbench merges locally, no A2A-T to self
+                        .stepType(StepType.SELF_LOOP)   // host-agent local step; no A2A-T send
                         .subtasks(List.of(
                                 Task.builder()
-                                        .agent("Transport Workbench Agent")
+                                        .agent("Host Agent")
                                         .skill("aggregate")
                                         .description("Merge results")
                                         .build()))
@@ -118,16 +118,16 @@ See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working e
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
-        .onTask(request -> CompletableFuture.completedFuture(
-                MessageContent.text(request.getInstruction())))
-        .onSelfTask(request -> CompletableFuture.completedFuture(
-                TaskResult.success(List.of(Map.of(
-                        "sourceResults", request.getWorkflowInput().upstreamResults())))))
-        .onRoute(request -> CompletableFuture.failedFuture(
-                new IllegalStateException("Supply a routing policy for " + request.stepName())))
-        .onNegotiation(request -> CompletableFuture.completedFuture(
-                new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
-        .build();
+    .onTask(request -> CompletableFuture.completedFuture(
+        MessageContent.text(request.getInstruction())))
+    .onSelfTask(request -> CompletableFuture.completedFuture(
+        TaskResult.success(List.of(Map.of(
+            "sourceResults", request.getWorkflowInput().upstreamResults())))))
+    .onRoute(request -> CompletableFuture.failedFuture(
+        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onNegotiation(request -> CompletableFuture.completedFuture(
+        new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
+    .build();
 ```
 
 ### 4.4 Execute
@@ -137,7 +137,7 @@ CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
         .psop(workflow)
         .agentCards(cards)
         .controlPoint(callbacks)
-        .runtimeIntent("SPN cross-city fault diagnosis")
+        .runtimeIntent("Analyze the service request")
         .lang("zh")
         .credentialsConfigPath("credentials.json")
         .sslVerify(true)
@@ -159,10 +159,10 @@ Required: `psop`, `controlPoint`. All other config items have defaults.
 
 ### 5.1 .env File
 
-The engine does not read A2A-T .env files or create LLM clients. If host callbacks use A2A-T, initialize
-A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. The
-sample's a2atEnvPath setting is only a host/demo setting, not an engine builder option. Do not put OMC credential
-decryption ownership in LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder ()
+The engine does not read A2A-T .env files or create LLM clients. If host-agent callbacks use A2A-T, initialize
+A2ATClient/A2ATServer with a host-owned environment file containing provider/model/key/base URL and A2AT_LANGUAGE. A
+sample-specific a2atEnvPath is not an engine builder option. Keep dispatched-agent credential decryption separate from
+LLM configuration: pass the secret explicitly through WorkflowEngineClientConfig.builder()
 .credentialEncryptionKey (key) when using encrypted built-in credentials, then pass that configured engineClient to
 ExecutePsop. Custom AuthProvider owns its own token/configuration. Tests use the current SDK SPI with an offline
 provider, not template overrides or production fallbacks.
@@ -173,15 +173,13 @@ For agents requiring authentication, provide a JSON credentials file:
 
 ```json
 {
-  "SPN Domain Agent": {
+  "Dispatched Agent": {
     "bearerAuth": {
-      "login_url": "https://127.0.0.1:26335/rest/plat/smapp/v1/oauth/token",
-      "method": "PUT",
+      "login_url": "https://agent.example.com/oauth/token",
+      "method": "POST",
       "request_fields": {
-        "grantType": "password",
-        "userName": "admin",
-        "value": "enc:<base64-iv>:<base64-ciphertext>",
-        "ipaddr": "*"
+        "username": "service-account",
+        "password": "enc:<base64-iv>:<base64-ciphertext>"
       },
       "token_field": "accessSession",
       "token_ttl": 3600
@@ -322,7 +320,7 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
 - `AuthProvider` can be the sole authentication source even when `securityRequirements` is non-empty
 - If both credentials and `AuthProvider` are configured, their headers are generated independently and merged; different
   values for the same header fail fast
-- On auth failure (e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
+- On auth failure(e.g. token retrieval throws), the exception propagates to `send()` and the request is blocked
 
 ## 6. AgentCard Definition
 
@@ -330,7 +328,7 @@ AgentCards declare extensions via `capabilities.extensions`:
 
 ```json
 {
-  "name": "SPN Domain Agent",
+  "name": "Dispatched Agent",
   "capabilities": {
     "streaming": true,
     "extensions": [
@@ -346,12 +344,12 @@ AgentCards declare extensions via `capabilities.extensions`:
       },
       {
         "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1",
-        "description": "Authorization whitelist",
+        "description": "Authorization operation",
         "required": false
       },
       {
         "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1",
-        "description": "Result notification subscription",
+        "description": "Notification subscription",
         "required": false
       }
     ]
@@ -399,19 +397,18 @@ Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
-diagnosis success, even if the remote acknowledges it with COMPLETED.
+task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
-
 NotificationSubscription openNotification(String agentName, MessageContent content,
-                                          BiConsumer<NotificationSubscription, ReceivedMessage> listener);
+    BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-The host generates final Authorization-T/Notification-T content and calls these methods on separate
-transport/runtime/context instances. The listener receives handle and complete ReceivedMessage and closes on the
-business recovery event. acknowledgement () and completion () separately represent ACK and actual stream exit, never
-workflow prerequisites.
+The host agent generates final Authorization-T/Notification-T content and calls these methods on separate
+transport/runtime/context instances. The listener receives the handle and complete ReceivedMessage, and closes on the
+host-defined terminal event. acknowledgement() and completion() separately represent ACK and actual stream exit;
+neither is a workflow prerequisite.
 
 ## 8. HTTPS Configuration
 
@@ -420,26 +417,14 @@ workflow prerequisites.
 .sslVerify(false)
 
 // Production: enable verification + custom CA certs
-.
-
-sslVerify(true)
-.
-
-caCertsPath("/path/to/ca-certs.pem")
+.sslVerify(true)
+.caCertsPath("/path/to/ca-certs.pem")
 
 // Optional mTLS and CRL. Private keys support PKCS#8 PEM/DER; encrypted keys require a password
-.
-
-clientCertPath("/path/to/client-cert.pem")
-.
-
-clientKeyPath("/path/to/client-key.pem")
-.
-
-clientKeyPassword("change-me")
-.
-
-crlPath("/path/to/revocations.crl")
+.clientCertPath("/path/to/client-cert.pem")
+.clientKeyPath("/path/to/client-key.pem")
+.clientKeyPassword("change-me")
+.crlPath("/path/to/revocations.crl")
 ```
 
 For HTTP/JSON-RPC, TLS policy is scoped to the current client and never changes JVM-wide hostname verification;
@@ -455,10 +440,7 @@ records actual metadata and a protobuf JSON view; that view is not an HTTP JSON 
 header just to make logs look uniform. Automatic network headers, HTTP/2 frames, TLS records and server-side bytes are
 not captured.
 
-On dev, `ORDER_FORWARD_REQUEST` records the vendor SDK input and `ORDER_SDK_RESPONSE` records the status, multi-value
-headers and text delivered by the SDK. `sdk-sse-text` assembles available SSE framing from SDK string chunks; original
-byte encoding and the platform-to-OMC wire remain unobserved. It is not OMC packet-capture evidence. `MODEL_PREVIEW` is
-optional, disabled by default, and never wire proof.
+`MODEL_PREVIEW` is optional, disabled by default, and never wire proof.
 
 ```properties
 logger.protocol.name=PROTOCOL
@@ -478,25 +460,12 @@ chunks. Observers cannot fail delivery. File references are recorded as referenc
 requestId correlates each call; workflow calls additionally carry executionId/logicalTaskId/attempt,
 agent/contextId/channel and remoteTaskId when known. These are local log fields, not wire metadata.
 
-### Inspect negotiation in the local Demo
+### Verify protocol and negotiation logs
 
-Running the local SpringSpnDemo without VM options now negotiates missing City1 input; City2 diagnoses directly. This is
-a local sample scenario, not an engine default. To use complete inputs in both cities, add this IDEA **VM option**:
-
-```text
--Da2at.samples.negotiation=false
-```
-
-By default only City1 loses its Task-T task object. Add `-Da2at.samples.negotiation.city=city2` or `both`
-to exercise City2 or both cities. The host retains city-scoped authoritative input and the complaint context is
-preserved. Expect DEMO_NEGOTIATION → INPUT_REQUIRED/PROPOSE → onNegotiation → ACCEPT → both diagnoses → one aggregate.
-External-OMC mode defaults to no injection and rejects an explicit true switch. The Demo passes its setting into the
-current Spring application context without modifying JVM-wide properties. Protocol observations are in the console and
-`logs/spn-demo.log` relative to the run directory.
-
-Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially. Each tests the no-VM-option
-single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
-provider. This is local protocol E2E evidence, not real model/platform/OMC validation.
+Use a controlled test in which one dispatched agent returns `INPUT_REQUIRED` with a valid Negotiation-T Propose. The
+expected sequence is request → Propose → `onNegotiation` → final Send/Stop → terminal task result. The `PROTOCOL` logger
+must show the observed request/response boundaries and correlation fields without exposing credentials. A declared
+Negotiation-T capability alone does not force negotiation.
 
 ## 10. Event Callback
 
@@ -517,13 +486,9 @@ EventCallback callback = new EventCallback() {
     }
 };
 
-ExecutePsop.
-
-builder()
-    .
-
-eventCallback(callback)
-// ...
+ExecutePsop.builder()
+    .eventCallback(callback)
+    // ...
 ```
 
 Common event types: `STEP_START`, `STEP_COMPLETE`, `AGENT_REQUEST`,
@@ -535,185 +500,82 @@ Common event types: `STEP_START`, `STEP_COMPLETE`, `AGENT_REQUEST`,
 ```java
 // Search by intent
 List<WorkflowSearchResult> results = LoadPsop.search(
-                "https://127.0.0.1:5001", "SPN cross-city fault diagnosis", 5, null, false);
+                "https://orchestration.example.com", "analyze service request", 5, null, true);
 
 // Load full workflow by ID
 Workflow workflow = LoadPsop.load(
-        "https://127.0.0.1:5001", results.get(0).getWorkflowId(), null, false);
+        "https://orchestration.example.com", results.get(0).getWorkflowId(), null, true);
 ```
 
 ## 12. Custom Extensions
 
-Construct final MessageContent (parts, metadata, extensions), with host-owned content generation/validation. No engine
+Construct final MessageContent(parts, metadata, extensions), with host-owned content generation/validation. No engine
 handler or SDK instance registration. A2atMessages.from copies A2A-T metadata; other extensions can directly supply
 metadata and activation URIs. AgentCard declarations never cause implicit generation.
 
-## 14. Troubleshooting: Eastcom Order SDK 1.1.18 ByteBuf Leak
+## 13. External endpoints and startup ownership
 
-### Symptom
+### 13.1 Orchestration-center HTTPS development
 
-Order mode can log the following while the forwarded request itself continues:
-
-```text
-ResourceLeakDetector - LEAK: ByteBuf.release() was not called
-Created at: WrapperHttpClient.lambda$null$9(WrapperHttpClient.java:164)
-```
-
-### Root Cause and Compatibility Fix
-
-`order-shaded-client:1.1.18` allocates the request body from
-`PooledByteBufAllocator.DEFAULT`. Its `ReactorNettyBridgeHandler.write(...)` copies that buffer into an RPC protobuf and
-consumes the Netty write without releasing the source message. This is a vendor resource-ownership defect, not an A2A-T
-parsing failure, and repeated requests can consume pooled direct memory.
-
-`EastcomOrder118ByteBufWorkaround` installs a handler immediately before the consuming bridge in outbound traversal. It
-delegates to the bridge first and then calls
-`ReferenceCountUtil.safeRelease(msg)` in `finally`. The workaround neither replaces the vendor jar nor disables leak
-detection. It deliberately fails if the expected 1.1.18 bridge is absent, so a vendor upgrade cannot silently cause a
-double release. Once Eastcom publishes a fixed version, upgrade the dependency, remove the workaround, and repeat the
-Order end-to-end and longevity tests with Netty leak detection set to `paranoid`.
-
-## 15. Troubleshooting: Eastcom Order Mode Concurrent NE Timeout
-
-> **Critical pitfall — read before modifying the Order simulator or gateway adapter.**
-
-### Symptom
-
-In Order mode, when sending Task-T diagnosis tasks to two different NEs concurrently (or while independent
-Notification-T and Authorization-T channels target different NEs), one NE's request fails with
-`Timeout on blocking read for 10000000000 NANOSECONDS` in `WrapperHttpClient.loadNeResource`.
-
-### Root Cause 1: SDK Shared RSocket Connection
-
-The Eastcom SDK's `ServiceReference` caches RSocket connections in a `static final Map INVOKERS` keyed by
-`className + host + port`. All requests to the same platform address share one RSocket connection, regardless of the NE
-name.
-
-`WrapperHttpClient.loadNeResource()` calls `Mono.block(Duration.ofSeconds(10))` — a hardcoded 10-second timeout that
-cannot be changed via configuration.
-
-### Root Cause 2: Blocking I/O on RSocket Event Loop
-
-The `EastcomOrderSimulatorServer.execute()` method (handling RSocket `requestChannel`) calls `forwardParsed()` which
-uses `HttpURLConnection` with blocking `reader.read()`. When City1's Notification-T stream is long-lived (waiting for
-OMC to push recovery events), `reader.read()` blocks indefinitely. If this runs on the RSocket event loop thread
-(`reactor-tcp-nio-*`), the thread is occupied and cannot process City2's `loadNeResource` (RSocket `requestResponse`) on
-the same connection — causing the 10-second timeout.
-
-### Fix 1: Move Forwarding I/O Off the Event Loop Thread
-
-Add `.subscribeOn(Schedulers.boundedElastic())` to the `forwardParsed` call so blocking I/O runs on worker threads,
-freeing the RSocket event loop:
-
-```java
-forwardParsed(httpMethod, httpPath, parsedHeaders, body, forwardUrl, streaming)
-        .
-
-subscribeOn(Schedulers.boundedElastic())
-        .
-
-subscribe(sink::next, sink::error, () ->sink.
-
-complete());
-```
-
-### Fix 2: Use HTTP Host Header Instead of Shared `lastResolvedTarget`
-
-The original simulator used a `volatile String lastResolvedTarget` field set by `loadNeResource` and read by `execute`.
-When two NEs call `loadNeResource` concurrently, the second overwrites the first's target. The SDK's
-`configureHeaderHost()` sets the HTTP `Host` header to the full `neUrl` per request, so each request carries its own
-target:
-
-```java
-String hostHeader = findHeader(parsedHeaders, "Host");
-String targetBase = (hostHeader != null && hostHeader.startsWith("http"))
-        ? withoutTrailingSlash(hostHeader)
-        : (lastResolvedTarget != null ? lastResolvedTarget : defaultUrl);
-```
-
-### Why `readTimeout=65s` Alone Doesn't Help
-
-The simulator's `connection.setReadTimeout(65_000)` only controls `HttpURLConnection`'s read timeout. It does not affect
-the SDK's internal `Mono.block(10s)` in `loadNeResource`. The root cause is the RSocket event loop being blocked, not
-HTTP read timeout.
-
-### Diagnostic Checklist
-
-1. Confirm timeout location: `WrapperHttpClient.loadNeResource` in stack trace = RSocket timeout, not HTTP
-2. Confirm thread: `FORWARD_CHUNK`/`FORWARD_DONE` logs should show `boundedElastic-*`, not `reactor-tcp-nio-*`
-3. Confirm target: `FORWARD_START target=` should match `LOAD_NE_ACCEPTED target=` for the same NE
-4. Confirm session reuse: `SESSION_REUSE` in logs, not `SESSION_OPEN` every time
-5. Confirm singleton: `ClientRuntimeFactory.create()` returns singleton in ORDER mode
-
-## External OMC startup checks
-
-### Orchestration-center HTTPS development
-
-The demo passes `A2A_SSL_VERIFY` (Spring property `a2a.ssl-verify`) to LoadPsop.search/load.
-For controlled development, set `A2A_SSL_VERIFY=false` or `--a2a.ssl-verify=false`.
-No local orchestration CA file is required: both calls skip chain and hostname checks, including
-self-signed certificates, missing SANs and mismatched SANs, and emit a `[Registry] INSECURE_TLS` warning.
+`LoadPsop.search/load` receives an explicit `sslVerify` argument. Keep it `true` in production. In a controlled
+development environment, `false` disables certificate-chain and hostname checks for that connection only and emits a
+`[Registry] INSECURE_TLS` warning. It does not modify JVM-wide TLS defaults.
 
 The HTTPS server must still present a certificate, and client-certificate requirements (mTLS) still apply.
 This mode cannot authenticate the server and is vulnerable to interception; do not use it in production.
 Keep verification enabled in production, configure matching server SANs and trust its CA in the running JVM.
-The southbound `caCertsPath` setting is not forwarded to LoadPsop.
+The dispatched-agent `caCertsPath` setting is not forwarded to LoadPsop.
 LoadPsop never changes JVM-wide SSLContext, SocketFactory or HostnameVerifier defaults.
-Southbound HTTP/JSON-RPC retains hostname checks when chain verification is disabled; vendor forwarding TLS
-remains managed by the vendor SDK/platform.
+Dispatched-agent HTTP/JSON-RPC retains hostname checks when chain verification is disabled.
 
-### Downstream OMC startup
+### 13.2 Dispatched-agent endpoints
 
-Set `A2A_AGENT_CARD_LOCATIONS` in the environment or local .env to comma-separated external AgentCard file locations.
-For SpringSpnDemo, set `A2A_EMBEDDED_OMC_ENABLED=false` or pass
-`--a2a.embedded-omc-enabled=false` when using externally managed OMCs. Use SpringWorkbenchApplication for a persistent
-host; the demo exits after its task.
+The engine consumes AgentCards and never starts dispatched-agent servers. The host agent owns AgentCard discovery,
+endpoint reachability checks, and any development fixtures. When using externally managed dispatched agents, do not
+start local fixtures on the same endpoints. Keep production AgentCards and credentials outside tracked sample resources.
 
-Embedded startup validates both effective city cards before starting either OMC, then uses those cards to bind. Missing
-cards, invalid URLs and non-local addresses fail early. Loopback and local network-interface addresses are accepted;
-non-loopback does not automatically mean remote. This does not probe OMCs or detect existing services. Disable embedded
-startup even when an externally managed OMC runs on this same machine. Keep real cards and credentials outside tracked
-sample resources.
+## 14. Remote problem responses
 
-## Remote problem responses
+A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level
+problem object such as `{"status":429,"detail":"Active task limit reached","type":""}`.
+Top-level numeric status 400–599 with title/detail becomes `RemoteProblemException`, preserving
+status, title, detail, type and timestamp. Both synchronous and streaming responses are checked.
+Nested business data is not classified as a protocol error.
+Detection is limited to bodies actually delivered by the SDK. A non-2xx HTTP response may be rejected
+first as an HTTP/authentication error by the SDK or adapter, without exposing its problem body;
+such failures retain the generic failure path rather than fabricating errorDetails.
 
-A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level problem object such as
-`{"status":429,"detail":"Active task limit reached","type":""}`. Top-level numeric status 400–599 with title/detail
-becomes `RemoteProblemException`, preserving status, title, detail, type and timestamp. Both synchronous and streaming
-responses are checked. Nested business data is not classified as a protocol error. Detection is limited to bodies
-actually delivered by the SDK. A non-2xx HTTP response may be rejected first as an HTTP/authentication error by the SDK
-or adapter, without exposing its problem body; such failures retain the generic failure path rather than fabricating
-errorDetails.
+The error fails the call without fabricating a successful task, invoking onNegotiation, or automatically
+resubmitting it. For 400, inspect business inputs; for 429, inspect dispatched-agent capacity and active tasks or
+subscriptions before deciding whether to retry. Negotiation still requires a valid Negotiation-T Propose.
+Use `RemoteProblemException.findIn(error)` to inspect the cause chain (null means no problem found);
+workflow execution follows its existing failure path.
+Task results and execution history / TASK_RESPONSE events expose `remote.problem.400`,
+`remote.problem.429`, etc. as errorCode, the reason as error, the five fields above as errorDetails,
+and empty outputs. Known credential fields use the protocol logger's redaction rules;
+unrecognized SDK exceptions still expose only the exception type.
+Independent authorization/subscription failures do not determine the workflow result.
+Pretty logging does not modify the received problem payload.
 
-The error fails the call without fabricating a successful task, invoking onNegotiation, or automatically resubmitting
-it. For 400, inspect business inputs; for 429, inspect OMC capacity and existing tasks or subscriptions before deciding
-whether to retry. Negotiation still requires a valid Negotiation-T Propose. Use `RemoteProblemException.findIn(error)`
-to inspect the cause chain (null means no problem found); workflow execution follows its existing failure path. Task
-results and execution history / TASK_RESPONSE events expose `remote.problem.400`,
-`remote.problem.429`, etc. as errorCode, the reason as error, the five fields above as errorDetails, and empty outputs.
-Known credential fields use the protocol logger's redaction rules; unrecognized SDK exceptions still expose only the
-exception type. Independent authorization/subscription failures do not determine the workflow result. Pretty logging
-does not modify the received problem payload.
+For an `ALL_SUCCESS` step, one failed task does not retroactively cancel a peer call that was already dispatched: the
+peer result or timeout is collected before the workflow returns `success=false`. Downstream steps are not invoked;
+successful peer results remain in history rather than being turned into a fabricated aggregate. There is no automatic
+retry, queuing, or partial-success merge. `ANY_SUCCESS` nodes retain their declared first-success semantics.
 
-In the two-city sample, one failed diagnosis does not interrupt the other already dispatched call:
-its result or timeout is collected before the workflow returns `success=false`. The merge_analysis onSelfTask/LLM is not
-invoked; successful peer results remain in history, not in a fabricated overall diagnosis. There is no automatic retry,
-queuing or partial-success merge. Generic AnySuccess nodes retain their existing first-success semantics.
+Observe failures through TASK_RESPONSE or inspect result.history in `onFinish(result, events)`;
+onTask prepares outbound content and is not an error-retry callback.
+Executor node events include executionId; TASK_RESPONSE and history also include the logical taskId.
+The host agent decides how to expose a failed execution to its caller. It must not convert a failed execution into a
+success artifact. A persistent host owns notification subscriptions independently of workflow results.
 
-Observe failures through TASK_RESPONSE or inspect result.history in `onFinish(result, events)`; onTask prepares outbound
-content and is not an error-retry callback. Executor node events include executionId; TASK_RESPONSE and history also
-include the logical taskId. The sample's northbound A2A task returns FAILED with per-agent errorCode, error and
-errorDetails in its status message, without a success-summary artifact. Demo shutdown closes subscriptions; a persistent
-host owns them independently of workflow results.
+Logging responsibilities: PROTOCOL captures observed traffic, correlated by requestId rather than
+adjacent log entries; REMOTE_PROBLEM reports transport rejection; TASK_FAILED identifies the execution,
+step, logical task, agent, code and reason; WORKFLOW_STOPPED lists unexecuted steps.
+Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized remote problems use WARN summaries,
+while unexpected exceptions retain ERROR stack traces. Known credentials and Bearer/Basic values are redacted.
+Logging configuration, pretty display and observer callbacks do not determine task outcomes.
 
-Logging responsibilities: PROTOCOL captures observed traffic, correlated by requestId rather than adjacent log entries;
-REMOTE_PROBLEM reports transport rejection; TASK_FAILED identifies the execution, step, logical task, agent, code and
-reason; WORKFLOW_STOPPED lists unexecuted steps. Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized
-remote problems use WARN summaries, while unexpected exceptions retain ERROR stack traces. Known credentials and
-Bearer/Basic values are redacted. Logging configuration, pretty display and observer callbacks do not determine task
-outcomes.
-
-## 13. Interface Reference
+## 15. Interface Reference
 
 | Interface/Class                                        | Purpose                                                                 |
 |--------------------------------------------------------|-------------------------------------------------------------------------|
