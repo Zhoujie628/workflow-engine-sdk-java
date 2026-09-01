@@ -61,6 +61,7 @@ ExecutionResult result = ExecutePsop.builder()
 CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
 CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
 CompletableFuture<SendMessageResult> subscribeToTask(String agentName, String taskId, Consumer<Map<String,Object>> callback);
 long callbackTimeoutSeconds();
@@ -68,6 +69,10 @@ void setControlPoint(ControlPoint callbacks);
 void setEventCallback(EventCallback callback);
 void close();
 ```
+
+`listTasks` 与 `cancelTask` 通过消息下发使用的同一 AgentCard、认证配置和自定义运行时暴露标准 A2A
+任务管理操作。查询结果受认证身份权限约束，只包含当前身份可见的任务；调用方必须使用
+`nextPageToken` 完成分页。关闭本地客户端或通知流不等同于取消远端任务。
 
 执行器内部调用 dispatch；onTask 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建 A2ATClient，不按
 AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 SDK。

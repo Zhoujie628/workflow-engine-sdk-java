@@ -27,6 +27,8 @@ import dev.openan.workflow.engine.model.TaskRequest;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
+import org.a2aproject.sdk.spec.ListTasksParams;
 
 /** Sends final content and coordinates task interaction. Content generation belongs to the host. */
 public interface WorkflowEngineClient {
@@ -48,6 +50,9 @@ public interface WorkflowEngineClient {
 
   /** Queries an existing remote task. */
   CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
+
+  /** Lists remote tasks visible to the configured authentication identity. */
+  CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 
   /** Cancels an existing remote task; this is not a Negotiation-T Abort. */
   CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);

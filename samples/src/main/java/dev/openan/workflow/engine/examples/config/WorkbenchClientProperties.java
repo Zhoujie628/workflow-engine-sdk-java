@@ -16,6 +16,10 @@ public class WorkbenchClientProperties {
   private boolean sslVerify;
   private String a2atEnvPath = "";
   private boolean demoNegotiationEnabled;
+  private boolean taskCleanupEnabled = true;
+  private boolean taskCleanupFailFast = true;
+  private int taskCleanupPageSize = 100;
+  private int taskCleanupMaxTasks = 1000;
 
   /**
    * Internal sample-host setting; SpringSpnDemo supplies its local-only default per application
@@ -60,5 +64,37 @@ public class WorkbenchClientProperties {
 
   public void setA2atEnvPath(String a2atEnvPath) {
     this.a2atEnvPath = a2atEnvPath;
+  }
+
+  public boolean isTaskCleanupEnabled() {
+    return taskCleanupEnabled;
+  }
+
+  public void setTaskCleanupEnabled(boolean taskCleanupEnabled) {
+    this.taskCleanupEnabled = taskCleanupEnabled;
+  }
+
+  public boolean isTaskCleanupFailFast() {
+    return taskCleanupFailFast;
+  }
+
+  public void setTaskCleanupFailFast(boolean taskCleanupFailFast) {
+    this.taskCleanupFailFast = taskCleanupFailFast;
+  }
+
+  public int getTaskCleanupPageSize() {
+    return taskCleanupPageSize;
+  }
+
+  public void setTaskCleanupPageSize(int taskCleanupPageSize) {
+    this.taskCleanupPageSize = taskCleanupPageSize;
+  }
+
+  public int getTaskCleanupMaxTasks() {
+    return taskCleanupMaxTasks;
+  }
+
+  public void setTaskCleanupMaxTasks(int taskCleanupMaxTasks) {
+    this.taskCleanupMaxTasks = taskCleanupMaxTasks;
   }
 }
