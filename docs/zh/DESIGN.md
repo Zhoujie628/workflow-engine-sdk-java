@@ -21,15 +21,6 @@ SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独�
 ## 2. 周边系统依赖与宿主集成
 
 ```mermaid
-%%{
-  init: {
-    "flowchart": {
-      "curve": "basis",
-      "nodeSpacing": 55,
-      "rankSpacing": 75
-    }
-  }
-}%%
 flowchart TB
     classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
     classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
@@ -39,51 +30,49 @@ flowchart TB
 
     subgraph CONTROL["外部系统"]
         direction LR
-        CALLER["外部 A2A 请求方<br/>任务请求与最终响应"]:::external
+        CALLER["外部 A2A 请求方"]:::external
         REG["注册中心<br/>AgentCard 发布与发现"]:::external
-        ORCH["编排中心<br/>工作流检索与加载"]:::external
+        ORCH["编排中心<br/>Workflow 检索与加载"]:::external
     end
 
     subgraph HOST["宿主智能体"]
         direction TB
         ENTRY["A2A 服务端入口<br/>接收并校验入站任务"]:::host
-        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和上下文"]:::host
+        ADAPTER["宿主集成层<br/>AgentCard、Workflow、配置与上下文"]:::host
 
-        subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
-            direction TB
-            LOAD["发现辅助 API<br/>RegistryClient / LoadPsop"]:::sdk
-            RUN["工作流协议调度<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
-            CALLBACK["宿主回调接口<br/>ControlPoint / EventCallback / onFinish"]:::sdk
-            EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
+        subgraph ENGINE["嵌入式工作流执行引擎 SDK"]
+            direction LR
+            LOAD["发现辅助<br/>RegistryClient / LoadPsop"]:::sdk
+            RUN["协议调度<br/>ExecutePsop → WorkflowExecutor"]:::sdk
+            CALLBACK["宿主回调<br/>ControlPoint / EventCallback"]:::sdk
+            EXT["独立协议操作<br/>ExtensionSender"]:::sdk
         end
 
-        BIZ["宿主业务实现<br/>内容、路由、汇总、持久化与通知处理"]:::host
+        BIZ["宿主业务实现<br/>内容、路由、汇聚、持久化"]:::host
     end
 
-    subgraph SAMPLE["可选本地测试资源（非生产数据源）"]
+    subgraph SAMPLE["可选本地夹具（仅开发）"]
         direction LR
         LOCALCARD["本地 AgentCard JSON"]:::local
-        LOCALPSOP["本地 Workflow 测试数据"]:::local
+        LOCALPSOP["本地 Workflow 夹具"]:::local
     end
 
-    subgraph DOWNSTREAM["被调度智能体"]
-        AGENTS["一个或多个被调度智能体"]:::agent
-    end
+    AGENTS["被调度智能体"]:::agent
 
-    CALLER <-->|"A2A 任务 / 最终结果"| ENTRY
+    CALLER <-->|"任务请求 / 最终结果"| ENTRY
     ENTRY -->|"已校验的意图与输入"| ADAPTER
-    REG -->|"发现 AgentCard"| LOAD
-    ORCH -->|"检索 / 加载 Workflow"| LOAD
-    LOCALCARD -.->|"开发测试数据"| ADAPTER
-    LOCALPSOP -.->|"开发测试数据"| ADAPTER
+    REG -->|"AgentCard 数据"| LOAD
+    ORCH -->|"Workflow 定义"| LOAD
+    LOCALCARD -.->|"开发夹具"| ADAPTER
+    LOCALPSOP -.->|"开发夹具"| ADAPTER
     LOAD -->|"发现结果"| ADAPTER
-    ADAPTER -->|" Workflow + AgentCards "| RUN
-    RUN <-->|" 业务决策与执行结果 "| CALLBACK
-    CALLBACK <-->|" 回调 "| BIZ
-    ADAPTER -->|" 独立业务时机 "| EXT
-    RUN <-->|"Task-T；必要时 Negotiation-T"| AGENTS
+    ADAPTER -->|"Workflow + AgentCard"| RUN
+    RUN <-->|"业务决策 / 结果"| CALLBACK
+    CALLBACK <-->|"回调实现"| BIZ
+    ADAPTER -->|"独立业务时机"| EXT
+    RUN <-->|"Task-T / Negotiation-T"| AGENTS
     EXT <-->|"Authorization-T / Notification-T"| AGENTS
-    BIZ -->|"最终业务结果"| ENTRY
+    BIZ -->|"最终结果"| ENTRY
 ```
 
 上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务：

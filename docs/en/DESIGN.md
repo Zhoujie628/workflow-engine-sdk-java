@@ -25,15 +25,6 @@ negotiation context and metadata copying, not content generation.
 ## 2. Host Integration and Surrounding Systems
 
 ```mermaid
-%%{
-  init: {
-    "flowchart": {
-      "curve": "basis",
-      "nodeSpacing": 55,
-      "rankSpacing": 75
-    }
-  }
-}%%
 flowchart TB
     classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
     classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
@@ -43,51 +34,49 @@ flowchart TB
 
     subgraph CONTROL["External systems"]
         direction LR
-        CALLER["External A2A requester<br/>Task request and final response"]:::external
+        CALLER["External A2A requester"]:::external
         REG["Registry center<br/>AgentCard publication and discovery"]:::external
         ORCH["Orchestration center<br/>Workflow search and loading"]:::external
     end
 
     subgraph HOST["Host agent"]
         direction TB
-        ENTRY["A2A server entry<br/>Receive and validate inbound tasks"]:::host
-        ADAPTER["Host integration layer<br/>Prepare AgentCards, Workflow, configuration and context"]:::host
+        ENTRY["A2A server entry<br/>receive and validate inbound tasks"]:::host
+        ADAPTER["Host integration layer<br/>AgentCards, Workflow, configuration and context"]:::host
 
         subgraph ENGINE["Embedded Workflow Execution Engine SDK"]
-            direction TB
+            direction LR
             LOAD["Discovery helpers<br/>RegistryClient / LoadPsop"]:::sdk
-            RUN["Workflow protocol scheduling<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
-            CALLBACK["Host callbacks<br/>ControlPoint / EventCallback / onFinish"]:::sdk
-            EXT["Independent protocol operations<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
+            RUN["Protocol scheduling<br/>ExecutePsop → WorkflowExecutor"]:::sdk
+            CALLBACK["Host callbacks<br/>ControlPoint / EventCallback"]:::sdk
+            EXT["Independent protocol operations<br/>ExtensionSender"]:::sdk
         end
 
-        BIZ["Host business implementation<br/>Content, routing, aggregation, persistence and notification handling"]:::host
+        BIZ["Host business implementation<br/>content, routing, aggregation, persistence"]:::host
     end
 
-    subgraph SAMPLE["Optional local fixtures (non-production)"]
+    subgraph SAMPLE["Optional local fixtures (development only)"]
         direction LR
         LOCALCARD["Local AgentCard JSON"]:::local
         LOCALPSOP["Local Workflow fixture"]:::local
     end
 
-    subgraph DOWNSTREAM["Dispatched agents"]
-        AGENTS["One or more dispatched agents"]:::agent
-    end
+    AGENTS["Dispatched agents"]:::agent
 
-    CALLER <-->|"A2A request / final result"| ENTRY
+    CALLER <-->|"Task request / final result"| ENTRY
     ENTRY -->|"Validated intent and input"| ADAPTER
-    REG -->|"Discover AgentCards"| LOAD
-    ORCH -->|"Search / load Workflow"| LOAD
+    REG -->|"AgentCards"| LOAD
+    ORCH -->|"Workflow definitions"| LOAD
     LOCALCARD -.->|"Development fixture"| ADAPTER
     LOCALPSOP -.->|"Development fixture"| ADAPTER
     LOAD -->|"Discovery results"| ADAPTER
-    ADAPTER -->|" Workflow + AgentCards "| RUN
-    RUN <-->|"Business decisions and results"| CALLBACK
-    CALLBACK <-->|"Callbacks"| BIZ
+    ADAPTER -->|"Workflow + AgentCards"| RUN
+    RUN <-->|"Business decisions / results"| CALLBACK
+    CALLBACK <-->|"Callback implementation"| BIZ
     ADAPTER -->|"Independent business timing"| EXT
-    RUN <-->|"Task-T; Negotiation-T when required"| AGENTS
+    RUN <-->|"Task-T / Negotiation-T"| AGENTS
     EXT <-->|"Authorization-T / Notification-T"| AGENTS
-    BIZ -->|"Final business result"| ENTRY
+    BIZ -->|"Final result"| ENTRY
 ```
 
 The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed orchestration
