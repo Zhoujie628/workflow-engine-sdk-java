@@ -103,7 +103,9 @@ A2ATClient in the host, not in WorkflowEngineClientConfig or ExecutePsop.
 ```java
 // sdk, data, schema and template selection are owned by host-agent code.
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, templateUri);
+    data, schema,
+    Objects.requireNonNull(
+        System.getProperty("host.task-template-uri"), "host.task-template-uri"));
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("Process this task")));
 ```
 

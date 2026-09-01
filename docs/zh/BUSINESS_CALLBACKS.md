@@ -92,7 +92,9 @@ WorkflowEngineClientConfig 或 ExecutePsop 承载 LLM 配置。
 ```java
 // sdk、data、schema、模板选择均属于宿主智能体。
 MetadataContent generated = sdk.generateTaskPromptFromDataWithSchema(
-    data, schema, templateUri);
+    data, schema,
+    Objects.requireNonNull(
+        System.getProperty("host.task-template-uri"), "host.task-template-uri"));
 MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("处理当前任务")));
 ```
 
