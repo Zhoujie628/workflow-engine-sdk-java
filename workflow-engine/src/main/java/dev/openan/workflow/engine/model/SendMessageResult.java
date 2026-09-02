@@ -26,6 +26,12 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.a2aproject.sdk.spec.Task;
 
+/**
+ * Transport-level result of one send. {@code task} and {@code taskState} carry the remote task
+ * snapshot; {@code receivedMessages} retains the full response losslessly and is the source for
+ * all convenience projections. {@code failureCode}/{@code failureMessage} describe local
+ * interaction failures, separate from the remote task state.
+ */
 @Data
 @NoArgsConstructor
 public class SendMessageResult {

@@ -53,13 +53,17 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * Spring MVC controller exposing A2A message endpoints.
+ * Spring MVC controller exposing A2A message and task endpoints.
  *
- * <p>Maps two endpoints (no AgentCard retrieval -- cards come from the registry center):
+ * <p>Maps six endpoints (no AgentCard retrieval -- cards come from the registry center):
  *
  * <ul>
- *   <li>{@code POST /a2a/json/message:send} - synchronous message send
- *   <li>{@code POST /a2a/json/message:stream} - SSE streaming message send
+ *   <li>{@code POST {prefix}/message:send} - synchronous message send
+ *   <li>{@code POST {prefix}/message:stream} - SSE streaming message send
+ *   <li>{@code GET {prefix}/tasks/{id}} - query one remote task
+ *   <li>{@code GET {prefix}/tasks} - list visible tasks with optional filters
+ *   <li>{@code POST {prefix}/tasks/{id}:cancel} - cancel a remote task
+ *   <li>{@code POST {prefix}/tasks/{id}:subscribe} - SSE subscription to task updates
  * </ul>
  *
  * <p>The path prefix is configurable via {@code a2at.server.path-prefix}. The controller delegates
@@ -304,6 +308,7 @@ public class A2AController {
     return true;
   }
 
+  /** Number of SSE streams currently open (message streaming plus task subscriptions). */
   public int activeStreamCount() {
     return activeStreams.get();
   }
@@ -345,7 +350,8 @@ public class A2AController {
       }
       exts = java.util.Collections.unmodifiableSet(parsed);
     }
-    // OMC spec uses A2A-Version; SDK also supports A2A-Protocol-Version alias
+    // The A2A protocol requires the A2A-Version header; the SDK also accepts the
+    // A2A-Protocol-Version alias.
     String ver = req.getHeader("A2A-Version");
     if (ver == null || ver.isBlank()) {
       ver = req.getHeader("A2A-Protocol-Version");

@@ -399,6 +399,7 @@ public class ExecutePsop {
     return data.toString();
   }
 
+  /** Fluent builder for the runner; see the class javadoc for which options are required. */
   public static final class Builder {
     private Workflow psop;
     private List<AgentCard> agentCards = List.of();

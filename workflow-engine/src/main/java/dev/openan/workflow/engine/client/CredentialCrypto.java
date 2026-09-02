@@ -61,10 +61,10 @@ public final class CredentialCrypto {
    * <pre>
    *   # Option 1: set env var, then encrypt
    *   set A2AT_CRED_KEY=0123456789abcdef...
-   *   java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+   *   java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "your-password"
    *
    *   # Option 2: pass key as second argument
-   *   java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 0123456789abcdef...
+   *   java -cp workflow-engine.jar dev.openan.workflow.engine.client.CredentialCrypto "your-password" 0123456789abcdef...
    * </pre>
    *
    * <p>Output: the encrypted string (e.g. {@code enc:<iv>:<ciphertext>}) to stdout. Copy this value

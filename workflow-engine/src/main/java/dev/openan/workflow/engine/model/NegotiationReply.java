@@ -30,7 +30,11 @@ public sealed interface NegotiationReply {
     }
   }
 
-  /** Ends local execution only. Does not imply a protocol Abort was sent or acknowledged. */
+  /**
+   * Ends local execution only. Does not imply a protocol Abort was sent or acknowledged.
+   *
+   * @throws IllegalArgumentException if {@code code} or {@code reason} is null or blank
+   */
   record Stop(String code, String reason) implements NegotiationReply {
     public Stop {
       if (code == null || code.isBlank() || reason == null || reason.isBlank()) {
