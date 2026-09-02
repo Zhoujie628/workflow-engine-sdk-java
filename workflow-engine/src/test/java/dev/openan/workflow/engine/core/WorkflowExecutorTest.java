@@ -95,6 +95,30 @@ class WorkflowExecutorTest {
   }
 
   @Test
+  void constructorFailsFastWhenClientCallbackWiringFails() {
+    Workflow workflow =
+        Workflow.builder()
+            .name("wiring")
+            .steps(
+                List.of(
+                    WorkflowStep.builder().name("s1").subtasks(List.of(task("A", "do A"))).build()))
+            .build();
+    StubWorkflowEngineClient client =
+        new StubWorkflowEngineClient("A") {
+          @Override
+          public void setControlPoint(ControlPoint controlPoint) {
+            throw new IllegalStateException("wiring failed");
+          }
+        };
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new WorkflowExecutor(workflow, autoCp(), client, recordingCallback(), "", "zh"));
+    assertEquals("wiring failed", error.getMessage());
+  }
+
+  @Test
   void linearWorkflowTwoSteps() {
     WorkflowStep s1 =
         WorkflowStep.builder()
@@ -332,6 +356,45 @@ class WorkflowExecutorTest {
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("allowed next steps"));
     assertEquals(1, stub.getSentCount());
+  }
+
+  @Test
+  void onRouteNullDecisionFailsWithActionableMessage() {
+    WorkflowStep s1 =
+        WorkflowStep.builder()
+            .name("s1")
+            .subtasks(List.of(task("A", "do A")))
+            .next(List.of(jump("s2", "cond")))
+            .build();
+    WorkflowStep s2 =
+        WorkflowStep.builder().name("s2").subtasks(List.of(task("B", "do B"))).build();
+    Workflow workflow = Workflow.builder().name("null-route").steps(List.of(s1, s2)).build();
+    ControlPoint controlPoint =
+        new ControlPoint() {
+          @Override
+          public CompletableFuture<MessageContent> onTask(TaskRequest request) {
+            return CompletableFuture.completedFuture(MessageContent.text(request.getInstruction()));
+          }
+
+          @Override
+          public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
+            return CompletableFuture.completedFuture(null);
+          }
+        };
+
+    ExecutionResult result =
+        new WorkflowExecutor(
+                workflow,
+                controlPoint,
+                new StubWorkflowEngineClient("A", "B"),
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
+
+    assertFalse(result.isSuccess());
+    assertTrue(result.getError().contains("onRoute returned null decision"));
   }
 
   @Test
@@ -582,6 +645,25 @@ class WorkflowExecutorTest {
             .join();
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("cycle"));
+    assertEquals(0, stub.getSentCount());
+  }
+
+  @Test
+  void reservedTerminalRouteCannotAlsoBeAWorkflowStep() {
+    Workflow workflow =
+        Workflow.builder()
+            .name("reserved")
+            .steps(
+                List.of(
+                    WorkflowStep.builder().name("end").subtasks(List.of(task("A", "run"))).build()))
+            .build();
+    StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A");
+
+    ExecutionResult result =
+        new WorkflowExecutor(workflow, autoCp(), stub, recordingCallback(), "", "zh").run().join();
+
+    assertFalse(result.isSuccess());
+    assertTrue(result.getError().contains("reserved for a terminal route"));
     assertEquals(0, stub.getSentCount());
   }
 

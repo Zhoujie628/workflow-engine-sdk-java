@@ -32,7 +32,10 @@ public class TaskResult {
   /** Ordered business outputs; values may be text or JSON-serializable structured data. */
   @Builder.Default List<Object> outputs = List.of();
 
-  /** Remote evidence; local onSelfTask outputs leave this empty. */
+  /**
+   * Remote evidence; local onSelfTask outputs leave this empty. When present, {@code outputs} are
+   * derived from these messages so conflicting builder-supplied output values are not retained.
+   */
   @Builder.Default List<ReceivedMessage> receivedMessages = List.of();
 
   String error;

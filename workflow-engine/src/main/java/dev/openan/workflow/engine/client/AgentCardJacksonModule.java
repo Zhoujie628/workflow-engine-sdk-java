@@ -101,11 +101,15 @@ public final class AgentCardJacksonModule extends SimpleModule {
                 throw ctxt.instantiationException(
                     APIKeySecurityScheme.class, "apiKeySecurityScheme: 'name' field is required");
               }
+              String location = textOrNull(inner, "location");
+              if (location == null) location = textOrNull(inner, "in");
+              if (location == null) {
+                throw ctxt.instantiationException(
+                    APIKeySecurityScheme.class,
+                    "apiKeySecurityScheme: 'location' field is required");
+              }
               yield new APIKeySecurityScheme(
-                  inner.has("in") && inner.get("in").isTextual()
-                      ? APIKeySecurityScheme.Location.valueOf(
-                          inner.get("in").asText().toUpperCase())
-                      : null,
+                  APIKeySecurityScheme.Location.fromString(location),
                   name,
                   textOrNull(inner, "description"));
             }
@@ -149,7 +153,25 @@ public final class AgentCardJacksonModule extends SimpleModule {
       var schemes = new java.util.LinkedHashMap<String, java.util.List<String>>();
       if (node.has("schemes") && node.get("schemes").isObject()) {
         for (var entry : node.get("schemes").properties()) {
-          schemes.put(entry.getKey(), java.util.List.of());
+          JsonNode scopes = entry.getValue();
+          if (scopes.isArray()) {
+            var values = new java.util.ArrayList<String>();
+            for (JsonNode scope : scopes) {
+              if (!scope.isTextual()) {
+                throw ctxt.weirdStringException(
+                    scope.toString(), String.class, "security requirement scopes must be strings");
+              }
+              values.add(scope.asText());
+            }
+            schemes.put(entry.getKey(), java.util.List.copyOf(values));
+          } else if (scopes.isObject() && scopes.isEmpty()) {
+            schemes.put(entry.getKey(), java.util.List.of());
+          } else {
+            throw ctxt.weirdStringException(
+                scopes.toString(),
+                String.class,
+                "security requirement '" + entry.getKey() + "' scopes must be an array");
+          }
         }
       }
       return new org.a2aproject.sdk.spec.SecurityRequirement(schemes);

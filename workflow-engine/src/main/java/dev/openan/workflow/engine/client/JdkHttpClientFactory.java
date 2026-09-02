@@ -29,7 +29,7 @@ final class JdkHttpClientFactory {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(connectTimeout)
-            .followRedirects(HttpClient.Redirect.ALWAYS);
+            .followRedirects(HttpClient.Redirect.NEVER);
     if (executor != null) builder.executor(executor);
     SslContextFactory.create(
             sslVerify, caCertsPath, clientCertPath, clientKeyPath, clientKeyPassword, crlPath)

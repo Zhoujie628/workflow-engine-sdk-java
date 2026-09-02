@@ -100,6 +100,24 @@ class ProtocolResultAdapterTest {
   }
 
   @Test
+  void unknownStateEndingInUnspecifiedIsNotTreatedAsSuccess() {
+    var response =
+        ProtocolResultAdapter.toTaskResult(
+            SendMessageResult.builder()
+                .taskState("VENDOR_UNSPECIFIED")
+                .receivedMessages(
+                    List.of(
+                        new dev.openan.workflow.engine.model.ReceivedMessage(
+                            dev.openan.workflow.engine.model.MessageContent.text("result"),
+                            Map.of(),
+                            List.of())))
+                .build());
+
+    assertFalse(response.isSuccess());
+    assertEquals("Agent returned state=VENDOR_UNSPECIFIED", response.getError());
+  }
+
+  @Test
   void failedStatusIsRetainedAsEvidenceButOnlyArtifactsBecomePartialOutputs() {
     var status = dev.openan.workflow.engine.model.MessageContent.text("error: remote rejected");
     var evidence =

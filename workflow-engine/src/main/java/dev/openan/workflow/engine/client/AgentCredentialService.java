@@ -61,6 +61,8 @@ class AgentCredentialService implements CredentialService {
 
   private final Map<String, TokenEntry> tokenCache = new ConcurrentHashMap<>();
 
+  private final Map<String, Object> refreshLocks = new ConcurrentHashMap<>();
+
   public AgentCredentialService(String agentName, Map<String, Map<String, Object>> schemeConfigs) {
     this(agentName, schemeConfigs, null, null);
   }
@@ -180,23 +182,29 @@ class AgentCredentialService implements CredentialService {
       return null;
     }
 
-    // Check cache
     TokenEntry cached = tokenCache.get(securitySchemeName);
     if (cached != null && !cached.isExpired()) {
       log.info("[Auth] Cache hit for agent {} scheme {}", agentName, securitySchemeName);
       return cached.token;
     }
 
-    // Login and cache
-    String token = login(schemeCfg);
-    if (token != null) {
-      long ttl = toLong(schemeCfg.get("token_ttl"));
-      tokenCache.put(
-          securitySchemeName, new TokenEntry(token, System.currentTimeMillis() / 1000 + ttl));
-      log.info("[Auth] Login succeeded: agent={}, scheme={}", agentName, securitySchemeName);
-    }
+    Object refreshLock = refreshLocks.computeIfAbsent(securitySchemeName, ignored -> new Object());
+    synchronized (refreshLock) {
+      cached = tokenCache.get(securitySchemeName);
+      if (cached != null && !cached.isExpired()) {
+        log.info("[Auth] Cache hit for agent {} scheme {}", agentName, securitySchemeName);
+        return cached.token;
+      }
 
-    return token;
+      String token = login(schemeCfg);
+      if (token != null) {
+        long ttl = toLong(schemeCfg.get("token_ttl"));
+        tokenCache.put(
+            securitySchemeName, new TokenEntry(token, System.currentTimeMillis() / 1000 + ttl));
+        log.info("[Auth] Login succeeded: agent={}, scheme={}", agentName, securitySchemeName);
+      }
+      return token;
+    }
   }
 
   private String login(Map<String, Object> schemeCfg) {
@@ -245,6 +253,10 @@ class AgentCredentialService implements CredentialService {
               .build();
       HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
       return parseTokenResponse(tokenField, resp.statusCode(), resp.body());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      log.error("[Auth] Login interrupted: agent={}, url={}", agentName, loginUrl);
+      return null;
     } catch (Exception e) {
       log.error(
           "[Auth] Login failed: agent={}, url={}, error={}", agentName, loginUrl, e.getMessage());
@@ -262,10 +274,10 @@ class AgentCredentialService implements CredentialService {
         mapper.readValue(responseBody, new TypeReference<Map<String, Object>>() {});
     String token = extractNestedValue(data, tokenField);
     if (token == null) {
-      token =
-          (String)
-              data.getOrDefault(
-                  "accessSession", data.getOrDefault("access_token", data.get("token")));
+      log.error(
+          "[Auth] Login response for agent {} does not contain configured token field {}",
+          agentName,
+          tokenField);
     }
     return token;
   }

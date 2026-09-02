@@ -5,6 +5,7 @@
 package dev.openan.workflow.engine.client;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -13,6 +14,10 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
 import org.junit.jupiter.api.Test;
@@ -49,6 +54,85 @@ class AgentCredentialServiceTest {
       assertEquals("token-1", token);
       assertTrue(requestBody.get().contains("user+name=a%2Bb"));
       assertTrue(requestBody.get().contains("password=%E5%AF%86%26%E7%A0%81%3D"));
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void concurrentCacheMissesShareOneLogin() throws Exception {
+    AtomicInteger logins = new AtomicInteger();
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/token",
+        exchange -> {
+          logins.incrementAndGet();
+          try {
+            Thread.sleep(100);
+          } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+          }
+          byte[] response = "{\"access_token\":\"shared-token\"}".getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    server.start();
+    var executor = Executors.newFixedThreadPool(8);
+    try {
+      Map<String, Object> scheme = new HashMap<>();
+      scheme.put("login_url", "http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+      scheme.put("token_field", "access_token");
+      scheme.put("request_fields", Map.of("username", "user", "password", "password"));
+      AgentCredentialService service =
+          new AgentCredentialService("agent", Map.of("bearer", scheme), HttpClient.newHttpClient());
+      CountDownLatch ready = new CountDownLatch(8);
+      CountDownLatch start = new CountDownLatch(1);
+      var calls =
+          java.util.stream.IntStream.range(0, 8)
+              .mapToObj(
+                  ignored ->
+                      executor.submit(
+                          () -> {
+                            ready.countDown();
+                            start.await();
+                            return service.getCredential(
+                                "bearer", new ClientCallContext(new HashMap<>(), new HashMap<>()));
+                          }))
+              .toList();
+      assertTrue(ready.await(2, TimeUnit.SECONDS));
+      start.countDown();
+
+      for (var call : calls) assertEquals("shared-token", call.get(3, TimeUnit.SECONDS));
+      assertEquals(1, logins.get());
+    } finally {
+      executor.shutdownNow();
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void configuredTokenFieldDoesNotSilentlyFallbackToAnotherResponseField() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/token",
+        exchange -> {
+          byte[] response = "{\"token\":\"wrong-field\"}".getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    server.start();
+    try {
+      Map<String, Object> scheme = new HashMap<>();
+      scheme.put("login_url", "http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+      scheme.put("token_field", "accessSession");
+      scheme.put("request_fields", Map.of("username", "user", "password", "password"));
+      AgentCredentialService service =
+          new AgentCredentialService("agent", Map.of("bearer", scheme), HttpClient.newHttpClient());
+
+      assertNull(
+          service.getCredential("bearer", new ClientCallContext(new HashMap<>(), new HashMap<>())));
     } finally {
       server.stop(0);
     }

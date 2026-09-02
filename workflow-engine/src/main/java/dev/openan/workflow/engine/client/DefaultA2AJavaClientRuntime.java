@@ -217,10 +217,7 @@ public class DefaultA2AJavaClientRuntime
     } else {
       String msg = error.getMessage() != null ? error.getMessage() : "";
       RemoteProblemException problem = RemoteProblemException.findIn(error);
-      boolean connectionClosed =
-          problem == null
-              && (msg.contains("connection closed locally")
-                  || msg.contains("chunked transfer encoding, state: READING_LENGTH"));
+      boolean connectionClosed = problem == null && TransportFailures.isExpectedLocalClose(error);
       if (connectionClosed) {
         log.debug("[A2ARuntime] Connection closed for '{}': {}", agentName, msg);
       } else {
@@ -311,10 +308,10 @@ public class DefaultA2AJavaClientRuntime
     return event.getClass().getSimpleName();
   }
 
-  private static boolean isNotificationStream(org.a2aproject.sdk.spec.MessageSendParams params) {
-    return params.message() != null
-        && params.message().metadata() != null
-        && params.message().metadata().containsKey(A2ATExtension.NOTIFICATION_T.uri());
+  static boolean isNotificationStream(ClientCallContext callContext) {
+    return callContext != null
+        && A2AJavaClientRuntime.NOTIFICATION_CHANNEL.equals(
+            callContext.getState().get(A2AJavaClientRuntime.CHANNEL_STATE_KEY));
   }
 
   @Override
@@ -327,7 +324,7 @@ public class DefaultA2AJavaClientRuntime
     if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
     String agentUrl = extractAgentUrl(agentCard);
     Client client =
-        isNotificationStream(params)
+        isNotificationStream(callContext)
             ? getOrCreateStreamClient(
                 agentCard, params.message() != null ? params.message().contextId() : null)
             : getOrCreateClient(agentCard, agentUrl);

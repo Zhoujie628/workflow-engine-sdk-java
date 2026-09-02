@@ -140,4 +140,27 @@ class ProtocolResponsesTest {
             .get(0)
             .outputs());
   }
+
+  @Test
+  void incrementalDeliveryDoesNotReplayOrRetainPriorStandaloneMessages() {
+    ProtocolResponses.Accumulator accumulator = new ProtocolResponses.Accumulator();
+    Message first =
+        Message.builder()
+            .messageId("first")
+            .role(Message.Role.ROLE_AGENT)
+            .parts(new TextPart("one"))
+            .build();
+    Message second =
+        Message.builder()
+            .messageId("second")
+            .role(Message.Role.ROLE_AGENT)
+            .parts(new TextPart("two"))
+            .build();
+
+    assertEquals(
+        List.of("one"), accumulator.acceptIncrementally(new MessageEvent(first)).get(0).outputs());
+    assertEquals(
+        List.of("two"), accumulator.acceptIncrementally(new MessageEvent(second)).get(0).outputs());
+    assertTrue(accumulator.snapshots().isEmpty());
+  }
 }

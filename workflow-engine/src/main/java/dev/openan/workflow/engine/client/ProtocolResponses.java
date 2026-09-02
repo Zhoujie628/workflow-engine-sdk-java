@@ -84,6 +84,18 @@ public final class ProtocolResponses {
       }
     }
 
+    List<ReceivedMessage> acceptIncrementally(ClientEvent event) {
+      if (event instanceof MessageEvent message) {
+        Message value = message.getMessage();
+        return List.of(new ReceivedMessage(content(value), Map.of(), List.of()));
+      }
+      accept(event);
+      if (event instanceof TaskEvent || event instanceof TaskUpdateEvent) {
+        return List.of(taskSnapshot());
+      }
+      return List.of();
+    }
+
     private void snapshot(Task task, boolean authoritative) {
       if (task == null) return;
       hasTask = true;
@@ -121,10 +133,12 @@ public final class ProtocolResponses {
     List<ReceivedMessage> snapshots() {
       List<ReceivedMessage> result = new ArrayList<>();
       messages.values().forEach(m -> result.add(new ReceivedMessage(m, Map.of(), List.of())));
-      if (hasTask)
-        result.add(
-            new ReceivedMessage(statusMessage, taskMetadata, new ArrayList<>(artifacts.values())));
+      if (hasTask) result.add(taskSnapshot());
       return List.copyOf(result);
+    }
+
+    private ReceivedMessage taskSnapshot() {
+      return new ReceivedMessage(statusMessage, taskMetadata, new ArrayList<>(artifacts.values()));
     }
   }
 }

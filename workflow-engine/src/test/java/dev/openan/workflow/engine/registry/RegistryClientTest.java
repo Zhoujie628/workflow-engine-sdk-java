@@ -5,8 +5,10 @@
 package dev.openan.workflow.engine.registry;
 
 import static org.junit.jupiter.api.Assertions.*;
+
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class RegistryClientTest {
@@ -34,6 +36,34 @@ class RegistryClientTest {
           assertThrows(java.net.http.HttpTimeoutException.class, client::fetchAgentCards));
     } finally {
       release.countDown();
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void registrationFailureIsNotReportedAsAResult() throws Exception {
+    var server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/rest/v1/registry-center/agent-cards",
+        exchange -> {
+          byte[] response =
+              "{\"detail\":\"invalid card\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(400, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    server.start();
+    try {
+      var client =
+          new RegistryClient(
+              "http://127.0.0.1:" + server.getAddress().getPort(), true, Duration.ofSeconds(2));
+
+      RuntimeException error =
+          assertThrows(
+              RuntimeException.class, () -> client.registerAgentCard(Map.of("name", "invalid")));
+      assertEquals(
+          "Registry registration returned 400: {\"detail\":\"invalid card\"}", error.getMessage());
+    } finally {
       server.stop(0);
     }
   }
