@@ -24,10 +24,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Uninterpreted received content and history for one task's current negotiation session.
- *
- * @throws NullPointerException if any component except {@code previousExchanges} is null
- * @throws IllegalArgumentException if {@code remainingWait} is negative
+ * Uninterpreted received content and history for one task's current negotiation session. Throws
+ * {@link NullPointerException} if any component is null (including {@code previousExchanges})
+ * and {@link IllegalArgumentException} if {@code remainingWait} is negative.
  */
 public record NegotiationRequest(
     TaskRequest task,

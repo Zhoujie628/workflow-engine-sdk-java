@@ -34,10 +34,9 @@ import org.a2aproject.sdk.spec.Part;
 import org.a2aproject.sdk.spec.TextPart;
 
 /**
- * Final business content. The engine owns the A2A envelope and transport headers.
- *
- * @throws IllegalArgumentException if an extension URI is blank, or a part is not a supported
- *     A2A part kind
+ * Final business content. The engine owns the A2A envelope and transport headers. Throws {@link
+ * IllegalArgumentException} if an extension URI is blank or a part is not a supported A2A part
+ * kind.
  */
 public record MessageContent(
     List<Part<?>> parts, Map<String, Object> metadata, Set<String> extensions) {

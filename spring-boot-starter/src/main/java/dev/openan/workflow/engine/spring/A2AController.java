@@ -350,8 +350,9 @@ public class A2AController {
       }
       exts = java.util.Collections.unmodifiableSet(parsed);
     }
-    // The A2A protocol requires the A2A-Version header; the SDK also accepts the
-    // A2A-Protocol-Version alias.
+    // A2A-Version carries the requested protocol version; a missing or empty header follows the
+    // spec default (0.3). This adapter additionally accepts A2A-Protocol-Version as a local
+    // compatibility alias.
     String ver = req.getHeader("A2A-Version");
     if (ver == null || ver.isBlank()) {
       ver = req.getHeader("A2A-Protocol-Version");
