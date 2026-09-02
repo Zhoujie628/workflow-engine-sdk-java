@@ -41,6 +41,8 @@ import org.a2aproject.sdk.spec.Task;
  * engine package so the engine can depend on it directly.
  */
 public interface A2AJavaClientRuntime {
+  String CHANNEL_STATE_KEY = "dev.openan.workflow.engine.channel";
+  String NOTIFICATION_CHANNEL = "notification";
 
   /**
    * Send a message to an agent and collect the streaming events.

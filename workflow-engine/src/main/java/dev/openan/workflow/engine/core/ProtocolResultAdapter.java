@@ -21,6 +21,7 @@ package dev.openan.workflow.engine.core;
 
 import dev.openan.workflow.engine.model.SendMessageResult;
 import dev.openan.workflow.engine.model.TaskResult;
+import org.a2aproject.sdk.spec.TaskState;
 
 /** Maps transport state independently from the presence or absence of business content. */
 final class ProtocolResultAdapter {
@@ -30,10 +31,19 @@ final class ProtocolResultAdapter {
     if (result == null)
       return TaskResult.failure("remote.no_response", "Agent returned no response");
     String state = result.getTaskState();
+    TaskState protocolState = null;
+    if (state != null && !state.isBlank()) {
+      try {
+        protocolState = TaskState.valueOf(state);
+      } catch (IllegalArgumentException ignored) {
+        // Unknown transport state remains a failure and is preserved in the diagnostic below.
+      }
+    }
     boolean standaloneMessage = result.getTask() == null && !result.getReceivedMessages().isEmpty();
     boolean success =
-        "TASK_STATE_COMPLETED".equals(state)
-            || ((state == null || state.isBlank() || state.endsWith("UNSPECIFIED"))
+        protocolState == TaskState.TASK_STATE_COMPLETED
+            || (((state == null || state.isBlank())
+                    || protocolState == TaskState.TASK_STATE_UNSPECIFIED)
                 && standaloneMessage);
     if (result.getFailureCode() != null) success = false;
     return TaskResult.builder()

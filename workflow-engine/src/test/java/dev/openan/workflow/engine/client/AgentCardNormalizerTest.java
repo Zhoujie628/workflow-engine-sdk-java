@@ -21,8 +21,12 @@ package dev.openan.workflow.engine.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import org.a2aproject.sdk.spec.APIKeySecurityScheme;
+import org.a2aproject.sdk.spec.SecurityRequirement;
+import org.a2aproject.sdk.spec.SecurityScheme;
 import org.junit.jupiter.api.Test;
 
 /** Tests for AgentCardNormalizer: OpenAPI -> structured format conversion. */
@@ -77,6 +81,37 @@ class AgentCardNormalizerTest {
     Map<String, Object> apiKey = (Map<String, Object>) apiKeyWrapper.get("apiKeySecurityScheme");
     assertEquals("header", apiKey.get("location"));
     assertEquals("X-API-Key", apiKey.get("name"));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void normalizedApiKeySchemeDeserializesWithItsLocation() {
+    Map<String, Object> card =
+        Map.of(
+            "securitySchemes",
+            Map.of("apiKeyAuth", Map.of("type", "apiKey", "in", "header", "name", "X-API-Key")));
+    Map<String, Object> normalized = AgentCardNormalizer.normalize(card);
+    Map<String, Object> schemes = (Map<String, Object>) normalized.get("securitySchemes");
+    SecurityScheme scheme =
+        new ObjectMapper()
+            .registerModule(new AgentCardJacksonModule())
+            .convertValue(schemes.get("apiKeyAuth"), SecurityScheme.class);
+
+    APIKeySecurityScheme apiKey = assertInstanceOf(APIKeySecurityScheme.class, scheme);
+    assertEquals(APIKeySecurityScheme.Location.HEADER, apiKey.location());
+    assertEquals("X-API-Key", apiKey.name());
+  }
+
+  @Test
+  void securityRequirementScopesSurviveDeserialization() {
+    SecurityRequirement requirement =
+        new ObjectMapper()
+            .registerModule(new AgentCardJacksonModule())
+            .convertValue(
+                Map.of("schemes", Map.of("oauth", List.of("tasks:read", "tasks:write"))),
+                SecurityRequirement.class);
+
+    assertEquals(List.of("tasks:read", "tasks:write"), requirement.schemes().get("oauth"));
   }
 
   @Test

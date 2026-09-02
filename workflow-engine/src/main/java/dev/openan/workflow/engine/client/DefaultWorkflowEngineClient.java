@@ -36,7 +36,6 @@ import org.a2aproject.sdk.client.TaskUpdateEvent;
 import org.a2aproject.sdk.jsonrpc.common.wrappers.ListTasksResult;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.spec.ListTasksParams;
-import org.a2aproject.sdk.spec.Message;
 import org.a2aproject.sdk.spec.TaskStatusUpdateEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,8 +51,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   private final boolean closeTransportOnClose;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final Set<Invocation> invocations = java.util.concurrent.ConcurrentHashMap.newKeySet();
-  private EventCallback eventCallback = new EventCallback();
-  private ControlPoint controlPoint;
+  private volatile EventCallback eventCallback = new EventCallback();
+  private volatile ControlPoint controlPoint;
 
   /** Creates a caller-owned transport facade. */
   public DefaultWorkflowEngineClient(A2ATransport transport) {
@@ -372,18 +371,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   }
 
   private void forwardIntermediateEvent(ClientEvent event, String agentName) {
+    Map<String, Object> data = ClientEventMapper.toMap(event, agentName);
     if (event instanceof TaskUpdateEvent tue) {
       if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue) {
         String state = sue.status().state().name();
-        StringBuilder statusText = new StringBuilder();
-        A2ATransport.extractTextFromMessage(sue.status().message(), statusText);
-        Map<String, Object> data = new HashMap<>();
-        data.put("agent", agentName);
-        data.put("state", state);
-        data.put("is_final", sue.isFinal());
-        if (!statusText.isEmpty()) data.put("text", statusText.toString());
-        if (sue.metadata() != null && !sue.metadata().isEmpty())
-          data.put("metadata", sue.metadata());
         log.info(
             "[EngineClient] Agent {} status update: {} (final={})",
             agentName,
@@ -392,20 +383,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         emit(EventType.AGENT_STATUS_UPDATE, data);
       } else if (tue.getUpdateEvent()
           instanceof org.a2aproject.sdk.spec.TaskArtifactUpdateEvent ae) {
-        StringBuilder text = new StringBuilder();
-        A2ATransport.extractTextFromArtifact(ae.artifact(), text);
-        Map<String, Object> data = new HashMap<>();
-        data.put("agent", agentName);
-        data.put("artifact_id", ae.artifact().artifactId());
-        data.put("artifact_name", ae.artifact().name());
-        data.put("append", ae.append());
-        data.put("last_chunk", ae.lastChunk());
-        if (!text.isEmpty()) data.put("text", text.toString());
-        // Business metadata belongs to the Artifact. Event metadata describes delivery
-        // (chunking, tracing, etc.) and must not hide the protocol payload.
-        Map<String, Object> artifactMetadata = ae.artifact().metadata();
-        if (artifactMetadata != null && !artifactMetadata.isEmpty())
-          data.put("metadata", artifactMetadata);
         log.info(
             "[EngineClient] Agent {} artifact update: {} ({})",
             agentName,
@@ -413,17 +390,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             ae.artifact().artifactId());
         emit(EventType.AGENT_ARTIFACT_UPDATE, data);
       }
-    } else if (event instanceof MessageEvent me) {
-      Message msg = me.getMessage();
-      StringBuilder text = new StringBuilder();
-      A2ATransport.extractTextFromMessage(msg, text);
-      Map<String, Object> data = new HashMap<>();
-      data.put("agent", agentName);
-      data.put("role", msg.role().name());
-      if (!text.isEmpty()) data.put("text", text.toString());
-      if (msg.metadata() != null && !msg.metadata().isEmpty()) {
-        data.put("metadata", msg.metadata());
-      }
+    } else if (event instanceof MessageEvent) {
+      String text = (String) data.getOrDefault("text", "");
       log.info("[EngineClient] Agent {} message event: {} chars", agentName, text.length());
       emit(EventType.AGENT_MESSAGE_EVENT, data);
     }

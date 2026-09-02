@@ -34,6 +34,7 @@ import dev.openan.workflow.engine.model.TaskStatus;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowInput;
 import dev.openan.workflow.engine.model.WorkflowStep;
+import dev.openan.workflow.engine.util.SensitiveDataRedactor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
@@ -56,6 +57,9 @@ import org.slf4j.LoggerFactory;
  */
 public class WorkflowExecutor {
   private static final Logger log = LoggerFactory.getLogger(WorkflowExecutor.class);
+  private static final Set<String> TERMINAL_ROUTES = Set.of("end", "retry", "endNode");
+  private static final com.fasterxml.jackson.databind.ObjectMapper WORKFLOW_SNAPSHOT_MAPPER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   private final Workflow workflow;
   private final AtomicBoolean started = new AtomicBoolean();
@@ -80,23 +84,16 @@ public class WorkflowExecutor {
       EventCallback eventCallback,
       String runtimeIntent,
       String lang) {
-    this.workflow =
-        new com.fasterxml.jackson.databind.ObjectMapper().convertValue(workflow, Workflow.class);
+    // Definitions are mutable for JSON/builder compatibility. Snapshot them so runtime status
+    // changes and caller mutations cannot leak between concurrent executions.
+    this.workflow = WORKFLOW_SNAPSHOT_MAPPER.convertValue(workflow, Workflow.class);
     this.controlPoint = controlPoint;
     this.engineClient = engineClient;
     this.eventCallback = eventCallback != null ? eventCallback : new EventCallback();
     this.contextBuilder = new ContextBuilder(this.workflow, runtimeIntent);
     this.lang = lang != null ? lang : "zh";
-    try {
-      this.engineClient.setControlPoint(this.controlPoint);
-    } catch (Exception ignored) {
-      // Engine client may not support control point injection
-    }
-    try {
-      this.engineClient.setEventCallback(this.eventCallback);
-    } catch (Exception ignored) {
-      // Engine client may not support event callback injection
-    }
+    this.engineClient.setControlPoint(this.controlPoint);
+    this.engineClient.setEventCallback(this.eventCallback);
     log.info(
         "[Executor] Workflow: {}, steps={}, intent={}, lang={}",
         workflow.getName(),
@@ -106,7 +103,7 @@ public class WorkflowExecutor {
   }
 
   private static boolean isTerminalRoute(String stepName) {
-    return "end".equals(stepName) || "retry".equals(stepName) || "endNode".equals(stepName);
+    return TERMINAL_ROUTES.contains(stepName);
   }
 
   private static <T> void completeFrom(
@@ -387,6 +384,10 @@ public class WorkflowExecutor {
       if (name == null || name.isBlank()) {
         throw new IllegalArgumentException("Workflow step name must not be blank");
       }
+      if (isTerminalRoute(name)) {
+        throw new IllegalArgumentException(
+            "Workflow step name is reserved for a terminal route: " + name);
+      }
       if (indices.put(name, i) != null) {
         throw new IllegalArgumentException("Duplicate workflow step name: " + name);
       }
@@ -605,7 +606,7 @@ public class WorkflowExecutor {
           taskId(step.getName(), subtaskIndex),
           task.getAgent(),
           response.getErrorCode(),
-          dev.openan.workflow.engine.client.WireLog.redact(response.getError())
+          SensitiveDataRedactor.redact(response.getError())
               .replace("\r", "\\r")
               .replace("\n", "\\n"));
     }
@@ -802,11 +803,14 @@ public class WorkflowExecutor {
                         new dev.openan.workflow.engine.model.RouteRequest.RouteOption(
                             option.getStep(), option.getCondition()))
                 .toList());
-    return controlPoint
-        .onRoute(routeRequest)
+    CompletableFuture<dev.openan.workflow.engine.model.RouteDecision> routeDecision =
+        java.util.Objects.requireNonNull(
+            controlPoint.onRoute(routeRequest), "onRoute returned null future");
+    return routeDecision
         .orTimeout(engineClient.callbackTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)
         .thenApply(
             decision -> {
+              java.util.Objects.requireNonNull(decision, "onRoute returned null decision");
               log.info(
                   "Route for '{}': {} ({})",
                   step.getName(),

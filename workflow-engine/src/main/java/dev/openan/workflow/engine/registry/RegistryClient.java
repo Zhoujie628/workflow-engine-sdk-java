@@ -22,6 +22,7 @@ package dev.openan.workflow.engine.registry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.AgentCardNormalizer;
 import dev.openan.workflow.engine.client.SslContextFactory;
+import dev.openan.workflow.engine.util.SensitiveDataRedactor;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -57,11 +58,23 @@ public class RegistryClient {
     HttpClient.Builder clientBuilder =
         HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(30))
-            .followRedirects(HttpClient.Redirect.ALWAYS);
+            .followRedirects(HttpClient.Redirect.NEVER);
     if (!sslVerify) {
       clientBuilder.sslContext(SslContextFactory.createTrustAll());
     }
     this.httpClient = clientBuilder.build();
+  }
+
+  private static RuntimeException requestFailure(String service, int status, String body) {
+    String detail = SensitiveDataRedactor.redact(body).replace("\r", "\\r").replace("\n", "\\n");
+    if (detail.length() > 512) detail = detail.substring(0, 512) + "...";
+    return new RuntimeException(
+        service + " returned " + status + (detail.isBlank() ? "" : ": " + detail));
+  }
+
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> fetchAgentCard(String name) throws Exception {
+    return fetchAgentCard(name, null);
   }
 
   @SuppressWarnings("unchecked")
@@ -71,7 +84,7 @@ public class RegistryClient {
     HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
-      throw new RuntimeException("Registry returned " + resp.statusCode());
+      throw requestFailure("Registry", resp.statusCode(), resp.body());
     }
     Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
     List<Map<String, Object>> cards =
@@ -83,9 +96,8 @@ public class RegistryClient {
     return cards;
   }
 
-  @SuppressWarnings("unchecked")
-  public Map<String, Object> fetchAgentCard(String name) throws Exception {
-    return fetchAgentCard(name, null);
+  public String getBaseUrl() {
+    return baseUrl;
   }
 
   @SuppressWarnings("unchecked")
@@ -107,7 +119,7 @@ public class RegistryClient {
     HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
-      throw new RuntimeException("Registry returned " + resp.statusCode());
+      throw requestFailure("Registry", resp.statusCode(), resp.body());
     }
     Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
     List<Map<String, Object>> cards =
@@ -119,10 +131,6 @@ public class RegistryClient {
     }
     log.info("[Registry] Agent card found: name={}", name);
     return AgentCardNormalizer.normalize(cards.get(0));
-  }
-
-  public String getBaseUrl() {
-    return baseUrl;
   }
 
   /**
@@ -145,12 +153,11 @@ public class RegistryClient {
             .POST(HttpRequest.BodyPublishers.ofString(json))
             .build();
     HttpResponse<String> resp = send(request);
-    Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
-    if (resp.statusCode() == 200 || resp.statusCode() == 201) {
-      log.info("[Registry] Agent card registered: name={}", agentCard.get("name"));
-    } else {
-      log.warn("[Registry] Registration returned {}: {}", resp.statusCode(), resp.body());
+    if (resp.statusCode() != 200 && resp.statusCode() != 201) {
+      throw requestFailure("Registry registration", resp.statusCode(), resp.body());
     }
+    Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
+    log.info("[Registry] Agent card registered: name={}", agentCard.get("name"));
     return result;
   }
 

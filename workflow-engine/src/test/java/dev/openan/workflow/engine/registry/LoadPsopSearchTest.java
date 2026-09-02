@@ -127,7 +127,11 @@ class LoadPsopSearchTest {
     server.createContext(
         "/api/v1/orchestrate/search",
         exchange -> {
-          exchange.sendResponseHeaders(500, 0);
+          byte[] response =
+              "{\"detail\":\"temporarily unavailable\",\"accessToken\":\"private\"}"
+                  .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(500, response.length);
+          exchange.getResponseBody().write(response);
           exchange.close();
         });
     server.start();
@@ -135,7 +139,12 @@ class LoadPsopSearchTest {
     String baseUrl = "http://127.0.0.1:" + port;
 
     try {
-      assertThrows(RuntimeException.class, () -> LoadPsop.search(baseUrl, "test", 5, null, false));
+      RuntimeException error =
+          assertThrows(
+              RuntimeException.class, () -> LoadPsop.search(baseUrl, "test", 5, null, false));
+      assertTrue(error.getMessage().contains("temporarily unavailable"));
+      assertTrue(error.getMessage().contains("\"accessToken\":\"***\""));
+      assertFalse(error.getMessage().contains("private"));
     } finally {
       server.stop(0);
     }

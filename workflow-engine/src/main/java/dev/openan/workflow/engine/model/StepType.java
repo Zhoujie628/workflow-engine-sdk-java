@@ -39,7 +39,7 @@ public enum StepType {
         return t;
       }
     }
-    return ALL_SUCCESS;
+    throw new IllegalArgumentException("Unknown workflow step type: " + v);
   }
 
   public String getValue() {
