@@ -50,6 +50,21 @@ public final class LlmHelper {
 
   private LlmHelper() {}
 
+  /**
+   * Calls the configured OpenAI-compatible chat API and returns the reply text.
+   *
+   * <p>Demo-only degradation contract: when the LLM is not configured or disabled, the HTTP call
+   * returns a non-200 status, the reply is empty or incomplete (a non-null {@code finishReason}
+   * other than {@code stop}), or the call throws, this method returns {@code fallback} and logs
+   * an {@code LLM_FALLBACK} line. The return type carries no signal distinguishing a real reply
+   * from the fallback, so callers report success either way. Production code should treat
+   * generation failure as a business failure instead of adopting this pattern.
+   *
+   * @param envPath path to the .env file holding the LLM configuration
+   * @param system system prompt, may be null
+   * @param user user prompt
+   * @param fallback text returned on any failure; see the degradation contract above
+   */
   public static String text(String envPath, String system, String user, String fallback) {
     Config config = resolve(envPath);
     if (config == null) {

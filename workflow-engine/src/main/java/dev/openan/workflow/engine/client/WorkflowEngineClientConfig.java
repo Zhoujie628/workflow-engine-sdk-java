@@ -114,6 +114,7 @@ public class WorkflowEngineClientConfig {
     return new Builder();
   }
 
+  /** Fluent builder; values default to the same defaults as the convenience factory methods. */
   public static class Builder {
     private boolean sslVerify = true;
     private String caCertsPath = null;

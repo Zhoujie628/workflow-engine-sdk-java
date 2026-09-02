@@ -16,19 +16,9 @@
  *    License for the specific language governing permissions and limitations
  *    under the License.
  */
-package dev.openan.workflow.engine.client;
-
-import org.a2aproject.sdk.spec.AgentCard;
 
 /**
- * Optional capability for runtimes whose transport session spans multiple A2A requests.
- *
- * <p>An A2A negotiation uses a second HTTP/SSE request, but remains part of the same logical
- * conversation. Implementations can use this lifecycle callback to keep an authenticated gateway
- * session alive across all negotiation rounds and release it only after the complete conversation.
+ * High-level programmatic runner wiring registry, engine, and callbacks for standalone workflow
+ * execution; not a command-line entry point.
  */
-public interface ConversationScopedA2AJavaClientRuntime {
-
-  /** Release resources retained for the completed logical conversation. */
-  void closeConversation(AgentCard agentCard, String contextId);
-}
+package dev.openan.workflow.engine.runner;

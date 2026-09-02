@@ -36,7 +36,7 @@ public class A2AProperties {
   /** Path to the AgentCard JSON file (classpath: or file: prefix supported). */
   private String agentCard = "classpath:agentcard.json";
 
-  /** URL path prefix for A2A endpoints (extracted from AgentCard by default). */
+  /** URL path prefix for A2A endpoints; all controller mappings are anchored under it. */
   private String pathPrefix = "/a2a/json";
 
   /** Timeout for blocking agent execution. */

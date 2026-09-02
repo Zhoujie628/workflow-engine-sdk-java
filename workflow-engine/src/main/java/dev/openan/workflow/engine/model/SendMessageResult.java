@@ -26,6 +26,15 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.a2aproject.sdk.spec.Task;
 
+/**
+ * Transport-level result of one send. {@code task} and {@code taskState} carry the remote task
+ * snapshot; {@code receivedMessages} carries a structured projection of the response — business
+ * parts, message/task metadata, and artifacts at their own levels — and is the source for all
+ * convenience projections. It is not a wire-level transcript: envelope fields such as task and
+ * context identifiers, status history, and artifact delta flags are not preserved. {@code
+ * failureCode}/{@code failureMessage} describe local interaction failures, separate from the
+ * remote task state.
+ */
 @Data
 @NoArgsConstructor
 public class SendMessageResult {
@@ -39,7 +48,7 @@ public class SendMessageResult {
 
   private String failureMessage;
 
-  /** Lossless source of all convenience outputs. */
+  /** Source for all convenience outputs; a structured projection, not a wire transcript. */
   private List<ReceivedMessage> receivedMessages = List.of();
 
   @Builder

@@ -50,8 +50,8 @@ public final class SpnCasePrompts {
 
   /**
    * JSON schema for the private-line complaint data, mirroring the SDK's bundled slot schema
-   * ({@code Task-T/network-layer/private-line-complaint/v1}): 任务对象 identifies the line, 任务上下文
-   * carries the complaint context.
+   * ({@code Task-T/network-layer/private-line-complaint/v1}): the task-object slot identifies
+   * the line and the task-context slot carries the complaint context.
    */
   public static Map<String, Object> privateLineComplaintSchema() {
     return SdkSlotSchemaLoader.loadConfigured(StandardTemplates.PRIVATE_LINE_COMPLAINT);
@@ -193,7 +193,10 @@ public final class SpnCasePrompts {
   // Authorization-T (spec case 7.5: add authorization policy)
   // ------------------------------------------------------------------
 
-  /** Schema mirroring the SDK's Authorization-T slot schema (授权策略的操作类型 + 策略列表). */
+  /**
+   * Schema mirroring the SDK's Authorization-T slot schema: the operation-type slot selects the
+   * authorization operation and the policy-list slot carries the policies to grant.
+   */
   public static Map<String, Object> authorizationSchema() {
     return SdkSlotSchemaLoader.loadConfigured(StandardTemplates.AUTHORIZATION_POLICY_MANAGEMENT);
   }

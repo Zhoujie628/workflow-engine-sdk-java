@@ -17,4 +17,11 @@
  *    under the License.
  */
 
+/**
+ * Embeddable workflow execution engine. Schedules a DAG of A2A agent tasks — parallel dispatch,
+ * negotiation, and result aggregation — while all business content decisions stay with the host
+ * through the callback contracts in {@code control}.
+ */
 package dev.openan.workflow.engine;
+
+
