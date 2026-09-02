@@ -19,9 +19,13 @@
 
 package dev.openan.workflow.engine.model;
 
+/** Completion policy for a step's subtasks. */
 public enum StepType {
+  /** Advance only after every subtask succeeds. */
   ALL_SUCCESS("AllSuccess"),
+  /** Advance on the first successful subtask; the remaining subtasks are cancelled. */
   ANY_SUCCESS("AnySuccess"),
+  /** Run locally through {@code onSelfTask} with no agent network calls. */
   SELF_LOOP("SelfLoop");
 
   private final String value;

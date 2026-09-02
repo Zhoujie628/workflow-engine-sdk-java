@@ -24,6 +24,11 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * Chosen next step returned by an {@code onRoute} callback. {@code nextStep} must be one of the
+ * candidates offered by {@link RouteRequest}; any other value fails the workflow instead of
+ * being silently ignored.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

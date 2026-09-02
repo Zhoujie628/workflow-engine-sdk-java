@@ -19,6 +19,7 @@
 
 package dev.openan.workflow.engine.model;
 
+/** Lifecycle of one task inside a workflow run. */
 public enum TaskStatus {
   PENDING("pending"),
   RUNNING("running"),

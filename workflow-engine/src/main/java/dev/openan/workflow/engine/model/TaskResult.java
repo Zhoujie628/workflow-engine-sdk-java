@@ -24,6 +24,11 @@ import java.util.Map;
 import lombok.Builder;
 import lombok.Value;
 
+/**
+ * Result of one dispatched task as seen by the workflow layer: success flag, ordered business
+ * outputs, and failure diagnostics. Remote evidence is retained losslessly in {@code
+ * receivedMessages}; when it is present, the convenience {@code outputs} are derived from it.
+ */
 @Value
 @Builder
 public class TaskResult {

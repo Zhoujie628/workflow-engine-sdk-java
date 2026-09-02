@@ -125,5 +125,6 @@ public final class NotificationSubscription implements AutoCloseable {
     }
   }
 
+  /** Liveness snapshot of one subscription: open time, last event, event count, active flag. */
   public record Heartbeat(Instant openedAt, Instant lastEventAt, long eventCount, boolean active) {}
 }

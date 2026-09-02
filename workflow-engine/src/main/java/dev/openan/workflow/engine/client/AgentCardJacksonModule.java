@@ -59,6 +59,7 @@ public final class AgentCardJacksonModule extends SimpleModule {
         org.a2aproject.sdk.spec.SecurityRequirement.class, new SecurityRequirementDeserializer());
   }
 
+  /** Deserializes one-of security schemes, accepting both structured and OpenAPI-style shapes. */
   public static final class SecuritySchemeDeserializer extends StdDeserializer<SecurityScheme> {
 
     private static final Map<String, String> TYPE_KEYS =

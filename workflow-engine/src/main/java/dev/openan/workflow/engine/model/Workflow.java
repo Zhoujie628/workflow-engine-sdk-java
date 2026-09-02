@@ -27,6 +27,12 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * A directed workflow definition: an ordered list of {@link WorkflowStep steps} wired by jump
+ * conditions. The executor validates the graph before running (duplicate, missing, reserved, or
+ * cyclic step names fail fast) and takes a private snapshot at construction, so runtime status
+ * changes never leak back into the caller's instance.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -37,6 +43,11 @@ public class Workflow {
   @Builder.Default private String description = "";
   @Builder.Default private List<WorkflowStep> steps = List.of();
 
+  /**
+   * Builds a workflow from a PSOP-style map (as returned by the orchestration center).
+   *
+   * @throws IllegalArgumentException if the map is null, or any field has an unexpected type
+   */
   @SuppressWarnings("unchecked")
   public static Workflow fromMap(Map<String, Object> data) {
     if (data == null) throw new IllegalArgumentException("Workflow data must not be null");

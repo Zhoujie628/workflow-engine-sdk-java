@@ -65,11 +65,13 @@ import org.springframework.core.io.ResourceLoader;
  *   <li>{@link RequestHandler} - the {@link DefaultRequestHandler}
  *   <li>{@link RestHandler} - the REST protocol handler
  *   <li>{@link MainEventBusProcessor} - the event bus
- *   <li>{@link A2AController} - the Spring MVC controller (message:send + message:stream)
+ *   <li>{@link A2AController} - the Spring MVC controller (message send/stream plus task
+ *       query, list, cancel, and subscribe endpoints)
  * </ul>
  *
  * <p>The partner only needs to provide an {@link AgentExecutor} implementation as a
- * {@code @Component} or {@code @Bean}.
+ * {@code @Component} or {@code @Bean}. Set {@code a2at.server.enabled=false} to disable the whole
+ * server-side autoconfiguration.
  */
 @AutoConfiguration
 @ConditionalOnWebApplication
@@ -179,7 +181,7 @@ public class A2AAutoConfiguration {
     return proc;
   }
 
-  @Bean(initMethod = "")
+  @Bean
   @ConditionalOnMissingBean
   public RequestHandler requestHandler(
       AgentExecutor executor,

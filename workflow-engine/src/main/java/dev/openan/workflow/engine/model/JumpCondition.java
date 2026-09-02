@@ -24,6 +24,11 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * One outgoing edge of a {@link WorkflowStep}: the next step name and a descriptive condition
+ * label offered to routing callbacks. Targets {@code end}, {@code retry}, and {@code endNode}
+ * are terminal routes, not step names.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
