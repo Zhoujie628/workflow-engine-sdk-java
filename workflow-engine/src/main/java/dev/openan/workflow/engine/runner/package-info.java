@@ -18,6 +18,7 @@
  */
 
 /**
- * Command-line entry point wiring registry, engine, and callbacks for a standalone workflow run.
+ * High-level programmatic runner wiring registry, engine, and callbacks for standalone workflow
+ * execution; not a command-line entry point.
  */
 package dev.openan.workflow.engine.runner;
