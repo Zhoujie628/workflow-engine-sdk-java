@@ -1,0 +1,109 @@
+name: Release to Maven Central
+
+# Publishes workflow-engine and spring-boot-starter to Maven Central.
+# Trigger: push a version tag — `git tag v0.1.0 && git push origin v0.1.0`.
+# Normal CI (branch pushes and PRs) is unaffected: this workflow only runs on v* tags.
+# workflow_dispatch runs everything except the upload, for a dry run.
+#
+# One-time setup (required before the first release can succeed):
+#   1. Central Portal account: https://central.sonatype.com (register, then generate a
+#      User Token under Account settings — this is the MAVEN_CENTRAL_USERNAME/PASSWORD pair).
+#   2. Namespace `dev.openan`: claim it in the Portal once the openan.dev domain is
+#      available, by adding the TXT record the Portal specifies to the domain's DNS.
+#      Until the namespace is verified, the Portal rejects every dev.openan upload.
+#   3. GPG signing key: generate one (RSA 4096, no expiry or far expiry), publish the
+#      public key to a keyserver (e.g. https://keyserver.ubuntu.com). The Portal
+#      validates artifact signatures against keyservers.
+#   4. Repository secrets (Settings -> Secrets and variables -> Actions):
+#        MAVEN_CENTRAL_USERNAME  Portal user token id
+#        MAVEN_CENTRAL_PASSWORD  Portal user token password
+#        GPG_KEY_CONTENTS        private key, ASCII-armored full text
+#        SIGNING_KEY_ID          key id (last 8 hex chars is enough)
+#        SIGNING_PASSWORD        private key passphrase
+#
+# Scope note: only workflow-engine and spring-boot-starter are deployed. samples is
+# excluded via maven.deploy.skip and depends on a vendor jar not available on Central.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish Maven artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release secrets
+        shell: bash
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_KEY_CONTENTS: ${{ secrets.GPG_KEY_CONTENTS }}
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          test -n "${MAVEN_CENTRAL_USERNAME}" || { echo "MAVEN_CENTRAL_USERNAME is not set"; exit 1; }
+          test -n "${MAVEN_CENTRAL_PASSWORD}" || { echo "MAVEN_CENTRAL_PASSWORD is not set"; exit 1; }
+          test -n "${GPG_KEY_CONTENTS}" || { echo "GPG_KEY_CONTENTS is not set"; exit 1; }
+          test -n "${SIGNING_KEY_ID}" || { echo "SIGNING_KEY_ID is not set"; exit 1; }
+          test -n "${SIGNING_PASSWORD}" || { echo "SIGNING_PASSWORD is not set"; exit 1; }
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          gpg-private-key: ${{ secrets.GPG_KEY_CONTENTS }}
+          gpg-passphrase: SIGNING_PASSWORD
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+
+      - name: Configure Maven servers
+        shell: bash
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <settings>
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${MAVEN_CENTRAL_USERNAME}</username>
+                <password>${MAVEN_CENTRAL_PASSWORD}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Verify
+        run: mvn -B clean verify -pl workflow-engine,spring-boot-starter -am
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "Tag must be vX.Y.Z (got: ${GITHUB_REF_NAME})"; exit 1
+          fi
+          echo "Publishing version ${VERSION} from tag ${GITHUB_REF_NAME}"
+          mvn -B -Prelease deploy \
+            -pl workflow-engine,spring-boot-starter -am \
+            -Drevision="${VERSION}" \
+            -Dgpg.executable=gpg \
+            -Dgpg.keyname="${SIGNING_KEY_ID}"
