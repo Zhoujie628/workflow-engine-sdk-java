@@ -57,8 +57,8 @@
         <!-- Published A2A-T SDK release from Maven Central. -->
         <a2a.t.sdk.version>1.1.0</a2a.t.sdk.version>
         <lombok.version>1.18.38</lombok.version>
-        <jackson.version>2.21.1</jackson.version>
-        <slf4j.version>2.0.17</slf4j.version>
+        <jackson.version>2.22.0</jackson.version>
+        <slf4j.version>2.0.18</slf4j.version>
         <junit.version>5.10.2</junit.version>
         <log4j2.version>2.24.3</log4j2.version>
         <spring-boot.version>3.3.10</spring-boot.version>
@@ -89,6 +89,22 @@
     </dependencyManagement>
 
     <build>
+        <!-- Carry the distribution license into every jar (META-INF/LICENSE, META-INF/NOTICE).
+             Valid when building from the repository root, which CI and the release pipeline
+             always do. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${maven.multiModuleProjectDirectory}</directory>
+                <includes>
+                    <include>LICENSE</include>
+                    <include>NOTICE</include>
+                </includes>
+                <targetPath>META-INF</targetPath>
+            </resource>
+        </resources>
         <pluginManagement>
             <plugins>
                 <plugin>
@@ -112,7 +128,7 @@
                     <version>${maven.javadoc.plugin.version}</version>
                     <configuration>
                         <doclint>none</doclint>
-                        <failOnError>false</failOnError>
+                        <failOnError>true</failOnError>
                         <quiet>true</quiet>
                     </configuration>
                 </plugin>
@@ -125,6 +141,24 @@
         </pluginManagement>
 
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-dependency-convergence</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <dependencyConvergence/>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>
