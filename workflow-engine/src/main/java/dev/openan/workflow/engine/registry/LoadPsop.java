@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.SslContextFactory;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
+import dev.openan.workflow.engine.util.SensitiveDataRedactor;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -64,7 +65,7 @@ public class LoadPsop {
     log.info("[Registry] Loading PSOP from {} (ssl_verify={})", anonymousUrl(url, accessToken), sslVerify);
     HttpResult resp = execute("GET", url, null, sslVerify);
     if (resp.statusCode() != 200) {
-      throw new RuntimeException("Orchestration center returned " + resp.statusCode());
+      throw requestFailure(resp);
     }
     @SuppressWarnings("unchecked")
     Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
@@ -93,7 +94,7 @@ public class LoadPsop {
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
     HttpResult resp = execute("POST", url, jsonBody, sslVerify);
     if (resp.statusCode() != 200) {
-      throw new RuntimeException("Orchestration center returned " + resp.statusCode());
+      throw requestFailure(resp);
     }
     @SuppressWarnings("unchecked")
     Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
@@ -126,6 +127,16 @@ public class LoadPsop {
         : url.substring(0, url.indexOf("?access_token=")) + "?access_token=<anonymous>";
   }
 
+  private static RuntimeException requestFailure(HttpResult response) {
+    String detail =
+        SensitiveDataRedactor.redact(response.body()).replace("\r", "\\r").replace("\n", "\\n");
+    if (detail.length() > 512) detail = detail.substring(0, 512) + "...";
+    return new RuntimeException(
+        "Orchestration center returned "
+            + response.statusCode()
+            + (detail.isBlank() ? "" : ": " + detail));
+  }
+
   private static HttpResult execute(String method, String url, String jsonBody, boolean sslVerify)
       throws Exception {
     HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
@@ -140,7 +151,7 @@ public class LoadPsop {
           https.getURL().getPort());
     }
     try {
-      connection.setInstanceFollowRedirects(true);
+      connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(30_000);
       connection.setReadTimeout(30_000);
       connection.setRequestMethod(method);

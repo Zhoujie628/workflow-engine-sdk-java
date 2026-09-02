@@ -46,7 +46,7 @@ final class CredentialHttpTransport {
     try {
       connection.setConnectTimeout(timeoutMillis);
       connection.setReadTimeout(timeoutMillis);
-      connection.setInstanceFollowRedirects(true);
+      connection.setInstanceFollowRedirects(false);
       connection.setRequestMethod(method);
       connection.setDoOutput(true);
       connection.setRequestProperty("Content-Type", contentType);

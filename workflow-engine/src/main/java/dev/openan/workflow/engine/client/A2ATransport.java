@@ -380,17 +380,6 @@ public class A2ATransport implements AutoCloseable {
     return state != null && !state.isBlank();
   }
 
-  private static boolean causedByInterruption(Throwable error) {
-    Throwable current = error;
-    while (current != null) {
-      if (current instanceof InterruptedException) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
-  }
-
   private static Map<String, String> taskTrace(String agentName, String taskId) {
     Map<String, String> trace = new HashMap<>(WireLog.context());
     trace.put("agent", agentName);
@@ -582,6 +571,11 @@ public class A2ATransport implements AutoCloseable {
                         MessageSendParams params = buildMessageSendParams(content, contextId, null);
                         ClientCallContext callContext =
                             buildContentCallContext(agentCard, agentName, content);
+                        callContext
+                            .getState()
+                            .put(
+                                A2AJavaClientRuntime.CHANNEL_STATE_KEY,
+                                A2AJavaClientRuntime.NOTIFICATION_CHANNEL);
                         String endpoint =
                             agentCard.supportedInterfaces().isEmpty()
                                 ? "?"
@@ -602,8 +596,8 @@ public class A2ATransport implements AutoCloseable {
                                   event.getClass().getSimpleName());
                               subscription.recordEvent();
                               if (eventSink != null) {
-                                responses.accept(event);
-                                for (ReceivedMessage received : responses.snapshots()) {
+                                for (ReceivedMessage received :
+                                    responses.acceptIncrementally(event)) {
                                   eventSink.accept(subscription, received);
                                 }
                               }
@@ -629,12 +623,8 @@ public class A2ATransport implements AutoCloseable {
                         }
                         subscription.completeStream();
                       } catch (Exception e) {
-                        String msg = e.getMessage() != null ? e.getMessage() : "";
                         boolean connectionClosed =
-                            !subscription.isActive()
-                                || causedByInterruption(e)
-                                || msg.contains("connection closed locally")
-                                || msg.contains("chunked transfer encoding, state: READING_LENGTH");
+                            !subscription.isActive() || TransportFailures.isExpectedLocalClose(e);
                         if (connectionClosed) {
                           log.info("[Transport] Notification-T stream closed for {}", agentName);
                         } else {

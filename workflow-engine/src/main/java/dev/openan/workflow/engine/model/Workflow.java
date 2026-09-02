@@ -39,30 +39,28 @@ public class Workflow {
 
   @SuppressWarnings("unchecked")
   public static Workflow fromMap(Map<String, Object> data) {
+    if (data == null) throw new IllegalArgumentException("Workflow data must not be null");
     Workflow wf = new Workflow();
-    wf.setId((String) data.getOrDefault("id", ""));
-    wf.setName((String) data.getOrDefault("name", ""));
-    wf.setDescription((String) data.getOrDefault("description", ""));
-    List<WorkflowStep> steps =
-        parseSteps((List<Map<String, Object>>) data.getOrDefault("steps", List.of()));
+    wf.setId(stringValue(data, "id", ""));
+    wf.setName(stringValue(data, "name", ""));
+    wf.setDescription(stringValue(data, "description", ""));
+    List<WorkflowStep> steps = parseSteps(mapList(data.get("steps"), "steps"));
     wf.setSteps(steps);
     return wf;
   }
 
-  @SuppressWarnings("unchecked")
   private static List<WorkflowStep> parseSteps(List<Map<String, Object>> stepList) {
     List<WorkflowStep> steps = new ArrayList<>();
     for (Map<String, Object> s : stepList) {
-      List<Task> subtasks =
-          parseSubtasks((List<Map<String, Object>>) s.getOrDefault("subtasks", List.of()));
-      List<JumpCondition> nextList =
-          parseNextSteps((List<Map<String, Object>>) s.getOrDefault("next", List.of()));
+      List<Task> subtasks = parseSubtasks(mapList(s.get("subtasks"), "steps[].subtasks"));
+      List<JumpCondition> nextList = parseNextSteps(mapList(s.get("next"), "steps[].next"));
       List<String> contextFrom = parseContextFrom(s.get("context_from"));
       int layer = s.get("layer") instanceof Number num ? num.intValue() : 0;
-      String stValue = (String) s.getOrDefault("step_type", s.getOrDefault("type", "AllSuccess"));
+      Object rawStepType = s.containsKey("step_type") ? s.get("step_type") : s.get("type");
+      String stValue = rawStepType == null ? "AllSuccess" : requireString(rawStepType, "step_type");
       steps.add(
           WorkflowStep.builder()
-              .name((String) s.getOrDefault("name", ""))
+              .name(stringValue(s, "name", ""))
               .subtasks(subtasks)
               .next(nextList)
               .layer(layer)
@@ -73,37 +71,73 @@ public class Workflow {
     return steps;
   }
 
-  @SuppressWarnings("unchecked")
   private static List<Task> parseSubtasks(List<Map<String, Object>> stList) {
     List<Task> subtasks = new ArrayList<>();
     for (Map<String, Object> t : stList) {
       subtasks.add(
           Task.builder()
-              .agent((String) t.getOrDefault("agent", ""))
-              .skill((String) t.getOrDefault("skill", ""))
-              .description((String) t.getOrDefault("description", ""))
+              .agent(stringValue(t, "agent", ""))
+              .skill(stringValue(t, "skill", ""))
+              .description(stringValue(t, "description", ""))
               .build());
     }
     return subtasks;
   }
 
-  @SuppressWarnings("unchecked")
   private static List<JumpCondition> parseNextSteps(List<Map<String, Object>> jcList) {
     List<JumpCondition> nextList = new ArrayList<>();
     for (Map<String, Object> jc : jcList) {
       nextList.add(
           JumpCondition.builder()
-              .step((String) jc.getOrDefault("step", ""))
-              .condition((String) jc.getOrDefault("condition", ""))
+              .step(stringValue(jc, "step", ""))
+              .condition(stringValue(jc, "condition", ""))
               .build());
     }
     return nextList;
   }
 
-  @SuppressWarnings("unchecked")
   private static List<String> parseContextFrom(Object cfRaw) {
-    if (cfRaw instanceof List) return (List<String>) cfRaw;
+    if (cfRaw instanceof List<?> values) {
+      List<String> result = new ArrayList<>(values.size());
+      for (Object value : values) result.add(requireString(value, "context_from[]"));
+      return List.copyOf(result);
+    }
     if (cfRaw instanceof String cfStr && !cfStr.isEmpty()) return List.of(cfStr);
+    if (cfRaw != null && !(cfRaw instanceof String)) {
+      throw new IllegalArgumentException("context_from must be a string or a list of strings");
+    }
     return null;
+  }
+
+  private static String stringValue(Map<String, Object> data, String key, String fallback) {
+    Object value = data.get(key);
+    return value == null ? fallback : requireString(value, key);
+  }
+
+  private static String requireString(Object value, String field) {
+    if (value instanceof String text) return text;
+    throw new IllegalArgumentException(field + " must be a string");
+  }
+
+  private static List<Map<String, Object>> mapList(Object value, String field) {
+    if (value == null) return List.of();
+    if (!(value instanceof List<?> values)) {
+      throw new IllegalArgumentException(field + " must be a list");
+    }
+    List<Map<String, Object>> result = new ArrayList<>(values.size());
+    for (Object item : values) {
+      if (!(item instanceof Map<?, ?> raw)) {
+        throw new IllegalArgumentException(field + " entries must be objects");
+      }
+      Map<String, Object> entry = new java.util.LinkedHashMap<>();
+      for (Map.Entry<?, ?> fieldEntry : raw.entrySet()) {
+        if (!(fieldEntry.getKey() instanceof String key)) {
+          throw new IllegalArgumentException(field + " object keys must be strings");
+        }
+        entry.put(key, fieldEntry.getValue());
+      }
+      result.add(java.util.Collections.unmodifiableMap(entry));
+    }
+    return List.copyOf(result);
   }
 }

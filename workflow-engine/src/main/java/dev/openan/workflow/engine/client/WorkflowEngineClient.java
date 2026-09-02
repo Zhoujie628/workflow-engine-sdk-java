@@ -39,7 +39,11 @@ public interface WorkflowEngineClient {
   /** Sends final content outside the DAG using explicitly configured interaction callbacks. */
   CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 
-  /** Maximum wait for each business callback, including initial content preparation. */
+  /**
+   * Maximum wait for one task interaction, from initial content preparation through remote task
+   * completion and any negotiation exchanges. The same budget applies independently to a route
+   * callback.
+   */
   default long callbackTimeoutSeconds() {
     return 600;
   }

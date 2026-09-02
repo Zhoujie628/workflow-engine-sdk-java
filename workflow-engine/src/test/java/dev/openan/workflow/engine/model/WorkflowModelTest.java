@@ -118,15 +118,16 @@ class WorkflowModelTest {
   }
 
   @Test
-  void stepTypeBogusFallsBackToAllSuccess() {
+  void unknownStepTypeFailsClearly() {
     Map<String, Object> data =
         Map.of(
             "name",
             "t",
             "steps",
             List.of(Map.of("name", "s", "step_type", "bogus", "subtasks", List.of())));
-    Workflow wf = Workflow.fromMap(data);
-    assertEquals(StepType.ALL_SUCCESS, wf.getSteps().get(0).getStepType());
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> Workflow.fromMap(data));
+    assertTrue(error.getMessage().contains("Unknown workflow step type"));
   }
 
   @Test
@@ -144,14 +145,30 @@ class WorkflowModelTest {
 
   @Test
   void contextFromListPreserved() {
-    Map<String, Object> data =
-        Map.of(
-            "name",
-            "t",
-            "steps",
-            List.of(Map.of("name", "s", "context_from", List.of("a", "b"), "subtasks", List.of())));
+    java.util.ArrayList<String> sources = new java.util.ArrayList<>(List.of("a", "b"));
+    Map<String, Object> step = new java.util.HashMap<>();
+    step.put("name", "s");
+    step.put("context_from", sources);
+    step.put("subtasks", List.of());
+    Map<String, Object> data = Map.of("name", "t", "steps", List.of(step));
     Workflow wf = Workflow.fromMap(data);
+    sources.add("later");
     assertEquals(List.of("a", "b"), wf.getSteps().get(0).getContextFrom());
+  }
+
+  @Test
+  void invalidWorkflowFieldTypesFailClearly() {
+    IllegalArgumentException nameError =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Workflow.fromMap(Map.of("name", 42, "steps", List.of())));
+    assertEquals("name must be a string", nameError.getMessage());
+
+    IllegalArgumentException stepsError =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Workflow.fromMap(Map.of("name", "t", "steps", List.of("not-an-object"))));
+    assertEquals("steps entries must be objects", stepsError.getMessage());
   }
 
   @Test

@@ -30,22 +30,27 @@ final class CredentialHeaderContributor implements HeaderContributor {
   }
 
   private static void addCredentialHeader(
-      String agentName,
       Map<String, String> headers,
       Map<String, Object> schemeConfig,
       String credential) {
     String authHeader = (String) schemeConfig.get("auth_header");
     if (authHeader != null && !authHeader.isEmpty()) {
       String prefix = (String) schemeConfig.getOrDefault("auth_header_prefix", "");
-      headers.put(authHeader, prefix + credential);
-      log.info("[Auth] Set header {} for agent {}", authHeader, agentName);
+      putHeader(headers, authHeader, prefix + credential);
     } else {
-      headers.put("Authorization", "Bearer " + credential);
-      log.info("[Auth] Set Bearer header for agent {}", agentName);
+      putHeader(headers, "Authorization", "Bearer " + credential);
     }
     String acceptHeader = (String) schemeConfig.get("accept_header");
     if (acceptHeader != null && !acceptHeader.isEmpty()) {
-      headers.put("Accept", acceptHeader);
+      putHeader(headers, "Accept", acceptHeader);
+    }
+  }
+
+  private static void putHeader(Map<String, String> headers, String name, String value) {
+    String existing = headers.putIfAbsent(name, value);
+    if (existing != null && !existing.equals(value)) {
+      throw new SecurityException(
+          "Authentication schemes require conflicting values for header " + name);
     }
   }
 
@@ -84,30 +89,46 @@ final class CredentialHeaderContributor implements HeaderContributor {
           "Authentication failed for agent " + agentName + ": credential configuration is empty");
     }
 
+    java.util.ArrayList<String> failures = new java.util.ArrayList<>();
     for (SecurityRequirement requirement : securityRequirements) {
+      Map<String, String> candidate = new HashMap<>();
       Map<String, List<String>> schemes = requirement.schemes();
+      String failure = null;
       for (String schemeName : schemes.keySet()) {
+        if (!securitySchemes.containsKey(schemeName)) {
+          failure = "scheme " + schemeName + " is not declared by the AgentCard";
+          break;
+        }
         Map<String, Object> schemeConfig = schemeConfigs.get(schemeName);
         if (schemeConfig == null) {
-          throw new SecurityException(
-              "Authentication failed for agent "
-                  + agentName
-                  + ": no configuration for scheme "
-                  + schemeName);
+          failure = "no configuration for scheme " + schemeName;
+          break;
         }
         String credential = credentialService.getCredential(schemeName, null);
         if (credential == null) {
-          throw new SecurityException(
-              "Authentication failed for agent "
-                  + agentName
-                  + " (scheme="
-                  + schemeName
-                  + "), request blocked");
+          failure = "no credential for scheme " + schemeName;
+          break;
         }
-        addCredentialHeader(agentName, headers, schemeConfig, credential);
-        return headers;
+        try {
+          addCredentialHeader(candidate, schemeConfig, credential);
+        } catch (SecurityException error) {
+          failure = error.getMessage();
+          break;
+        }
       }
+      if (failure == null) {
+        log.info(
+            "[Auth] Satisfied security requirement for agent {}: {}", agentName, schemes.keySet());
+        return candidate;
+      }
+      failures.add(failure);
     }
-    return headers;
+    if (authProvider != null) return headers;
+    throw new SecurityException(
+        "Authentication failed for agent "
+            + agentName
+            + ": no security requirement can be satisfied ("
+            + String.join("; ", failures)
+            + ")");
   }
 }
