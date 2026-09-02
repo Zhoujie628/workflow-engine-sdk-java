@@ -64,10 +64,10 @@ import org.slf4j.LoggerFactory;
  * the low-level layer over which two single-responsibility facades sit:
  *
  * <ul>
- *   <li>{@link DefaultWorkflowEngineClient} -- workflow execution path (Task-T prompt generation,
- *       Negotiation-T auto-loop, extension handlers, event callback, control point).
- *   <li>{@link DefaultExtensionSender} -- Authorization-T requests and Notification-T
- *       subscriptions.
+ *   <li>{@link DefaultWorkflowEngineClient} -- workflow execution path (task dispatch, negotiation
+ *       correlation and reply validation, event callback, control point).
+ *   <li>{@link DefaultExtensionSender} -- sending host-generated Authorization-T requests and
+ *       observing Notification-T subscriptions.
  * </ul>
  *
  * Neither facade duplicates transport code; both delegate here.
@@ -394,12 +394,7 @@ public class A2ATransport implements AutoCloseable {
         : null;
   }
 
-  /**
-   * Long-lived SSE stream for Notification-T subscription. Opens a daemon thread that keeps the SSE
-   * response stream open. The eventSink callback processes events in real-time (subscribed ack +
-   * later recovery results). The returned future completes on the first event carrying a concrete
-   * task state; an artifact alone is application data, not a protocol acknowledgement.
-   */
+  /** Returns the loaded AgentCard for the given agent name. */
   public AgentCard getCard(String agentName) {
     return cardMap.get(agentName);
   }
@@ -533,7 +528,12 @@ public class A2ATransport implements AutoCloseable {
     }
   }
 
-  /** Opens a long-lived Notification-T stream and returns its explicit lifecycle handle. */
+  /**
+   * Long-lived SSE stream for Notification-T subscription. Opens a daemon thread that keeps the
+   * SSE response stream open. The eventSink callback processes events in real-time (subscribed ack
+   * + later recovery results). The returned future completes on the first event carrying a
+   * concrete task state; an artifact alone is application data, not a protocol acknowledgement.
+   */
   public NotificationSubscription openNotificationStream(
       AgentCard agentCard,
       String agentName,

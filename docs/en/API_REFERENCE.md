@@ -311,9 +311,9 @@ Override to receive real-time execution events. Event types are defined in `Even
 | `NEGOTIATION_REQUEST`    | Agent requested negotiation (INPUT_REQUIRED)                 |
 | `NEGOTIATION_RESOLVED`   | Clarification was sent to agent                              |
 | `NEGOTIATION_FAILED`     | Negotiation could not be resolved                            |
-| `AUTHORIZATION_REQUEST`  | Agent requested authorization                                |
-| `AUTHORIZATION_RESOLVED` | Authorization decision was made                              |
-| `NOTIFICATION`           | Notification received from agent                             |
+| `AUTHORIZATION_REQUEST`  | Reserved; not currently emitted (authorization results arrive via the `ExtensionSender` future) |
+| `AUTHORIZATION_RESOLVED` | Reserved; not currently emitted                              |
+| `NOTIFICATION`           | Reserved; not currently emitted (subscription events arrive via the `NotificationSubscription` callback) |
 | `ROUTE_DECISION`         | Route decision was made                                      |
 | `WORKFLOW_COMPLETE`      | DAG scheduling ended; check success, not all nodes necessarily ran |
 | `START`                  | Workflow execution started                                   |
