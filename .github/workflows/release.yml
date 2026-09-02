@@ -1,9 +1,10 @@
 name: Release to Maven Central
 
 # Publishes workflow-engine and spring-boot-starter to Maven Central.
-# Trigger: push a version tag — `git tag v0.1.0 && git push origin v0.1.0`.
-# Normal CI (branch pushes and PRs) is unaffected: this workflow only runs on v* tags.
-# workflow_dispatch runs everything except the upload, for a dry run.
+# Trigger: push a version tag whose commit is on the protected main branch:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Tags on other branches are rejected. workflow_dispatch runs everything except the
+# tag-gated steps, providing a real dry run without requiring secrets.
 #
 # One-time setup (required before the first release can succeed):
 #   1. Central Portal account: https://central.sonatype.com (register, then generate a
@@ -21,8 +22,10 @@ name: Release to Maven Central
 #        SIGNING_KEY_ID          key id (last 8 hex chars is enough)
 #        SIGNING_PASSWORD        private key passphrase
 #
-# Scope note: only workflow-engine and spring-boot-starter are deployed. samples is
-# excluded via maven.deploy.skip and depends on a vendor jar not available on Central.
+# Publishing scope: only workflow-engine and spring-boot-starter are deployed.
+# samples is excluded from deployment via maven.deploy.skip, but the release gate still
+# builds and tests the full main reactor (main has no vendor-jar dependency; the Eastcom
+# adapter exists only on the dev branch).
 
 on:
   push:
@@ -39,10 +42,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout (full history for tag ancestry validation)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "Tag must be vX.Y.Z (got: ${GITHUB_REF_NAME})"; exit 1
+          fi
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "Tag ${GITHUB_REF_NAME} points at a commit that is not on the protected main branch"
+            exit 1
+          fi
 
       - name: Validate release secrets
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
@@ -69,6 +89,7 @@ jobs:
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
 
       - name: Configure Maven servers
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
@@ -87,8 +108,20 @@ jobs:
           </settings>
           EOF
 
-      - name: Verify
-        run: mvn -B clean verify -pl workflow-engine,spring-boot-starter -am
+      - name: Verify (full reactor, release gate)
+        run: mvn -B clean verify
+
+      - name: Assert artifact license content
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          for module in workflow-engine spring-boot-starter; do
+            jar=$(ls ${module}/target/*.jar | grep -v -E 'sources|javadoc' | head -1)
+            if [ -z "$jar" ]; then echo "no binary jar found for ${module}"; exit 1; fi
+            unzip -l "$jar" | grep -q "META-INF/LICENSE" || { echo "$jar is missing META-INF/LICENSE"; exit 1; }
+            unzip -l "$jar" | grep -q "META-INF/NOTICE" || { echo "$jar is missing META-INF/NOTICE"; exit 1; }
+          done
+          echo "License and notice files present in all publishable jars"
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/v')
@@ -98,12 +131,9 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.SIGNING_PASSWORD }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-            echo "Tag must be vX.Y.Z (got: ${GITHUB_REF_NAME})"; exit 1
-          fi
           echo "Publishing version ${VERSION} from tag ${GITHUB_REF_NAME}"
           mvn -B -Prelease deploy \
-            -pl workflow-engine,spring-boot-starter -am \
+            -pl workflow-engine,spring-boot-starter \
             -Drevision="${VERSION}" \
             -Dgpg.executable=gpg \
             -Dgpg.keyname="${SIGNING_KEY_ID}"
