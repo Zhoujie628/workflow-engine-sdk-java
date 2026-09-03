@@ -192,7 +192,7 @@ Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿�
 
 ## 7. 事件模型
 
-事件通过可选的 `EventCallback` 以稳定字符串类型（`EventType`）发射，按来源分组：
+事件通过可选的 `EventCallback` 以稳定字符串类型（`EventType`）上报，按来源分组：
 
 - **运行器生命周期** — `start`、`complete`、`close`
 - **步骤/任务执行** — `step_start`、`step_complete`、`task_request`、`task_response`、
@@ -200,10 +200,10 @@ Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿�
 - **智能体流量** — `agent_request`、`agent_response`、`agent_status_update`、
   `agent_artifact_update`、`agent_message_event`
 - **工作流内 A2A-T 扩展** — `negotiation_request`、`negotiation_resolved`、`negotiation_failed`
-- **失败** — `error`，由执行器在步骤失败时和运行器在最终失败时发射
+- **失败** — `error`，由执行器在步骤失败时和运行器在最终失败时上报
 
 `authorization_request`、`authorization_resolved` 和 `notification` 目前只是 `EventType` 中的保留常量，
-工作流事件流不会发射它们。独立授权结果由 `ExtensionSender` 的返回值处理，订阅事件由
+工作流事件流不会上报这些事件。独立授权结果由 `ExtensionSender` 的返回值处理，订阅事件由
 `NotificationSubscription` 回调处理。
 
 ---

@@ -296,9 +296,9 @@ public class EventCallback {
 | `NEGOTIATION_REQUEST`    | 智能体请求协商                                     |
 | `NEGOTIATION_RESOLVED`   | 补充信息已发送                                     |
 | `NEGOTIATION_FAILED`     | 协商无法解决                                       |
-| `AUTHORIZATION_REQUEST`  | 保留；当前不发射（授权结果经 `ExtensionSender` 返回） |
-| `AUTHORIZATION_RESOLVED` | 保留；当前不发射                                   |
-| `NOTIFICATION`           | 保留；当前不发射（订阅事件经 `NotificationSubscription` 回调送达） |
+| `AUTHORIZATION_REQUEST`  | 保留；当前不上报（授权结果经 `ExtensionSender` 返回） |
+| `AUTHORIZATION_RESOLVED` | 保留；当前不上报                                   |
+| `NOTIFICATION`           | 保留；当前不上报（订阅事件经 `NotificationSubscription` 回调送达） |
 | `ROUTE_DECISION`         | 路由决策已做出                                     |
 | `WORKFLOW_COMPLETE`      | DAG 调度结束，需检查 success；不代表全部节点成功执行 |
 | `START`                  | 工作流执行开始                                     |
