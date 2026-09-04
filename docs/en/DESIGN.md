@@ -25,6 +25,15 @@ negotiation context and metadata copying, not content generation.
 ## 2. Host Integration and Surrounding Systems
 
 ```mermaid
+%%{
+  init: {
+    "flowchart": {
+      "curve": "basis",
+      "nodeSpacing": 55,
+      "rankSpacing": 75
+    }
+  }
+}%%
 flowchart TB
     classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
     classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
@@ -34,49 +43,51 @@ flowchart TB
 
     subgraph CONTROL["External systems"]
         direction LR
-        CALLER["External A2A requester"]:::external
+        CALLER["External A2A requester<br/>Task request and final response"]:::external
         REG["Registry center<br/>AgentCard publication and discovery"]:::external
         ORCH["Orchestration center<br/>Workflow search and loading"]:::external
     end
 
     subgraph HOST["Host agent"]
         direction TB
-        ENTRY["A2A server entry<br/>receive and validate inbound tasks"]:::host
-        ADAPTER["Host integration layer<br/>AgentCards, Workflow, configuration and context"]:::host
+        ENTRY["A2A server entry<br/>Receive and validate inbound tasks"]:::host
+        ADAPTER["Host integration layer<br/>Prepare AgentCards, Workflow, configuration and context"]:::host
 
         subgraph ENGINE["Embedded Workflow Execution Engine SDK"]
-            direction LR
+            direction TB
             LOAD["Discovery helpers<br/>RegistryClient / LoadPsop"]:::sdk
-            RUN["Protocol scheduling<br/>ExecutePsop → WorkflowExecutor"]:::sdk
-            CALLBACK["Host callbacks<br/>ControlPoint / EventCallback"]:::sdk
-            EXT["Independent protocol operations<br/>ExtensionSender"]:::sdk
+            RUN["Workflow protocol scheduling<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
+            CALLBACK["Host callbacks<br/>ControlPoint / EventCallback / onFinish"]:::sdk
+            EXT["Independent protocol operations<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["Host business implementation<br/>content, routing, aggregation, persistence"]:::host
-
-        subgraph SAMPLE["Optional local files (development only)"]
-            direction LR
-            LOCALCARD["Local AgentCard JSON"]:::local
-            LOCALPSOP["Local Workflow example file"]:::local
-        end
+        BIZ["Host business implementation<br/>Content, routing, aggregation, persistence and notification handling"]:::host
     end
 
-    AGENTS["Dispatched agents"]:::agent
+    subgraph SAMPLE["Optional local fixtures (non-production)"]
+        direction LR
+        LOCALCARD["Local AgentCard JSON"]:::local
+        LOCALPSOP["Local Workflow fixture"]:::local
+    end
 
-    CALLER <-->|"Task request / final result"| ENTRY
+    subgraph DOWNSTREAM["Dispatched agents"]
+        AGENTS["One or more dispatched agents"]:::agent
+    end
+
+    CALLER <-->|"A2A request / final result"| ENTRY
     ENTRY -->|"Validated intent and input"| ADAPTER
-    REG -->|"AgentCards"| LOAD
-    ORCH -->|"Workflow definitions"| LOAD
-    LOCALCARD -.->|"Development substitute"| ADAPTER
-    LOCALPSOP -.->|"Development substitute"| ADAPTER
+    REG -->|"Discover AgentCards"| LOAD
+    ORCH -->|"Search / load Workflow"| LOAD
+    LOCALCARD -.->|"Development fixture"| ADAPTER
+    LOCALPSOP -.->|"Development fixture"| ADAPTER
     LOAD -->|"Discovery results"| ADAPTER
-    ADAPTER -->|"Workflow + AgentCards"| RUN
-    RUN <-->|"Business decisions / results"| CALLBACK
-    CALLBACK <-->|"Callback implementation"| BIZ
+    ADAPTER -->|" Workflow + AgentCards "| RUN
+    RUN <-->|"Business decisions and results"| CALLBACK
+    CALLBACK <-->|"Callbacks"| BIZ
     ADAPTER -->|"Independent business timing"| EXT
-    RUN <-->|"Task-T / Negotiation-T"| AGENTS
+    RUN <-->|"Task-T; Negotiation-T when required"| AGENTS
     EXT <-->|"Authorization-T / Notification-T"| AGENTS
-    BIZ -->|"Final result"| ENTRY
+    BIZ -->|"Final business result"| ENTRY
 ```
 
 The SDK in this diagram is a library embedded in the host-agent process, not a separately deployed orchestration
@@ -114,6 +125,81 @@ graph TD
     L2 --> L1 --> L0
     L0 -.-> F
 ```
+
+The layer view expands into the software module view (the engine in relation to the host agent, the orchestration center, the registry center, the dispatched agents, and the two SDK layers):
+
+```mermaid
+flowchart TB
+    subgraph HOST["Host Agent (business application)"]
+        direction LR
+        WB["Northbound task intake · workflow selection"]
+        BIZ["Business callbacks<br/>onTask / onSelfTask / onRoute / onNegotiation"]
+        GEN["Content generation and validation<br/>(a2a-t-client)"]
+    end
+
+    subgraph ENGINE["Workflow Execution Engine (Maven dependency, embedded in the host process)"]
+        subgraph KERNEL["Scheduling kernel (zero A2A-T dependency, guarded by an architecture test)"]
+            direction LR
+            EXE["WorkflowExecutor<br/>DAG validation · parallel dispatch · aggregation"]
+            CTXB["ContextBuilder<br/>upstream window selection"]
+            CP["ControlPoint callback contract<br/>EventCallback event outlet"]
+            MODEL["model<br/>workflow definitions · message carriers"]
+        end
+        subgraph ADAPTER["Protocol adaptation layer"]
+            direction LR
+            WEC["DefaultWorkflowEngineClient<br/>task dispatch · negotiation correlation and reply validation"]
+            EXT["DefaultExtensionSender<br/>authorization / subscription (independent channels)"]
+            TRANS["A2ATransport base<br/>A2A runtime · authentication · SSE extraction · standard error-envelope detection"]
+            OBSV["WireLog · ProtocolLogger<br/>wire-level observation"]
+            REGC["LoadPsop · RegistryClient<br/>orchestration / registry clients"]
+            MSG["Thin conversion helpers (A2atMessages and peers)"]
+        end
+    end
+
+    subgraph SDK["Protocol SDK layer"]
+        direction LR
+        A2AJ["a2a-java-sdk<br/>REST / JSON-RPC / gRPC transports · A2A types"]
+        A2ATC["a2a-t-sdk (a2a-t-core)<br/>telecom extension URIs · negotiation context"]
+    end
+
+    subgraph SYS["External systems"]
+        direction LR
+        ORCH["Orchestration center<br/>workflow definitions (PSOP)"]
+        REGT["Registry center<br/>AgentCards"]
+        OMC["Dispatched agents (OMC)"]
+    end
+
+    WB ==>|"selects workflow and starts"| EXE
+    BIZ -.->|"implements"| CP
+    EXE -->|"invokes business during scheduling"| CP
+    EXE --- MODEL
+    CP --- MODEL
+    EXE --> CTXB
+    EXE -->|"task dispatch"| WEC
+    WEC --> TRANS
+    EXT --> TRANS
+    TRANS --> OBSV
+    TRANS --> A2AJ
+    MSG -.->|"only reference site inside the engine"| A2ATC
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    REGC -->|"workflow search"| ORCH
+    REGC -->|"AgentCard retrieval"| REGT
+```
+
+Key properties of the module view: the engine is embedded in the host process as a Maven dependency, started
+by host code and extended through the callbacks. The scheduling kernel (core/control/model packages)
+references no A2A-T SDK types — a boundary guarded by the `ContentDependencyBoundaryTest` architecture test.
+The client protocol adaptation layer (A2ATExtension, A2atMessages, DefaultWorkflowEngineClient) is the only
+place inside the engine that references a2a-t-sdk. All four interaction types with dispatched agents (OMC) —
+Task-T, Negotiation-T, Authorization-T, Notification-T — travel over a2a-java-sdk transports, with
+authorization and subscription on channels independent of the workflow. The orchestration and registry
+centers are only reached by the engine clients for workflow-definition search and AgentCard retrieval; the
+selection strategy itself belongs to the host. A call rejected before task creation with a non-2xx
+response and the standard A2A error envelope is detected by the transport layer and projected to a
+stable error code (`a2a.<reason>`); it enters no negotiation and is not retried automatically. A
+business failure after task creation is still reported as HTTP 200 with `TASK_STATE_FAILED`
+carrying the failure evidence. Once a task is dispatched, a result that completes after the
+callback budget expires or the run is cancelled is ignored and never sent to the remote agent.
 
 ### 3.1 Layer 0 - Communication
 
@@ -282,5 +368,7 @@ Templates and slot schemas come from the pinned SDK jar, not sample resource ove
 Final content is separate from protocol scheduling; hosts do not maintain A2A envelopes. Local multiple outputs and
 complete remote evidence enter the selected upstream window without losing metadata or flattening arrays. Business owns
 negotiation reply content; the engine owns association, deduplication and bounded waiting. Stop and Abort are distinct.
+Pre-creation protocol errors are projected from the standard A2A error envelope to stable error codes; post-creation
+business failures are reported through the task's terminal state.
 Independent authorization/notification never gate the workflow; transport runtimes share the same callback contract. Protocol logs
 observe actual boundaries with mandatory redaction; see [Integration guide](INTEGRATION_GUIDE.md).

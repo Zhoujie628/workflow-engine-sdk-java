@@ -21,6 +21,15 @@ SDK 是集成在宿主智能体进程中的工作流协议调度库，不是独�
 ## 2. 周边系统依赖与宿主集成
 
 ```mermaid
+%%{
+  init: {
+    "flowchart": {
+      "curve": "basis",
+      "nodeSpacing": 55,
+      "rankSpacing": 75
+    }
+  }
+}%%
 flowchart TB
     classDef external fill: #EEF4FF, stroke: #2563EB, color: #172554, stroke-width: 1.5px
     classDef host fill: #FFF7ED, stroke: #EA580C, color: #431407, stroke-width: 1.5px
@@ -30,49 +39,51 @@ flowchart TB
 
     subgraph CONTROL["外部系统"]
         direction LR
-        CALLER["外部 A2A 请求方"]:::external
+        CALLER["外部 A2A 请求方<br/>任务请求与最终响应"]:::external
         REG["注册中心<br/>AgentCard 发布与发现"]:::external
-        ORCH["编排中心<br/>Workflow 检索与加载"]:::external
+        ORCH["编排中心<br/>工作流检索与加载"]:::external
     end
 
     subgraph HOST["宿主智能体"]
         direction TB
         ENTRY["A2A 服务端入口<br/>接收并校验入站任务"]:::host
-        ADAPTER["宿主集成层<br/>AgentCard、Workflow、配置与上下文"]:::host
+        ADAPTER["宿主集成层<br/>准备 AgentCard、Workflow、配置和上下文"]:::host
 
-        subgraph ENGINE["嵌入式工作流执行引擎 SDK"]
-            direction LR
-            LOAD["发现辅助<br/>RegistryClient / LoadPsop"]:::sdk
-            RUN["协议调度<br/>ExecutePsop → WorkflowExecutor"]:::sdk
-            CALLBACK["宿主回调<br/>ControlPoint / EventCallback"]:::sdk
-            EXT["独立协议操作<br/>ExtensionSender"]:::sdk
+        subgraph ENGINE["嵌入式 Workflow Execution Engine SDK"]
+            direction TB
+            LOAD["发现辅助 API<br/>RegistryClient / LoadPsop"]:::sdk
+            RUN["工作流协议调度<br/>ExecutePsop → WorkflowExecutor<br/>Task-T + Negotiation-T"]:::sdk
+            CALLBACK["宿主回调接口<br/>ControlPoint / EventCallback / onFinish"]:::sdk
+            EXT["流程外协议操作<br/>ExtensionSender<br/>Authorization-T / Notification-T"]:::sdk
         end
 
-        BIZ["宿主业务实现<br/>内容、路由、汇聚、持久化"]:::host
-
-        subgraph SAMPLE["可选本地文件（仅开发用）"]
-            direction LR
-            LOCALCARD["本地 AgentCard JSON"]:::local
-            LOCALPSOP["本地 Workflow 示例文件"]:::local
-        end
+        BIZ["宿主业务实现<br/>内容、路由、汇总、持久化与通知处理"]:::host
     end
 
-    AGENTS["被调度智能体"]:::agent
+    subgraph SAMPLE["可选本地测试资源（非生产数据源）"]
+        direction LR
+        LOCALCARD["本地 AgentCard JSON"]:::local
+        LOCALPSOP["本地 Workflow 测试数据"]:::local
+    end
 
-    CALLER <-->|"任务请求 / 最终结果"| ENTRY
+    subgraph DOWNSTREAM["被调度智能体"]
+        AGENTS["一个或多个被调度智能体"]:::agent
+    end
+
+    CALLER <-->|"A2A 任务 / 最终结果"| ENTRY
     ENTRY -->|"已校验的意图与输入"| ADAPTER
-    REG -->|"AgentCard 数据"| LOAD
-    ORCH -->|"Workflow 定义"| LOAD
-    LOCALCARD -.->|"开发用替代"| ADAPTER
-    LOCALPSOP -.->|"开发用替代"| ADAPTER
+    REG -->|"发现 AgentCard"| LOAD
+    ORCH -->|"检索 / 加载 Workflow"| LOAD
+    LOCALCARD -.->|"开发测试数据"| ADAPTER
+    LOCALPSOP -.->|"开发测试数据"| ADAPTER
     LOAD -->|"发现结果"| ADAPTER
-    ADAPTER -->|"Workflow + AgentCard"| RUN
-    RUN <-->|"业务决策 / 结果"| CALLBACK
-    CALLBACK <-->|"回调实现"| BIZ
-    ADAPTER -->|"独立业务时机"| EXT
-    RUN <-->|"Task-T / Negotiation-T"| AGENTS
+    ADAPTER -->|" Workflow + AgentCards "| RUN
+    RUN <-->|" 业务决策与执行结果 "| CALLBACK
+    CALLBACK <-->|" 回调 "| BIZ
+    ADAPTER -->|" 独立业务时机 "| EXT
+    RUN <-->|"Task-T；必要时 Negotiation-T"| AGENTS
     EXT <-->|"Authorization-T / Notification-T"| AGENTS
-    BIZ -->|"最终结果"| ENTRY
+    BIZ -->|"最终业务结果"| ENTRY
 ```
 
 上图中的 SDK 是 **嵌入宿主智能体进程的库**，不是独立部署的编排服务：
@@ -103,6 +114,76 @@ graph TD
     L2 --> L1 --> L0
     L0 -.-> F
 ```
+
+上面是分层视角，展开为软件模块视图（引擎与宿主、编排中心、注册中心、被调度智能体及两层 SDK 的关系）：
+
+```mermaid
+flowchart TB
+    subgraph HOST["宿主智能体（业务应用）"]
+        direction LR
+        WB["北向任务接收 · 工作流选择"]
+        BIZ["业务回调实现<br/>onTask / onSelfTask / onRoute / onNegotiation"]
+        GEN["内容生成与语义校验<br/>（a2a-t-client）"]
+    end
+
+    subgraph ENGINE["工作流执行引擎（Maven 依赖，嵌入宿主进程）"]
+        subgraph KERNEL["调度内核（零 A2A-T 依赖，架构测试守护）"]
+            direction LR
+            EXE["WorkflowExecutor<br/>DAG 校验 · 并行分发 · 汇总推进"]
+            CTXB["ContextBuilder<br/>上游窗口选择"]
+            CP["ControlPoint 回调契约<br/>EventCallback 事件出口"]
+            MODEL["model<br/>工作流定义 · 消息载体"]
+        end
+        subgraph ADAPTER["协议适配层"]
+            direction LR
+            WEC["DefaultWorkflowEngineClient<br/>任务分发 · 协商关联与回复校验"]
+            EXT["DefaultExtensionSender<br/>授权 / 订阅（独立通道）"]
+            TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 提取 · 标准错误信封检测"]
+            OBSV["WireLog · ProtocolLogger<br/>真实报文观测"]
+            REGC["LoadPsop · RegistryClient<br/>编排 / 注册中心客户端"]
+            MSG["A2atMessages 等薄转换辅助"]
+        end
+    end
+
+    subgraph SDK["协议 SDK 层"]
+        direction LR
+        A2AJ["a2a-java-sdk<br/>REST / JSON-RPC / gRPC 传输 · A2A 类型"]
+        A2ATC["a2a-t-sdk（a2a-t-core）<br/>电信扩展 URI · 协商上下文"]
+    end
+
+    subgraph SYS["外部系统"]
+        direction LR
+        ORCH["编排中心<br/>工作流定义（PSOP）"]
+        REGT["注册中心<br/>AgentCard"]
+        OMC["被调度智能体（OMC）"]
+    end
+
+    WB ==>|"选择工作流并启动"| EXE
+    BIZ -.->|"实现"| CP
+    EXE -->|"调度时回调业务"| CP
+    EXE --- MODEL
+    CP --- MODEL
+    EXE --> CTXB
+    EXE -->|"任务下发"| WEC
+    WEC --> TRANS
+    EXT --> TRANS
+    TRANS --> OBSV
+    TRANS --> A2AJ
+    MSG -.->|"引擎内唯一引用位置"| A2ATC
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    REGC -->|"检索工作流"| ORCH
+    REGC -->|"获取 AgentCard"| REGT
+```
+
+模块视图要点：引擎以 Maven 依赖嵌入宿主进程，由宿主代码启动并实现回调；调度内核（core/control/model
+包）不引用任何 A2A-T SDK 类型，该边界由 `ContentDependencyBoundaryTest` 架构测试守护；client 协议
+适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
+位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
+经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
+AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务创建前被对端以非 2xx 和标准
+A2A 错误信封拒绝的调用，由传输层识别并投影为稳定错误码（`a2a.<reason>`），不进入协商、不自动重试；
+任务创建后的业务失败仍以 HTTP 200 和 `TASK_STATE_FAILED` 携带失败证据上报。任务下发后，若回调超时
+或工作流已被取消，迟到完成的结果会被忽略，不再发送到远端。
 
 ### 3.1 Layer 0 - 通信层
 
@@ -249,4 +330,5 @@ RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 
 ## 10. 设计决策总结
 
 最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 任务创建前的协议错误按标准
+A2A 错误信封投影为稳定错误码，任务创建后的业务失败随任务终态上报。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
