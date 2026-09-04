@@ -176,8 +176,7 @@ public class A2AAutoConfiguration {
       PushNotificationConfigStore pushStore) {
     PushNotificationSender sender = new BasePushNotificationSender(pushStore);
     MainEventBusProcessor proc = new MainEventBusProcessor(bus, store, sender, qm);
-    proc.ensureStarted();
-    log.info("[A2A] MainEventBusProcessor started");
+    log.info("[A2A] MainEventBusProcessor configured; Spring manages its lifecycle");
     return proc;
   }
 
@@ -211,7 +210,8 @@ public class A2AAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public A2AController a2aController(RestHandler restHandler, RequestHandler requestHandler) {
-    return new A2AController(restHandler, requestHandler);
+  public A2AController a2aController(
+      RestHandler restHandler, RequestHandler requestHandler, AgentCard agentCard) {
+    return new A2AController(restHandler, requestHandler, agentCard);
   }
 }
