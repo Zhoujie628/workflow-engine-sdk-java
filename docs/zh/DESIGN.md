@@ -115,77 +115,72 @@ graph TD
     L0 -.-> F
 ```
 
-上面是分层视角，展开为软件模块视图（Maven 模块、包职责与依赖边界）：
+上面是分层视角，展开为软件模块视图（引擎与宿主、编排中心、注册中心、被调度智能体及两层 SDK 的关系）：
 
 ```mermaid
 flowchart TB
-    subgraph HOST["宿主智能体（业务应用 · samples 工作台示例）"]
+    subgraph HOST["宿主智能体（业务应用）"]
         direction LR
-        WB["WorkbenchOrchestrator<br/>北向任务接收 · 工作流选择"]
+        WB["北向任务接收 · 工作流选择"]
         BIZ["业务回调实现<br/>onTask / onSelfTask / onRoute / onNegotiation"]
-        GEN["内容生成与语义校验<br/>直接调用 a2a-t-client"]
+        GEN["内容生成与语义校验<br/>（a2a-t-client）"]
     end
 
-    subgraph KERNEL["workflow-engine 调度内核（零 A2A-T 依赖，架构测试守护）"]
-        direction LR
-        EXE["WorkflowExecutor<br/>DAG 校验 · 并行分发 · 汇总推进"]
-        CTXB["ContextBuilder<br/>上游窗口四模式选择"]
-        ADAPT["FailureMapping · ProtocolResultAdapter<br/>失败映射 · 传输态转业务结果"]
-        CP["ControlPoint 回调契约<br/>+ EventCallback 事件出口"]
-        MODEL["model 模型层<br/>工作流定义 · MessageContent · ReceivedMessage"]
+    subgraph ENGINE["工作流执行引擎（Maven 依赖，嵌入宿主进程）"]
+        subgraph KERNEL["调度内核（零 A2A-T 依赖，架构测试守护）"]
+            direction LR
+            EXE["WorkflowExecutor<br/>DAG 校验 · 并行分发 · 汇总推进"]
+            CTXB["ContextBuilder<br/>上游窗口选择"]
+            CP["ControlPoint 回调契约<br/>EventCallback 事件出口"]
+            MODEL["model<br/>工作流定义 · 消息载体"]
+        end
+        subgraph ADAPTER["协议适配层"]
+            direction LR
+            WEC["DefaultWorkflowEngineClient<br/>任务分发 · 协商关联与回复校验"]
+            EXT["DefaultExtensionSender<br/>授权 / 订阅（独立通道）"]
+            TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 提取"]
+            OBSV["WireLog · ProtocolLogger<br/>真实报文观测"]
+            REGC["LoadPsop · RegistryClient<br/>编排 / 注册中心客户端"]
+            MSG["A2atMessages 等薄转换辅助"]
+        end
     end
 
-    subgraph ADAPTER["client 协议适配层"]
+    subgraph SDK["协议 SDK 层"]
         direction LR
-        WEC["DefaultWorkflowEngineClient<br/>任务分发 · 协商关联与回复校验"]
-        EXT["DefaultExtensionSender<br/>授权 / 订阅（独立于工作流的通道）"]
-        TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 事件提取"]
-        OBSV["WireLog · ProtocolLogger<br/>真实报文观测（脱敏 · 有界）"]
-        REGC["LoadPsop · RegistryClient<br/>编排中心 / 注册中心客户端"]
-        MSG["A2atMessages 等薄转换辅助<br/>A2ATExtension · A2atMessages"]
-    end
-
-    subgraph STARTER["spring-boot-starter（可选 · A2A 服务端装配）"]
-        direction LR
-        AUTO["A2AAutoConfiguration<br/>服务端组件装配"]
-        EP["A2AController<br/>A2A 服务端端点"]
-    end
-
-    subgraph EXTSDK["外部 SDK"]
-        direction LR
-        A2AJ["a2a-java-sdk<br/>客户端传输 · 服务端处理器 · A2A spec 类型"]
-        A2ATC["a2a-t-core<br/>扩展 URI · MetadataContent · NegotiationContext"]
+        A2AJ["a2a-java-sdk<br/>REST / JSON-RPC / gRPC 传输 · A2A 类型"]
+        A2ATC["a2a-t-sdk（a2a-t-core）<br/>电信扩展 URI · 协商上下文"]
     end
 
     subgraph SYS["外部系统"]
-        ORCH["编排中心（工作流定义）"]
-        REGT["注册中心（AgentCard）"]
+        direction LR
+        ORCH["编排中心<br/>工作流定义（PSOP）"]
+        REGT["注册中心<br/>AgentCard"]
+        OMC["被调度智能体（OMC）"]
     end
 
-    WB -->|"选择工作流并启动"| EXE
+    WB ==>|"选择工作流并启动"| EXE
     BIZ -.->|"实现"| CP
-    GEN -->|"生成最终消息内容"| BIZ
     EXE -->|"调度时回调业务"| CP
     EXE --- MODEL
     CP --- MODEL
     EXE --> CTXB
-    EXE --> ADAPT
     EXE -->|"分发 / 晚到结果拦截"| WEC
     WEC --> TRANS
     EXT --> TRANS
     TRANS --> OBSV
     TRANS --> A2AJ
     MSG -.->|"引擎内唯一引用位置"| A2ATC
-    REGC --> ORCH
-    REGC --> REGT
-    AUTO --> EP
-    EP -->|"RestHandler 协议处理"| A2AJ
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    REGC -->|"检索工作流"| ORCH
+    REGC -->|"获取 AgentCard"| REGT
 ```
 
-模块视图要点：调度内核（core/control/model 包）不引用任何 A2A-T SDK 类型，该边界由
-`ContentDependencyBoundaryTest` 架构测试守护；client 协议适配层（A2ATExtension、A2atMessages、
-DefaultWorkflowEngineClient）是引擎内引用 a2a-t-core 的唯一位置；starter 只装配 A2A 服务端组件，
-引擎本身以 Maven 依赖形式嵌入宿主进程，由宿主代码（如 `ExecutePsop`）驱动。
+模块视图要点：引擎以 Maven 依赖嵌入宿主进程，由宿主代码启动并实现回调；调度内核（core/control/model
+包）不引用任何 A2A-T SDK 类型，该边界由 `ContentDependencyBoundaryTest` 架构测试守护；client 协议
+适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
+位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
+经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
+AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。
 
 ### 3.1 Layer 0 - 通信层
 

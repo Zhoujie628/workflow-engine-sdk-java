@@ -126,79 +126,75 @@ graph TD
     L0 -.-> F
 ```
 
-The layer view expands into the software module view (Maven modules, package responsibilities, and dependency boundaries):
+The layer view expands into the software module view (the engine in relation to the host agent, the orchestration center, the registry center, the dispatched agents, and the two SDK layers):
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Host Agent (business application · samples workbench)"]
+    subgraph HOST["Host Agent (business application)"]
         direction LR
-        WB["WorkbenchOrchestrator<br/>northbound task intake · workflow selection"]
+        WB["Northbound task intake · workflow selection"]
         BIZ["Business callbacks<br/>onTask / onSelfTask / onRoute / onNegotiation"]
-        GEN["Content generation and validation<br/>calls a2a-t-client directly"]
+        GEN["Content generation and validation<br/>(a2a-t-client)"]
     end
 
-    subgraph KERNEL["workflow-engine scheduling kernel (zero A2A-T dependency, guarded by an architecture test)"]
-        direction LR
-        EXE["WorkflowExecutor<br/>DAG validation · parallel dispatch · aggregation"]
-        CTXB["ContextBuilder<br/>four-mode upstream window selection"]
-        ADAPT["FailureMapping · ProtocolResultAdapter<br/>failure mapping · transport-to-business result adaptation"]
-        CP["ControlPoint callback contract<br/>+ EventCallback event outlet"]
-        MODEL["model layer<br/>workflow definitions · MessageContent · ReceivedMessage"]
+    subgraph ENGINE["Workflow Execution Engine (Maven dependency, embedded in the host process)"]
+        subgraph KERNEL["Scheduling kernel (zero A2A-T dependency, guarded by an architecture test)"]
+            direction LR
+            EXE["WorkflowExecutor<br/>DAG validation · parallel dispatch · aggregation"]
+            CTXB["ContextBuilder<br/>upstream window selection"]
+            CP["ControlPoint callback contract<br/>EventCallback event outlet"]
+            MODEL["model<br/>workflow definitions · message carriers"]
+        end
+        subgraph ADAPTER["Protocol adaptation layer"]
+            direction LR
+            WEC["DefaultWorkflowEngineClient<br/>task dispatch · negotiation correlation and reply validation"]
+            EXT["DefaultExtensionSender<br/>authorization / subscription (independent channels)"]
+            TRANS["A2ATransport base<br/>A2A runtime · authentication · SSE extraction"]
+            OBSV["WireLog · ProtocolLogger<br/>wire-level observation"]
+            REGC["LoadPsop · RegistryClient<br/>orchestration / registry clients"]
+            MSG["Thin conversion helpers (A2atMessages and peers)"]
+        end
     end
 
-    subgraph ADAPTER["client protocol adaptation layer"]
+    subgraph SDK["Protocol SDK layer"]
         direction LR
-        WEC["DefaultWorkflowEngineClient<br/>task dispatch · negotiation correlation and reply validation"]
-        EXT["DefaultExtensionSender<br/>authorization / subscription (channels independent of the workflow)"]
-        TRANS["A2ATransport base<br/>A2A runtime · authentication · SSE event extraction"]
-        OBSV["WireLog · ProtocolLogger<br/>wire-level observation (redacted · bounded)"]
-        REGC["LoadPsop · RegistryClient<br/>orchestration-center / registry-center clients"]
-        MSG["Thin conversion helpers<br/>A2ATExtension · A2atMessages"]
-    end
-
-    subgraph STARTER["spring-boot-starter (optional · A2A server assembly)"]
-        direction LR
-        AUTO["A2AAutoConfiguration<br/>server-side component assembly"]
-        EP["A2AController<br/>A2A server endpoints"]
-    end
-
-    subgraph EXTSDK["External SDKs"]
-        direction LR
-        A2AJ["a2a-java-sdk<br/>client transports · server handlers · A2A spec types"]
-        A2ATC["a2a-t-core<br/>extension URIs · MetadataContent · NegotiationContext"]
+        A2AJ["a2a-java-sdk<br/>REST / JSON-RPC / gRPC transports · A2A types"]
+        A2ATC["a2a-t-sdk (a2a-t-core)<br/>telecom extension URIs · negotiation context"]
     end
 
     subgraph SYS["External systems"]
-        ORCH["Orchestration center (workflow definitions)"]
-        REGT["Registry center (AgentCards)"]
+        direction LR
+        ORCH["Orchestration center<br/>workflow definitions (PSOP)"]
+        REGT["Registry center<br/>AgentCards"]
+        OMC["Dispatched agents (OMC)"]
     end
 
-    WB -->|"selects workflow and starts"| EXE
+    WB ==>|"selects workflow and starts"| EXE
     BIZ -.->|"implements"| CP
-    GEN -->|"generates final message content"| BIZ
     EXE -->|"invokes business during scheduling"| CP
     EXE --- MODEL
     CP --- MODEL
     EXE --> CTXB
-    EXE --> ADAPT
     EXE -->|"dispatch / late-result interception"| WEC
     WEC --> TRANS
     EXT --> TRANS
     TRANS --> OBSV
     TRANS --> A2AJ
     MSG -.->|"only reference site inside the engine"| A2ATC
-    REGC --> ORCH
-    REGC --> REGT
-    AUTO --> EP
-    EP -->|"RestHandler protocol processing"| A2AJ
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    REGC -->|"workflow search"| ORCH
+    REGC -->|"AgentCard retrieval"| REGT
 ```
 
-Key properties of the module view: the scheduling kernel (core/control/model packages) references no A2A-T
-SDK types — a boundary guarded by the `ContentDependencyBoundaryTest` architecture test. The client
-protocol adaptation layer (A2ATExtension, A2atMessages, DefaultWorkflowEngineClient) is the only place
-inside the engine that references a2a-t-core. The starter assembles only the A2A server side; the engine
-itself is embedded into the host process as a Maven dependency and driven by host code (for example
-`ExecutePsop`).
+Key properties of the module view: the engine is embedded in the host process as a Maven dependency, started
+by host code and extended through the callbacks. The scheduling kernel (core/control/model packages)
+references no A2A-T SDK types — a boundary guarded by the `ContentDependencyBoundaryTest` architecture test.
+The client protocol adaptation layer (A2ATExtension, A2atMessages, DefaultWorkflowEngineClient) is the only
+place inside the engine that references a2a-t-sdk. All four interaction types with dispatched agents (OMC) —
+Task-T, Negotiation-T, Authorization-T, Notification-T — travel over a2a-java-sdk transports, with
+authorization and subscription on channels independent of the workflow. The orchestration and registry
+centers are only reached by the engine clients for workflow-definition search and AgentCard retrieval; the
+selection strategy itself belongs to the host.
 
 ### 3.1 Layer 0 - Communication
 
