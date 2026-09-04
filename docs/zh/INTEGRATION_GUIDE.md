@@ -505,8 +505,8 @@ LoadPsop 不修改 JVM 全局 SSLContext、默认 SocketFactory 或 HostnameVeri
 ### 13.3 Demo 启动前任务清理
 
 Demo 在打开独立协议通道和启动工作流之前，先查询每个被调度智能体中处于 `SUBMITTED`、`WORKING`、
-`INPUT_REQUIRED`、`AUTH_REQUIRED` 状态的任务，再通过标准 A2A 任务接口取消当前认证身份可见的全部结果。 查询会跟随
-`nextPageToken`，对扫描过程中发生状态变化的任务去重，并正确处理“查询后、取消前任务已进入终态”的竞态。
+`INPUT_REQUIRED`、`AUTH_REQUIRED` 状态的任务，再通过标准 A2A 任务接口取消当前认证身份可见的全部结果。
+查询会跟随 `nextPageToken`，对扫描过程中发生状态变化的任务去重，并正确处理“查询后、取消前任务已进入终态”的竞态。
 查询和取消使用独立的短生命周期认证传输，不复用工作流、授权或通知的生命周期。
 
 清理默认开启并采用 fail-fast，避免遗留任务静默累积后触发容量错误。可通过

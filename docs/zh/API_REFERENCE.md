@@ -61,7 +61,6 @@ ExecutionResult result = ExecutePsop.builder()
 CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
 CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
-
 CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
 CompletableFuture<SendMessageResult> subscribeToTask(String agentName, String taskId, Consumer<Map<String,Object>> callback);

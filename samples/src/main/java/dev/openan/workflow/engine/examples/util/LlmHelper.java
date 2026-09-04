@@ -286,14 +286,32 @@ public final class LlmHelper {
     }
   }
 
-  private record Config(
-      String envPath,
-      String apiKey,
-      String baseUrl,
-      String model,
-      int maxTokens,
-      double temperature,
-      int timeoutSeconds) {}
+  private static final class Config {
+    private final String envPath;
+    private final String apiKey;
+    private final String baseUrl;
+    private final String model;
+    private final int maxTokens;
+    private final double temperature;
+    private final int timeoutSeconds;
+
+    private Config(
+        String envPath,
+        String apiKey,
+        String baseUrl,
+        String model,
+        int maxTokens,
+        double temperature,
+        int timeoutSeconds) {
+      this.envPath = envPath;
+      this.apiKey = apiKey;
+      this.baseUrl = baseUrl;
+      this.model = model;
+      this.maxTokens = maxTokens;
+      this.temperature = temperature;
+      this.timeoutSeconds = timeoutSeconds;
+    }
+  }
 
   private record HttpResponse(int statusCode, String body) {}
 

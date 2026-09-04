@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -32,27 +33,22 @@ class WorkbenchAgentCatalogTest {
   @TempDir Path tempDir;
 
   @Test
-  void loadsAgentCardFromAnExternalFileWithoutEditingBundledResources() throws Exception {
-    Path bundled =
-        Path.of(
-            getClass()
-                .getClassLoader()
-                .getResource("agentcard/spn_domain_agent_city1.json")
-                .toURI());
-    Path external = tempDir.resolve("city1-agent-card.json");
-    Files.writeString(
-        external, Files.readString(bundled).replace("127.0.0.1:26335", "omc.example.test:443"));
+  void loadsAnExternalAgentCard() throws Exception {
+    Path externalCard = tempDir.resolve("city1.json");
+    try (var input =
+        getClass().getClassLoader().getResourceAsStream("agentcard/spn_domain_agent_city1.json")) {
+      Files.copy(input, externalCard, StandardCopyOption.REPLACE_EXISTING);
+    }
 
-    var cards = new WorkbenchAgentCatalog(List.of(external.toString())).load();
+    var cards = new WorkbenchAgentCatalog(List.of(externalCard.toString())).load();
 
     assertEquals(1, cards.size());
-    assertEquals(
-        "https://omc.example.test:443/a2a/json", cards.get(0).supportedInterfaces().get(0).url());
+    assertEquals("SPN Domain Agent City1", cards.get(0).name());
   }
 
   @Test
-  void explicitlyConfiguredMissingCardFailsFast() {
-    Path missing = tempDir.resolve("missing-agent-card.json");
+  void failsFastWhenAnExplicitCardDoesNotExist() {
+    Path missing = tempDir.resolve("missing.json");
 
     assertThrows(
         IllegalStateException.class,

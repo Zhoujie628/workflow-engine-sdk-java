@@ -22,12 +22,12 @@ return final message content and own any A2A-T generation, schema, validation or
 - **Multi-Protocol Transport**: REST, JSON-RPC, and gRPC auto-selected from AgentCard
 - **Authentication**: Bearer token login with TTL cache, AES-256-GCM encrypted credentials, custom `AuthProvider`
 - **HTTPS/TLS**: Configurable trust store, self-signed cert support for development
-- **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf and dev vendor SDK observations; bodies
-  enabled at DEBUG, mandatory redaction
+- **Protocol Logging**: actual HTTP/JSON-RPC boundaries, gRPC metadata/protobuf views and dev vendor SDK observations;
+  bodies default on at DEBUG with mandatory secret-field redaction
 
-The sample treats protocol documents as integration inputs, not executable truth. The pinned A2A-T SDK templates, slot
-schemas, canonical URIs, and validation results are authoritative. Protocol generation and validation fail closed; raw
-text is never sent under an A2A-T URI as a fallback.
+Protocol documents are integration inputs, not executable truth. The pinned A2A-T SDK templates, slot schemas,
+canonical URIs, and validation results are authoritative. Protocol generation and validation fail closed; raw text is
+never sent under an A2A-T URI as a fallback.
 
 In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the integrator. The integrator loads the PSOP, dispatches two
 city-specific OMC diagnoses in parallel, joins both branches exactly once, and returns the real merged result. Outbound
@@ -42,9 +42,10 @@ subscription until the recovery result, cancellation, or shutdown.
 
 A2A-T SDK `1.1.0` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
-`a2a-t-core`; host agents using content generation explicitly add `a2a-t-client:1.1.0`. A receiving service that
-validates extension content adds `a2a-t-server:1.1.0`. See the bilingual
-[Developer Guide](docs/en/DEVELOPER_GUIDE.md) / [开发者指南](docs/zh/DEVELOPER_GUIDE.md) for IDEA and upgrade checks.
+`a2a-t-core`; host agents using content generation explicitly add `a2a-t-client:1.1.0`. A dispatched-agent service that
+validates received extension content adds `a2a-t-server:1.1.0`. See the bilingual
+[Developer Guide](docs/en/DEVELOPER_GUIDE.md) / [开发者指南](docs/zh/DEVELOPER_GUIDE.md) for dependency and
+upgrade guidance.
 
 ```xml
 <dependency>
@@ -81,7 +82,7 @@ HostQuickStart.main(new String[] {
 ```
 
 This minimal example sends plain A2A content. For Task-T, Negotiation-T, Authorization-T and Notification-T content
-generation/validation in host-agent business callbacks, follow SpringSpnDemo and the business callback guide.
+generation/validation in host-agent business callbacks, follow the business callback guide.
 
 Final content callbacks, complete dependency inputs and negotiation
 Send/Stop: [English](docs/en/BUSINESS_CALLBACKS.md) / [中文](docs/zh/BUSINESS_CALLBACKS.md).
@@ -94,6 +95,7 @@ graph TD
     L1["Layer 1 — Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
     L0["Layer 0 — Transport<br/>WorkflowEngineClient / A2ATransport<br/>A2A send, auth, extensions, SSL, SSE"]
     F["Foundation — Decision<br/>ControlPoint<br/>user-implemented business decisions"]
+
     L2 --> L1 --> L0
     L0 -.-> F
 ```
@@ -190,3 +192,10 @@ current Spring application context without modifying JVM-wide properties. Protoc
 Run `SpringSpnDemoE2ETest` (direct) and, on dev, `SpringSpnDemoOrderE2ETest` sequentially. Each tests the no-VM-option
 single-city default, explicit disable/enable and both-city negotiation with current SDK resources and an offline LLM
 provider. This is local protocol E2E evidence, not real model/platform/OMC validation.
+
+## Verification
+
+Run `mvn -B clean verify` before release. The reactor verifies the engine, Spring Boot starter, callback examples,
+protocol transport, negotiation, independent extension lifecycles, cancellation, error propagation, and credential
+redaction. These automated tests use controlled fixtures; production endpoints, identity services, and live model
+providers require a separate acceptance record.

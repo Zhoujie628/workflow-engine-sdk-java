@@ -41,14 +41,6 @@ import org.junit.jupiter.api.Test;
 
 class StaleTaskCleanerTest {
 
-  private static AgentCard agentCard() {
-    return new WorkbenchAgentCatalog().load().get(0);
-  }
-
-  private static Task task(String id, TaskState state) {
-    return Task.builder().id(id).contextId("ctx-" + id).status(new TaskStatus(state)).build();
-  }
-
   @Test
   void cancelsEveryVisibleNonTerminalTask() {
     FakeClient client = new FakeClient();
@@ -76,14 +68,22 @@ class StaleTaskCleanerTest {
     assertEquals(1, report.becameTerminal());
   }
 
+  private static AgentCard agentCard() {
+    return new WorkbenchAgentCatalog().load().get(0);
+  }
+
+  private static Task task(String id, TaskState state) {
+    return Task.builder()
+        .id(id)
+        .contextId("ctx-" + id)
+        .status(new TaskStatus(state))
+        .build();
+  }
+
   private static final class FakeClient implements WorkflowEngineClient {
     private final List<Task> tasks = new ArrayList<>();
     private final List<String> canceledTaskIds = new ArrayList<>();
     private boolean failCancellation;
-
-    private static SendMessageResult result(Task task) {
-      return SendMessageResult.builder().task(task).taskState(task.status().state().name()).build();
-    }
 
     @Override
     public CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params) {
@@ -103,8 +103,11 @@ class StaleTaskCleanerTest {
 
     @Override
     public CompletableFuture<SendMessageResult> getTask(String agentName, String taskId) {
-      return CompletableFuture.completedFuture(
-          result(task(taskId, TaskState.TASK_STATE_COMPLETED)));
+      return CompletableFuture.completedFuture(result(task(taskId, TaskState.TASK_STATE_COMPLETED)));
+    }
+
+    private static SendMessageResult result(Task task) {
+      return SendMessageResult.builder().task(task).taskState(task.status().state().name()).build();
     }
 
     @Override
