@@ -21,7 +21,7 @@ package dev.openan.workflow.engine.examples.gateway;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.sun.net.httpserver.HttpServer;
-import dev.openan.workflow.engine.client.RemoteProblemException;
+import dev.openan.workflow.engine.client.RemoteA2AErrorException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
@@ -35,10 +35,11 @@ import org.a2aproject.sdk.spec.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-class OrderProblemResponseTest {
+class OrderA2AErrorResponseTest {
   @ParameterizedTest
   @ValueSource(ints = {400, 429})
-  void vendorSseProblemStopsTheCallerBeforeTheOmcClosesItsStream(int status) throws Exception {
+  void vendorSseA2AErrorStopsTheCallerBeforeTheDownstreamClosesItsStream(int status)
+      throws Exception {
     var release = new CountDownLatch(1);
     var disconnected = new CountDownLatch(1);
     var requests = new AtomicInteger();
@@ -49,8 +50,16 @@ class OrderProblemResponseTest {
       exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
       exchange.sendResponseHeaders(200, 0);
       try {
-        byte[] data = ("data: {\"status\":" + status
-            + ",\"detail\":\"OMC拒绝本次请求\",\"type\":\"\"}\n\n").getBytes(StandardCharsets.UTF_8);
+        String reason = status == 429 ? "ACTIVE_TASK_LIMIT_EXCEEDED" : "INVALID_PARAMS";
+        byte[] data =
+            ("data: {\"error\":{\"code\":"
+                    + status
+                    + ",\"status\":\"INVALID_ARGUMENT\","
+                    + "\"message\":\"Downstream request rejected\",\"details\":[{"
+                    + "\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\",\"reason\":\""
+                    + reason
+                    + "\",\"domain\":\"a2a-protocol.org\"}]}}\n\n")
+                .getBytes(StandardCharsets.UTF_8);
         exchange.getResponseBody().write(data);
         exchange.getResponseBody().flush();
         for (int i = 0; i < 80 && !release.await(100, TimeUnit.MILLISECONDS); i++) {
@@ -90,10 +99,11 @@ class OrderProblemResponseTest {
       var thrown = assertThrows(java.util.concurrent.ExecutionException.class,
           () -> response.get(3, TimeUnit.SECONDS));
       Throwable cause = thrown;
-      while (cause.getCause() != null && !(cause instanceof RemoteProblemException)) cause = cause.getCause();
-      var problem = assertInstanceOf(RemoteProblemException.class, cause);
-      assertEquals(status, problem.getStatus());
-      assertEquals("OMC拒绝本次请求", problem.getDetail());
+      while (cause.getCause() != null && !(cause instanceof RemoteA2AErrorException))
+        cause = cause.getCause();
+      var error = assertInstanceOf(RemoteA2AErrorException.class, cause);
+      assertEquals(status, error.getHttpStatus());
+      assertEquals("Downstream request rejected", error.getMessage());
       assertEquals(0, events.get());
       assertEquals(1, requests.get());
       assertTrue(disconnected.await(3, TimeUnit.SECONDS), "failed forwarding must close its OMC connection");

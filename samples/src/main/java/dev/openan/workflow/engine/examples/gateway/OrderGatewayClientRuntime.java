@@ -42,6 +42,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -317,13 +318,17 @@ public final class OrderGatewayClientRuntime
 
   private static void validateResponse(OrderResponse response) {
     Objects.requireNonNull(response, "Gateway returned a null response");
-    var problem =
-        dev.openan.workflow.engine.client.RemoteProblemException.fromPayload(response.body());
-    if (problem != null) throw problem;
+    var remoteError =
+        dev.openan.workflow.engine.client.RemoteA2AErrorException.fromResponse(
+            response.status(), response.body(), response.headers());
+    if (remoteError != null) throw remoteError;
     int status = response.status();
     if (status != 0 && (status < 200 || status >= 300)) {
-      throw new IllegalStateException(
-          "Gateway HTTP " + status + ": " + abbreviate(response.body(), 500));
+      var httpError =
+          new org.a2aproject.sdk.spec.A2AClientHTTPError(
+              status, "Gateway HTTP " + status, response.body(), response.headers());
+      throw Objects.requireNonNull(
+          dev.openan.workflow.engine.client.RemoteA2AErrorException.findIn(httpError));
     }
   }
 
@@ -458,16 +463,20 @@ public final class OrderGatewayClientRuntime
             route.ne(),
             channel,
             elapsedMillis(started));
-      } else if (dev.openan.workflow.engine.client.RemoteProblemException.findIn(e) != null) {
-        var problem = dev.openan.workflow.engine.client.RemoteProblemException.findIn(e);
+      } else if (dev.openan.workflow.engine.client.RemoteA2AErrorException.findIn(e) != null) {
+        var remoteError =
+            dev.openan.workflow.engine.client.RemoteA2AErrorException.findIn(e);
         log.warn(
-            "[OrderGateway] REMOTE_PROBLEM requestId={}, agent={}, ne={}, status={}, elapsedMs={}, reason={}",
+            "[OrderGateway] A2A_ERROR requestId={}, agent={}, ne={}, httpStatus={}, status={}, "
+                + "reason={}, elapsedMs={}, message={}",
             requestId,
             agentCard.name(),
             route.ne(),
-            problem.getStatus(),
+            remoteError.getHttpStatus(),
+            remoteError.getStatus(),
+            remoteError.getReason(),
             elapsedMillis(started),
-            problem.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
+            remoteError.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
       } else {
         log.error(
             "[OrderGateway] SEND_FAILED requestId={}, agent={}, ne={}, elapsedMs={}, "
@@ -728,6 +737,10 @@ public final class OrderGatewayClientRuntime
             eventSink,
             frame -> logSseFrame(requestId, agentName, sseFrameCount.incrementAndGet(), frame));
     AtomicInteger chunkCount = new AtomicInteger();
+    AtomicInteger responseStatus = new AtomicInteger();
+    AtomicReference<Map<String, List<String>>> responseHeaders =
+        new AtomicReference<>(Map.of());
+    StringBuilder errorBody = new StringBuilder();
     session.executeStreaming(
         request,
         config.timeoutMillis,
@@ -735,13 +748,24 @@ public final class OrderGatewayClientRuntime
           if (chunkCount.incrementAndGet() == 1) {
             logProtocolResponseHead(requestId, agentName, response);
           }
-          validateResponse(response);
+          if (response.status() != 0) {
+            responseStatus.compareAndSet(0, response.status());
+          }
+          if (!response.headers().isEmpty()) {
+            responseHeaders.set(response.headers());
+          }
           log.debug(
               "[OrderGateway] STREAM_CHUNK requestId={}, agent={}, chunk={}, bodyChars={}",
               requestId,
               agentName,
               chunkCount.get(),
               response.body().length());
+          int effectiveStatus = response.status() != 0 ? response.status() : responseStatus.get();
+          if (effectiveStatus != 0 && (effectiveStatus < 200 || effectiveStatus >= 300)) {
+            errorBody.append(response.body());
+            return false;
+          }
+          validateResponse(response);
           boolean terminal = parserSession.accept(response.body());
           if (terminal) {
             log.info(
@@ -753,6 +777,12 @@ public final class OrderGatewayClientRuntime
           }
           return terminal;
         });
+    int observedStatus = responseStatus.get();
+    if (observedStatus != 0 && (observedStatus < 200 || observedStatus >= 300)) {
+      validateResponse(
+          new OrderResponse(
+              observedStatus, errorBody.toString(), responseHeaders.get(), "aggregated-error"));
+    }
     List<ClientEvent> events = parserSession.complete();
     if (events.isEmpty()) {
       throw new IllegalStateException("Gateway message:stream closed without an A2A event");

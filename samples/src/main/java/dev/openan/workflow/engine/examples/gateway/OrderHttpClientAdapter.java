@@ -198,26 +198,9 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
         new java.util.concurrent.atomic.AtomicInteger();
     java.util.concurrent.atomic.AtomicReference<Map<String, List<String>>> headers =
         new java.util.concurrent.atomic.AtomicReference<>(Map.of());
-    WireLog.Body observation =
-        new WireLog.Body(
-            true,
-            true,
-            frame ->
-                WireLog.inContext(
-                    trace,
-                    () ->
-                        WireLog.record(
-                            "ORDER_SDK_RESPONSE",
-                            "RESPONSE_BODY",
-                            requestId,
-                            request.getUriPath(),
-                            request.getMethod(),
-                            status.get() == 0 ? null : status.get(),
-                            Map.of(),
-                            "sdk-sse-text",
-                            frame[0],
-                            "SDK string callbacks assembled as SSE; original byte encoding/OMC wire=unobserved; "
-                                + frame[1])));
+    StringBuilder errorBody = new StringBuilder();
+    java.util.concurrent.atomic.AtomicReference<WireLog.Body> observation =
+        new java.util.concurrent.atomic.AtomicReference<>();
     boolean interrupted = true;
     try {
       RequestBodyUriSpec spec = prepareRequest(request, timeoutMillis);
@@ -228,13 +211,35 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
             public void onHeader(HttpClientResponse response) {
               status.set(response.status().code());
               headers.set(responseHeaders(response.responseHeaders().entries()));
+              boolean sse = status.get() >= 200 && status.get() < 300;
+              observation.set(
+                  new WireLog.Body(
+                      sse,
+                      true,
+                      frame ->
+                          WireLog.inContext(
+                              trace,
+                              () ->
+                                  WireLog.record(
+                                      "ORDER_SDK_RESPONSE",
+                                      "RESPONSE_BODY",
+                                      requestId,
+                                      request.getUriPath(),
+                                      request.getMethod(),
+                                      status.get(),
+                                      Map.of(),
+                                      sse ? "sdk-sse-text" : "sdk-json-text",
+                                      frame[0],
+                                      (sse
+                                              ? "SDK string callbacks assembled as SSE"
+                                              : "SDK string callbacks assembled as an HTTP error body")
+                                          + "; original byte encoding/OMC wire=unobserved; "
+                                          + frame[1]))));
               logResponse(
                   requestId,
                   request,
                   new OrderResponse(status.get(), "", headers.get(), "sdk-headers"),
                   trace);
-              if (status.get() < 200 || status.get() >= 300)
-                throw new IllegalStateException("SSE response error status: " + status.get());
             }
 
             @Override
@@ -243,10 +248,17 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
                 throw new IllegalStateException("SDK delivered a body before response headers");
               OrderResponse chunk =
                   new OrderResponse(status.get(), content, headers.get(), "sdk-text-chunk");
-              observation.accept(
+              WireLog.Body bodyObservation = observation.get();
+              if (bodyObservation == null)
+                throw new IllegalStateException("SDK delivered a body before response headers");
+              bodyObservation.accept(
                   java.nio.ByteBuffer.wrap(
                       content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-              responseSink.test(chunk);
+              if (status.get() < 200 || status.get() >= 300) {
+                errorBody.append(content);
+              } else {
+                responseSink.test(chunk);
+              }
             }
 
             @Override
@@ -254,12 +266,20 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
               return true;
             }
           });
+      if (status.get() < 200 || status.get() >= 300) {
+        responseSink.test(
+            new OrderResponse(
+                status.get(), errorBody.toString(), headers.get(), "sdk-error-body"));
+      }
       interrupted = false;
     } catch (RuntimeException error) {
       logFailure(requestId, request, trace, error);
       throw error;
     } finally {
-      observation.end(interrupted);
+      WireLog.Body bodyObservation = observation.get();
+      if (bodyObservation != null) {
+        bodyObservation.end(interrupted);
+      }
       WireLog.inContext(
           trace,
           () ->

@@ -158,12 +158,21 @@ rejects AgentCards whose effective addresses are not local. The application neve
 The simulator bypasses the live Eastcom platform and cannot prove live login, NE routing, header forwarding, rate-limit,
 or long-connection behavior.
 
-### SSE business errors
+### A2A errors and task failures
 
-The Order path recognizes top-level SSE problem objects containing `status`, `title`, or `detail`. A 400/429 problem is
-failed immediately even when the HTTP envelope is 200. It is not converted into an A2A task event, negotiation Propose,
-or retry signal. The engine preserves the remote reason as a `RemoteProblemException`; see
-[Remote problem responses](INTEGRATION_GUIDE.md#14-remote-problem-responses).
+Before task creation, the platform must preserve the remote non-2xx status, `application/a2a+json` body and relevant
+headers. The adapter parses the standard top-level `google.rpc.Status` envelope and exposes it as
+`RemoteA2AErrorException`. When the vendor callback reports status `0`, the envelope `error.code` supplies the status;
+when both are present, the observed HTTP status takes precedence. A non-standard non-2xx response falls back to
+`a2a.http.<status>`. It is never converted into a task event, negotiation Propose or automatic retry. See
+[A2A errors and task failures](INTEGRATION_GUIDE.md#14-a2a-errors-and-task-failures).
+
+For a non-2xx streaming response, the adapter records the response headers, collects all vendor body callbacks and
+parses the complete error body once the SDK call returns. This is required because callback boundaries may split one
+JSON envelope. Successful SSE responses remain incremental and continue to deliver events as frames arrive.
+
+After task creation, HTTP 200 with `TASK_STATE_FAILED` remains an ordinary A2A task result. The adapter preserves its
+status message, metadata and artifacts instead of reclassifying extension business content as a protocol error.
 
 Failure observed by the caller and cancellation observed by the platform are separate facts. The simulator stops the
 affected forward on local connection closure and records `FORWARD_CANCEL_REQUESTED` / `FORWARD_CANCELLED`, without
@@ -270,7 +279,7 @@ to a one-request resource because safe round association is impossible.
 | L-02 | First/subsequent item status, headers, cookies                   | Requires 2xx when status is present; later status `0` is tolerated         | Real frames cannot be misclassified                                                               |
 | L-03 | Stream closes promptly after terminal state                      | Preserves terminal event and waits for natural Flux completion             | Stream closes within the agreed interval                                                          |
 | L-04 | Idle limit and heartbeat syntax                                  | Ignores empty heartbeats as business events                                | Subscription survives the agreed idle interval                                                    |
-| L-05 | Blocking `/message:send` response forms                          | Parses A2A Message or Task and rejects business problems                   | Message, Task, and failure cases are covered                                                      |
+| L-05 | Blocking `/message:send` response forms                          | Parses A2A Message or Task and rejects standard A2A errors                 | Message, Task, and failure cases are covered                                                      |
 | L-06 | Base path and tenant override rules                              | Request tenant overrides AgentInterface tenant                             | Default, override, and empty tenant route correctly                                               |
 | L-07 | A2A/auth header forwarding                                       | Sends content, accept, version, extension, and call-context headers        | OMC receives required headers without platform replacement                                        |
 | L-08 | Timeout origin and cancellation signal                           | Converts seconds to vendor timeout; propagates failure                     | Timing matches configuration and no call is left behind                                           |
@@ -291,16 +300,17 @@ For each live case, record Agent, NE, streaming flag, tenant, request ID, task I
 platform, `STREAM_FRAME`, and event sink, plus frame sequence/status/header names/body size. Redact sensitive values.
 Record connection cleanup on all three sides and identify ownership for every failure.
 
-Cover streaming success, input/auth required, failed/canceled/disconnected, blocking Message/Task/problem, idle and active
+Cover streaming success, input/auth required, failed/canceled/disconnected, blocking Message/Task/A2A error, idle and active
 timeouts, caller cancellation, two Agents on different NEs, and tenant override. A final result alone is insufficient;
 L-01 requires event-level timing evidence.
 
 ## Protocol logs
 
 Set logger `PROTOCOL` to DEBUG. `ORDER_FORWARD_REQUEST` is the request supplied to the vendor SDK;
-`ORDER_SDK_RESPONSE` is the status, multi-value headers, and text observed from its callbacks. `sdk-sse-text` is an SSE
-display assembled from strings; the original platform-to-OMC bytes are not observable and must not be described as a
-packet capture. `A2A-Version` is logged only when present on the real request.
+`ORDER_SDK_RESPONSE` is the status, multi-value headers, and text observed from its callbacks. `sdk-sse-text` is a
+successful SSE display assembled from strings; `sdk-json-text` is a complete non-2xx response body assembled from the
+same callbacks. The original platform-to-OMC bytes are not observable and must not be described as a packet capture.
+`A2A-Version` is logged only when present on the real request.
 
 ```properties
 logger.protocol.name=PROTOCOL

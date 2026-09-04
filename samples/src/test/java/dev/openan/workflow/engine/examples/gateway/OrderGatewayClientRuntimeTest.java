@@ -239,7 +239,7 @@ class OrderGatewayClientRuntimeTest {
   }
 
   @Test
-  void nonStreamingHttpErrorPreservesProblemBeforeGenericStatusValidation() {
+  void nonStreamingHttpErrorPreservesStandardA2AErrorBeforeGenericStatusValidation() {
     var runtime =
         runtime(
             route ->
@@ -249,8 +249,12 @@ class OrderGatewayClientRuntimeTest {
                       OrderHttpSessionStrRequest request, int timeoutMillis) {
                     return new OrderResponse(
                         429,
-                        "{\"status\":429,\"detail\":\"Active task limit reached\",\"type\":\"\"}",
-                        Map.of(),
+                        "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\","
+                            + "\"message\":\"Active task limit reached\",\"details\":[{"
+                            + "\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\","
+                            + "\"reason\":\"ACTIVE_TASK_LIMIT_EXCEEDED\","
+                            + "\"domain\":\"a2a-protocol.org\"}]}}",
+                        Map.of("Retry-After", List.of("10")),
                         "test");
                   }
 
@@ -272,9 +276,72 @@ class OrderGatewayClientRuntimeTest {
               () -> runtime.sendMessage(card("city1", 26335, false), params(), null, null, null));
       var error =
           org.junit.jupiter.api.Assertions.assertInstanceOf(
-              dev.openan.workflow.engine.client.RemoteProblemException.class, wrapped.getCause());
-      assertEquals(429, error.getStatus());
-      assertEquals("Active task limit reached", error.getDetail());
+              dev.openan.workflow.engine.client.RemoteA2AErrorException.class,
+              wrapped.getCause());
+      assertEquals(429, error.getHttpStatus());
+      assertEquals("Active task limit reached", error.getMessage());
+      assertEquals("ACTIVE_TASK_LIMIT_EXCEEDED", error.getReason());
+      assertEquals("10", error.getRetryAfter());
+    } finally {
+      runtime.close();
+    }
+  }
+
+  @Test
+  void streamingHttpErrorIsParsedAfterAllCallbackChunksAreCollected() {
+    String envelope =
+        "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\","
+            + "\"message\":\"Active task limit reached\",\"details\":[{"
+            + "\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\","
+            + "\"reason\":\"ACTIVE_TASK_LIMIT_EXCEEDED\","
+            + "\"domain\":\"a2a-protocol.org\"}]}}";
+    var runtime =
+        runtime(
+            route ->
+                new OrderGatewayClientRuntime.OrderSession() {
+                  @Override
+                  public OrderResponse execute(
+                      OrderHttpSessionStrRequest request, int timeoutMillis) {
+                    throw new AssertionError("Expected message:stream");
+                  }
+
+                  @Override
+                  public void executeStreaming(
+                      OrderHttpSessionStrRequest request,
+                      int timeoutMillis,
+                      Predicate<OrderResponse> responseSink) {
+                    int split = envelope.length() / 2;
+                    assertFalse(
+                        responseSink.test(
+                            new OrderResponse(
+                                429,
+                                envelope.substring(0, split),
+                                Map.of("Retry-After", List.of("10")),
+                                "test-chunk")));
+                    assertFalse(
+                        responseSink.test(
+                            new OrderResponse(
+                                429,
+                                envelope.substring(split),
+                                Map.of("Retry-After", List.of("10")),
+                                "test-chunk")));
+                  }
+
+                  @Override
+                  public void close() {}
+                });
+    try {
+      var wrapped =
+          assertThrows(
+              IllegalStateException.class,
+              () -> runtime.sendMessage(card("city1", 26335, true), params(), null, null, null));
+      var error =
+          org.junit.jupiter.api.Assertions.assertInstanceOf(
+              dev.openan.workflow.engine.client.RemoteA2AErrorException.class,
+              wrapped.getCause());
+      assertEquals(429, error.getHttpStatus());
+      assertEquals("ACTIVE_TASK_LIMIT_EXCEEDED", error.getReason());
+      assertEquals("10", error.getRetryAfter());
     } finally {
       runtime.close();
     }

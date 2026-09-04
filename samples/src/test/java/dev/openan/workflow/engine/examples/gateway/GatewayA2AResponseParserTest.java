@@ -37,24 +37,34 @@ class GatewayA2AResponseParserTest {
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(ints = {400, 429})
-  void rejectsProblemFramesImmediatelyAndPreservesBusinessDetail(int status) {
-    String problem = "{\"status\":" + status + ",\"detail\":\"OMC业务错误\",\"type\":\"\"}";
+  void rejectsStandardA2AErrorFramesImmediately(int status) {
+    String reason = status == 429 ? "ACTIVE_TASK_LIMIT_EXCEEDED" : "INVALID_PARAMS";
+    String response =
+        "{\"error\":{\"code\":"
+            + status
+            + ",\"status\":\"INVALID_ARGUMENT\",\"message\":\"Downstream request rejected\","
+            + "\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\","
+            + "\"reason\":\""
+            + reason
+            + "\",\"domain\":\"a2a-protocol.org\"}]}}";
     var events = new ArrayList<org.a2aproject.sdk.client.ClientEvent>();
     var session = parser.newStreamingSession(events::add);
-    session.accept("data: " + problem.substring(0, 15));
+    session.accept("data: " + response.substring(0, 15));
     var error =
         assertThrows(
-            dev.openan.workflow.engine.client.RemoteProblemException.class,
-            () -> session.accept(problem.substring(15) + "\n\n"));
-    assertEquals(status, error.getStatus());
-    assertEquals("OMC业务错误", error.getDetail());
+            dev.openan.workflow.engine.client.RemoteA2AErrorException.class,
+            () -> session.accept(response.substring(15) + "\n\n"));
+    assertEquals(status, error.getHttpStatus());
+    assertEquals("Downstream request rejected", error.getMessage());
+    assertEquals(reason, error.getReason());
     assertEquals(0, events.size());
     var bare = parser.newStreamingSession(events::add);
     assertThrows(
-        dev.openan.workflow.engine.client.RemoteProblemException.class, () -> bare.accept(problem));
+        dev.openan.workflow.engine.client.RemoteA2AErrorException.class,
+        () -> bare.accept(response));
     assertThrows(
-        dev.openan.workflow.engine.client.RemoteProblemException.class,
-        () -> parser.parseNonStreaming(problem, events::add));
+        dev.openan.workflow.engine.client.RemoteA2AErrorException.class,
+        () -> parser.parseNonStreaming(response, events::add));
   }
 
   static String taskJson(String taskId, String contextId) throws Exception {
@@ -91,6 +101,18 @@ class GatewayA2AResponseParserTest {
     assertEquals(1, events.size());
     assertEquals(events, emitted);
     assertEquals("task-1", ((TaskEvent) events.get(0)).getTask().id());
+  }
+
+  @Test
+  void keepsPostCreationBusinessFailureAsAnA2ATaskResult() throws Exception {
+    String body =
+        "data: " + taskJson("task-failed", "ctx-failed", TaskState.TASK_STATE_FAILED) + "\n\n";
+
+    var events = parser.parse(body, null);
+
+    var task = ((TaskEvent) events.get(0)).getTask();
+    assertEquals("task-failed", task.id());
+    assertEquals(TaskState.TASK_STATE_FAILED, task.status().state());
   }
 
   @Test
