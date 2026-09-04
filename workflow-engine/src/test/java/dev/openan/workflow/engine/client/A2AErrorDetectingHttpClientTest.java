@@ -5,16 +5,16 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  *    Licensed under the Apache License, Version 2.0 (the "License"); you may
- *    not use this file except in compliance with the License. You may obtain
- *    a copy of the License at
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
  *
  *         http://www.apache.org/licenses/LICENSE-2.0
  *
- *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- *    License for the specific language governing permissions and limitations
- *    under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
  */
 package dev.openan.workflow.engine.client;
 
@@ -31,15 +31,15 @@ import org.a2aproject.sdk.client.http.A2AHttpResponse;
 import org.a2aproject.sdk.client.http.ServerSentEvent;
 import org.junit.jupiter.api.Test;
 
-class ProblemDetectingHttpClientTest {
+class A2AErrorDetectingHttpClientTest {
   @Test
-  void synchronousProblemCancelsUpstreamAndSurvivesAThrowingErrorObserver() throws Exception {
+  void standardErrorCancelsUpstreamAndSurvivesAThrowingErrorObserver() throws Exception {
     var upstream = new CompletableFuture<Void>();
     var failures = new AtomicInteger();
     var events = new AtomicInteger();
     var completions = new AtomicInteger();
     var client = client((messages, errors, complete) -> {
-      messages.accept(new ServerSentEvent("{\"status\":429,\"detail\":\"capacity reached\"}"));
+      messages.accept(new ServerSentEvent(RemoteA2AErrorResponseTest.error(429)));
       messages.accept(new ServerSentEvent("{\"message\":{}}"));
       complete.run();
       errors.accept(new IllegalStateException("late close"));
@@ -50,10 +50,11 @@ class ProblemDetectingHttpClientTest {
           failures.incrementAndGet();
           throw new IllegalStateException("observer failed");
         }, completions::incrementAndGet);
-    var problem = RemoteProblemException.findIn(assertThrows(CompletionException.class, result::join));
-    assertNotNull(problem);
-    assertEquals(429, problem.getStatus());
-    assertEquals(1, problem.getSuppressed().length);
+    var remoteError = RemoteA2AErrorException.findIn(
+        assertThrows(CompletionException.class, result::join));
+    assertNotNull(remoteError);
+    assertEquals(429, remoteError.getHttpStatus());
+    assertEquals(1, remoteError.getSuppressed().length);
     assertTrue(upstream.isCancelled());
     assertEquals(1, failures.get());
     assertEquals(0, events.get());
@@ -80,8 +81,9 @@ class ProblemDetectingHttpClientTest {
   }
 
   @Test
-  void successfulDataIsNotRewrittenOrMistakenForANestedProblem() throws Exception {
-    String data = "{\"task\":{\"status\":{\"state\":\"TASK_STATE_COMPLETED\"}},\"metadata\":{\"status\":400}}";
+  void successfulDataIsNotRewrittenOrMistakenForANestedError() throws Exception {
+    String data = "{\"task\":{\"status\":{\"state\":\"TASK_STATE_COMPLETED\"}},"
+        + "\"metadata\":{\"error\":{\"code\":400,\"message\":\"business value\"}}}";
     var seen = new AtomicReference<String>();
     var completions = new AtomicInteger();
     var result = client((messages, errors, complete) -> {
@@ -95,8 +97,25 @@ class ProblemDetectingHttpClientTest {
     assertEquals(1, completions.get());
   }
 
+  @Test
+  void streamThatCompletesWithoutAnA2AEventFailsImmediately() throws Exception {
+    var failures = new AtomicReference<Throwable>();
+    var completions = new AtomicInteger();
+    var result = client((messages, errors, complete) -> {
+      complete.run();
+      return CompletableFuture.completedFuture(null);
+    }).createPost().postAsyncSSE(event -> fail("unexpected event"), failures::set,
+        completions::incrementAndGet);
+
+    var failure = assertThrows(CompletionException.class, result::join);
+    assertInstanceOf(java.io.IOException.class, failure.getCause());
+    assertEquals("A2A streaming response closed without an event", failure.getCause().getMessage());
+    assertSame(failure.getCause(), failures.get());
+    assertEquals(0, completions.get());
+  }
+
   private static A2AHttpClient client(Start start) {
-    return new ProblemDetectingHttpClient(new A2AHttpClient() {
+    return new A2AErrorDetectingHttpClient(new A2AHttpClient() {
       @Override public GetBuilder createGet() { throw new UnsupportedOperationException(); }
       @Override public DeleteBuilder createDelete() { throw new UnsupportedOperationException(); }
       @Override public PostBuilder createPost() {
@@ -117,6 +136,7 @@ class ProblemDetectingHttpClientTest {
 
   @FunctionalInterface
   private interface Start {
-    CompletableFuture<Void> run(Consumer<ServerSentEvent> messages, Consumer<Throwable> errors, Runnable complete);
+    CompletableFuture<Void> run(Consumer<ServerSentEvent> messages, Consumer<Throwable> errors,
+        Runnable complete);
   }
 }

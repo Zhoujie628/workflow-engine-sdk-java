@@ -216,18 +216,21 @@ public class DefaultA2AJavaClientRuntime
           error.getMessage());
     } else {
       String msg = error.getMessage() != null ? error.getMessage() : "";
-      RemoteProblemException problem = RemoteProblemException.findIn(error);
-      boolean connectionClosed = problem == null && TransportFailures.isExpectedLocalClose(error);
+      RemoteA2AErrorException remoteError = RemoteA2AErrorException.findIn(error);
+      boolean connectionClosed =
+          remoteError == null && TransportFailures.isExpectedLocalClose(error);
       if (connectionClosed) {
         log.debug("[A2ARuntime] Connection closed for '{}': {}", agentName, msg);
       } else {
         errorRef.set(error);
-        if (problem != null) {
+        if (remoteError != null) {
           log.warn(
-              "[A2ARuntime] REMOTE_PROBLEM agent={}, status={}, reason={}",
+              "[A2ARuntime] A2A_ERROR agent={}, httpStatus={}, status={}, reason={}, message={}",
               agentName,
-              problem.getStatus(),
-              problem.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
+              remoteError.getHttpStatus(),
+              remoteError.getStatus(),
+              remoteError.getReason(),
+              remoteError.getMessage().replace("\r", "\\r").replace("\n", "\\n"));
         } else {
           log.error(
               "[A2ARuntime] Error callback for '{}': {}", agentName, error.getMessage(), error);
@@ -695,7 +698,8 @@ public class DefaultA2AJavaClientRuntime
             crlPath,
             Duration.ofSeconds(60),
             httpClientExecutor);
-    return new ProblemDetectingHttpClient(new JdkA2AHttpClient(new ObservedHttpClient(httpClient)));
+    return new A2AErrorDetectingHttpClient(
+        new JdkA2AHttpClient(new ObservedHttpClient(httpClient)));
   }
 
   private record StreamClientKey(String agentName, String contextId) {}

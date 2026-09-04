@@ -201,6 +201,101 @@ class EmbeddedA2AServerTest {
   }
 
   @Test
+  void closeStopsTheManuallyManagedEventBusProcessor() {
+    assertTrue(server.isEventBusProcessorAlive());
+
+    server.close();
+
+    assertFalse(server.isEventBusProcessorAlive());
+    server = null;
+  }
+
+  @Test
+  void nonStreamingTaskErrorUsesA2AJsonMediaType() throws Exception {
+    HttpClient http = HttpClient.newBuilder().sslContext(createTrustAllSslContext()).build();
+    HttpRequest req =
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://127.0.0.1:" + port + "/tasks/missing"))
+            .GET()
+            .build();
+
+    HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(404, resp.statusCode());
+    assertEquals(
+        "application/a2a+json", resp.headers().firstValue("Content-Type").orElseThrow());
+  }
+
+  @Test
+  void malformedStreamingRequestReturnsAStandardA2AErrorBeforeSseStarts() throws Exception {
+    HttpClient http = HttpClient.newBuilder().sslContext(createTrustAllSslContext()).build();
+    HttpRequest req =
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://127.0.0.1:" + port + "/message:stream"))
+            .header("Content-Type", "application/a2a+json")
+            .header("A2A-Version", "1.0")
+            .POST(HttpRequest.BodyPublishers.ofString("{"))
+            .build();
+    HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+    assertEquals(400, resp.statusCode());
+    assertEquals(
+        "application/a2a+json",
+        resp.headers().firstValue("Content-Type").orElseThrow());
+    var root = mapper.readTree(resp.body());
+    assertEquals(400, root.path("error").path("code").asInt());
+    assertEquals("INVALID_ARGUMENT", root.path("error").path("status").asText());
+    assertTrue(root.path("error").path("details").isArray());
+    assertFalse(root.path("error").path("details").isEmpty());
+    assertEquals(
+        "type.googleapis.com/google.rpc.ErrorInfo",
+        root.path("error").path("details").get(0).path("@type").asText());
+  }
+
+  @Test
+  void unsupportedProtocolVersionReturnsAStandardA2AErrorBeforeSseStarts() throws Exception {
+    HttpClient http = HttpClient.newBuilder().sslContext(createTrustAllSslContext()).build();
+    HttpRequest req =
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://127.0.0.1:" + port + "/message:stream"))
+            .header("Content-Type", "application/a2a+json")
+            .header("A2A-Version", "2.0")
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+            .build();
+
+    HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(400, resp.statusCode());
+    assertEquals(
+        "application/a2a+json", resp.headers().firstValue("Content-Type").orElseThrow());
+    var root = mapper.readTree(resp.body());
+    assertEquals("UNIMPLEMENTED", root.path("error").path("status").asText());
+    assertEquals(
+        "VERSION_NOT_SUPPORTED",
+        root.path("error").path("details").get(0).path("reason").asText());
+  }
+
+  @Test
+  void missingTaskSubscriptionReturnsAStandardA2AErrorBeforeSseStarts() throws Exception {
+    HttpClient http = HttpClient.newBuilder().sslContext(createTrustAllSslContext()).build();
+    HttpRequest req =
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://127.0.0.1:" + port + "/tasks/missing:subscribe"))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(404, resp.statusCode());
+    assertEquals(
+        "application/a2a+json", resp.headers().firstValue("Content-Type").orElseThrow());
+    var root = mapper.readTree(resp.body());
+    assertEquals(404, root.path("error").path("code").asInt());
+    assertEquals("NOT_FOUND", root.path("error").path("status").asText());
+    assertEquals(
+        "TASK_NOT_FOUND", root.path("error").path("details").get(0).path("reason").asText());
+  }
+
+  @Test
   void testSendMessage() throws Exception {
     SendMessageResult result =
         client

@@ -22,10 +22,12 @@ package dev.openan.workflow.engine.client;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
 import java.net.*;
 import java.net.http.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.AfterEach;
@@ -176,5 +178,117 @@ class ObservedHttpClientTest {
                 "",
                 "",
                 Map.of()));
+  }
+
+  @Test
+  void subscriberCancellationIsNotLoggedAsATransportFailure() {
+    List<WireLog.Entry> records = new CopyOnWriteArrayList<>();
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("https://agent.example/message:stream")).GET().build();
+    HttpResponse.BodyHandler<Void> cancellingHandler =
+        ignored ->
+            new HttpResponse.BodySubscriber<>() {
+              private final CompletableFuture<Void> body = new CompletableFuture<>();
+
+              @Override
+              public CompletionStage<Void> getBody() {
+                return body;
+              }
+
+              @Override
+              public void onSubscribe(Flow.Subscription subscription) {
+                subscription.cancel();
+              }
+
+              @Override
+              public void onNext(List<ByteBuffer> item) {}
+
+              @Override
+              public void onError(Throwable error) {
+                body.completeExceptionally(error);
+              }
+
+              @Override
+              public void onComplete() {
+                body.complete(null);
+              }
+            };
+
+    CompletableFuture<HttpResponse<Void>> result =
+        new ObservedHttpClient(new CancellationReportingHttpClient(), records::add)
+            .sendAsync(request, cancellingHandler);
+
+    assertThrows(CompletionException.class, result::join);
+    assertTrue(records.stream().noneMatch(entry -> entry.direction().equals("FAILURE")));
+  }
+
+  private static final class CancellationReportingHttpClient extends HttpClient {
+    @Override
+    public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+        HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+      CompletableFuture<HttpResponse<T>> result = new CompletableFuture<>();
+      HttpResponse.ResponseInfo info =
+          new HttpResponse.ResponseInfo() {
+            @Override
+            public int statusCode() {
+              return 200;
+            }
+
+            @Override
+            public HttpHeaders headers() {
+              return HttpHeaders.of(
+                  Map.of("Content-Type", List.of("text/event-stream")), (name, value) -> true);
+            }
+
+            @Override
+            public Version version() {
+              return Version.HTTP_1_1;
+            }
+          };
+      handler
+          .apply(info)
+          .onSubscribe(
+              new Flow.Subscription() {
+                @Override
+                public void request(long count) {}
+
+                @Override
+                public void cancel() {
+                  result.completeExceptionally(new IOException("subscriber cancelled"));
+                }
+              });
+      return result;
+    }
+
+    @Override
+    public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+        HttpRequest request,
+        HttpResponse.BodyHandler<T> handler,
+        HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+      return sendAsync(request, handler);
+    }
+
+    @Override public Optional<CookieHandler> cookieHandler() { return Optional.empty(); }
+    @Override public Optional<Duration> connectTimeout() { return Optional.empty(); }
+    @Override public Redirect followRedirects() { return Redirect.NEVER; }
+    @Override public Optional<ProxySelector> proxy() { return Optional.empty(); }
+    @Override public javax.net.ssl.SSLContext sslContext() { return defaultSslContext(); }
+    @Override public javax.net.ssl.SSLParameters sslParameters() { return new javax.net.ssl.SSLParameters(); }
+    @Override public Optional<Authenticator> authenticator() { return Optional.empty(); }
+    @Override public Version version() { return Version.HTTP_1_1; }
+    @Override public Optional<Executor> executor() { return Optional.empty(); }
+
+    private static javax.net.ssl.SSLContext defaultSslContext() {
+      try {
+        return javax.net.ssl.SSLContext.getDefault();
+      } catch (java.security.NoSuchAlgorithmException error) {
+        throw new IllegalStateException(error);
+      }
+    }
   }
 }

@@ -549,28 +549,34 @@ Cleanup is enabled and fail-fast by default so stale tasks cannot silently lead 
 the demo may cancel active tasks created by another installation; use an isolated identity or disable cleanup after
 providing an equivalent ownership-aware policy.
 
-## 14. Remote problem responses
+## 14. A2A errors and task failures
 
-A successful HTTP envelope does not guarantee a successful task: SSE data can contain a top-level
-problem object such as `{"status":429,"detail":"Active task limit reached","type":""}`.
-Top-level numeric status 400–599 with title/detail becomes `RemoteProblemException`, preserving
-status, title, detail, type and timestamp. Both synchronous and streaming responses are checked.
-Nested business data is not classified as a protocol error.
-Detection is limited to bodies actually delivered by the SDK. A non-2xx HTTP response may be rejected
-first as an HTTP/authentication error by the SDK or adapter, without exposing its problem body;
-such failures retain the generic failure path rather than fabricating errorDetails.
+Keep failures before and after task creation separate. A request rejected before a task is created uses a
+non-2xx HTTP response with the standard A2A `google.rpc.Status` JSON envelope:
 
-The error fails the call without fabricating a successful task, invoking onNegotiation, or automatically
-resubmitting it. For 400, inspect business inputs; for 429, inspect dispatched-agent capacity and active tasks or
-subscriptions before deciding whether to retry. Negotiation still requires a valid Negotiation-T Propose.
-Use `RemoteProblemException.findIn(error)` to inspect the cause chain (null means no problem found);
-workflow execution follows its existing failure path.
-Task results and execution history / TASK_RESPONSE events expose `remote.problem.400`,
-`remote.problem.429`, etc. as errorCode, the reason as error, the five fields above as errorDetails,
-and empty outputs. Known credential fields use the protocol logger's redaction rules;
-unrecognized SDK exceptions still expose only the exception type.
-Independent authorization/subscription failures do not determine the workflow result.
-Pretty logging does not modify the received problem payload.
+```json
+{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"A required parameter is missing","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INVALID_PARAMS","domain":"a2a-protocol.org","metadata":{"field":"port"}}]}}
+```
+
+`RemoteA2AErrorException` preserves the observed HTTP status, envelope code/status/message, typed details,
+ErrorInfo reason/domain and safe response headers. `findIn(Throwable)` also projects typed A2A Java SDK
+errors. The direct transport checks ordinary responses and defensively detects a top-level error envelope if
+an SDK exposes a pre-stream rejection as SSE data. Nested `error` objects inside a task, message or artifact
+remain business content.
+
+If an SSE call closes before delivering any A2A event, the transport fails immediately instead of waiting for the
+workflow send timeout. The underlying SDK does not expose the HTTP status of an empty streaming response, so this case
+is reported as a transport/protocol failure rather than a fabricated HTTP error code.
+
+Workflow history and TASK_RESPONSE expose a stable code such as `a2a.invalid_params`; unknown HTTP errors
+fall back to `a2a.http.<status>`. `errorDetails` retains protocol facts and `retryAfter` when observed. Such an
+error creates no successful output, does not invoke onNegotiation and is not retried automatically.
+
+After a task has been created, a business execution failure is not an HTTP protocol error. The agent returns
+HTTP 200 with a Task or status update in `TASK_STATE_FAILED`; the TaskStatus message, task metadata and
+artifacts carry the available failure evidence. The engine marks the workflow task failed, keeps that evidence
+in `receivedMessages`, and does not interpret an extension-specific result schema. Independent authorization
+and subscription failures remain independent of workflow outcome.
 
 For an `ALL_SUCCESS` step, one failed task does not retroactively cancel a peer call that was already dispatched: the
 peer result or timeout is collected before the workflow returns `success=false`. Downstream steps are not invoked;
@@ -584,9 +590,9 @@ The host agent decides how to expose a failed execution to its caller. It must n
 success artifact. A persistent host owns notification subscriptions independently of workflow results.
 
 Logging responsibilities: PROTOCOL captures observed traffic, correlated by requestId rather than
-adjacent log entries; REMOTE_PROBLEM reports transport rejection; TASK_FAILED identifies the execution,
+adjacent log entries; A2A_ERROR reports a protocol rejection; TASK_FAILED identifies the execution,
 step, logical task, agent, code and reason; WORKFLOW_STOPPED lists unexecuted steps.
-Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized remote problems use WARN summaries,
+Sample TASK_RESPONSE logs bridge contextId and executionId. Recognized A2A errors use WARN summaries,
 while unexpected exceptions retain ERROR stack traces. Known credentials and Bearer/Basic values are redacted.
 Logging configuration, pretty display and observer callbacks do not determine task outcomes.
 
