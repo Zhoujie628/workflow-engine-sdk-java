@@ -115,6 +115,76 @@ graph TD
     L0 -.-> F
 ```
 
+上面是分层视角，展开为软件模块视图（引擎与宿主、编排中心、注册中心、被调度智能体及两层 SDK 的关系）：
+
+```mermaid
+flowchart TB
+    subgraph HOST["宿主智能体（业务应用）"]
+        direction LR
+        WB["北向任务接收 · 工作流选择"]
+        BIZ["业务回调实现<br/>onTask / onSelfTask / onRoute / onNegotiation"]
+        GEN["内容生成与语义校验<br/>（a2a-t-client）"]
+    end
+
+    subgraph ENGINE["工作流执行引擎（Maven 依赖，嵌入宿主进程）"]
+        subgraph KERNEL["调度内核（零 A2A-T 依赖，架构测试守护）"]
+            direction LR
+            EXE["WorkflowExecutor<br/>DAG 校验 · 并行分发 · 汇总推进"]
+            CTXB["ContextBuilder<br/>上游窗口选择"]
+            CP["ControlPoint 回调契约<br/>EventCallback 事件出口"]
+            MODEL["model<br/>工作流定义 · 消息载体"]
+        end
+        subgraph ADAPTER["协议适配层"]
+            direction LR
+            WEC["DefaultWorkflowEngineClient<br/>任务分发 · 协商关联与回复校验"]
+            EXT["DefaultExtensionSender<br/>授权 / 订阅（独立通道）"]
+            TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 提取 · 标准错误信封检测"]
+            OBSV["WireLog · ProtocolLogger<br/>真实报文观测"]
+            REGC["LoadPsop · RegistryClient<br/>编排 / 注册中心客户端"]
+            MSG["A2atMessages 等薄转换辅助"]
+        end
+    end
+
+    subgraph SDK["协议 SDK 层"]
+        direction LR
+        A2AJ["a2a-java-sdk<br/>REST / JSON-RPC / gRPC 传输 · A2A 类型"]
+        A2ATC["a2a-t-sdk（a2a-t-core）<br/>电信扩展 URI · 协商上下文"]
+    end
+
+    subgraph SYS["外部系统"]
+        direction LR
+        ORCH["编排中心<br/>工作流定义（PSOP）"]
+        REGT["注册中心<br/>AgentCard"]
+        OMC["被调度智能体（OMC）"]
+    end
+
+    WB ==>|"选择工作流并启动"| EXE
+    BIZ -.->|"实现"| CP
+    EXE -->|"调度时回调业务"| CP
+    EXE --- MODEL
+    CP --- MODEL
+    EXE --> CTXB
+    EXE -->|"任务下发"| WEC
+    WEC --> TRANS
+    EXT --> TRANS
+    TRANS --> OBSV
+    TRANS --> A2AJ
+    MSG -.->|"引擎内唯一引用位置"| A2ATC
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    REGC -->|"检索工作流"| ORCH
+    REGC -->|"获取 AgentCard"| REGT
+```
+
+模块视图要点：引擎以 Maven 依赖嵌入宿主进程，由宿主代码启动并实现回调；调度内核（core/control/model
+包）不引用任何 A2A-T SDK 类型，该边界由 `ContentDependencyBoundaryTest` 架构测试守护；client 协议
+适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
+位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
+经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
+AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务创建前被对端以非 2xx 和标准
+A2A 错误信封拒绝的调用，由传输层识别并投影为稳定错误码（`a2a.<reason>`），不进入协商、不自动重试；
+任务创建后的业务失败仍以 HTTP 200 和 `TASK_STATE_FAILED` 携带失败证据上报。任务下发后，若回调超时
+或工作流已被取消，迟到完成的结果会被忽略，不再发送到远端。
+
 ### 3.1 Layer 0 - 通信层
 
 A2ATransport 使用 A2A SDK 的 REST、JSON-RPC、gRPC 绑定，负责认证头、实际传输和完整响应组装。 WorkflowEngineClient 接收
@@ -260,4 +330,5 @@ RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 
 ## 10. 设计决策总结
 
 最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 任务创建前的协议错误按标准
+A2A 错误信封投影为稳定错误码，任务创建后的业务失败随任务终态上报。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
