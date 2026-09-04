@@ -19,6 +19,7 @@
 
 package dev.openan.workflow.engine.client;
 
+import dev.openan.workflow.engine.util.SensitiveDataRedactor;
 import java.io.IOException;
 import java.net.*;
 import java.net.http.*;
@@ -145,6 +146,8 @@ final class ObservedHttpClient extends HttpClient {
     final Map<String, String> context = WireLog.context();
     final java.util.concurrent.atomic.AtomicBoolean failureLogged =
         new java.util.concurrent.atomic.AtomicBoolean();
+    final java.util.concurrent.atomic.AtomicBoolean cancelledBySubscriber =
+        new java.util.concurrent.atomic.AtomicBoolean();
 
     Exchange(HttpRequest request) {
       this.request = request;
@@ -174,15 +177,20 @@ final class ObservedHttpClient extends HttpClient {
     }
 
     void failure(Throwable error) {
+      if (cancelledBySubscriber.get()) return;
       // Body subscriber and sendAsync completion can report the same exchange failure.
       if (!failureLogged.compareAndSet(false, true)) return;
+      String message = SensitiveDataRedactor.redact(Objects.toString(error.getMessage(), ""))
+          .replace("\r", "\\r")
+          .replace("\n", "\\n");
       emit(
           "FAILURE",
           null,
           Map.of(),
           "transport-error",
           "",
-          "errorType=" + error.getClass().getSimpleName());
+          "errorType=" + error.getClass().getSimpleName()
+              + (message.isBlank() ? "" : "; errorMessage=" + message));
     }
 
     HttpRequest observedRequest() {
@@ -312,6 +320,7 @@ final class ObservedHttpClient extends HttpClient {
 
                   @Override
                   public void cancel() {
+                    cancelledBySubscriber.set(true);
                     body.end(true);
                     subscription.cancel();
                   }

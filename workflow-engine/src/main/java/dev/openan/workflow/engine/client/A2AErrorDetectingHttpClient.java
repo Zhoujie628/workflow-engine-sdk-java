@@ -5,16 +5,16 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  *    Licensed under the Apache License, Version 2.0 (the "License"); you may
- *    not use this file except in compliance with the License. You may obtain
- *    a copy of the License at
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
  *
  *         http://www.apache.org/licenses/LICENSE-2.0
  *
- *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- *    License for the specific language governing permissions and limitations
- *    under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
  */
 package dev.openan.workflow.engine.client;
 
@@ -28,11 +28,11 @@ import org.a2aproject.sdk.client.http.A2AHttpClient;
 import org.a2aproject.sdk.client.http.A2AHttpResponse;
 import org.a2aproject.sdk.client.http.ServerSentEvent;
 
-/** Checks problem responses before the SDK's A2A parser; wire logging remains observational. */
-final class ProblemDetectingHttpClient implements A2AHttpClient {
+/** Detects standard A2A error envelopes before the SDK attempts to parse them as task events. */
+final class A2AErrorDetectingHttpClient implements A2AHttpClient {
   private final A2AHttpClient delegate;
 
-  ProblemDetectingHttpClient(A2AHttpClient delegate) {
+  A2AErrorDetectingHttpClient(A2AHttpClient delegate) {
     this.delegate = delegate;
   }
 
@@ -41,7 +41,8 @@ final class ProblemDetectingHttpClient implements A2AHttpClient {
   @Override public DeleteBuilder createDelete() { return new Delete(delegate.createDelete()); }
 
   private static A2AHttpResponse check(A2AHttpResponse response) {
-    var error = RemoteProblemException.fromPayload(response.body());
+    var error = RemoteA2AErrorException.fromResponse(
+        response.status(), response.body(), response.headers().toMap());
     if (error != null) throw error;
     return response;
   }
@@ -90,6 +91,7 @@ final class ProblemDetectingHttpClient implements A2AHttpClient {
     var result = new CompletableFuture<Void>();
     var upstream = new AtomicReference<CompletableFuture<Void>>();
     var ended = new AtomicBoolean();
+    var eventReceived = new AtomicBoolean();
     Consumer<Throwable> fail = error -> {
       if (!ended.compareAndSet(false, true)) return;
       try { errors.accept(error); }
@@ -107,13 +109,18 @@ final class ProblemDetectingHttpClient implements A2AHttpClient {
     });
     var active = starter.start(event -> {
       if (ended.get()) return;
-      var problem = RemoteProblemException.fromPayload(event.data());
-      if (problem != null) fail.accept(problem);
+      var remoteError = RemoteA2AErrorException.fromPayload(event.data());
+      if (remoteError != null) fail.accept(remoteError);
       else {
+        eventReceived.set(true);
         try { messages.accept(event); }
         catch (RuntimeException callbackError) { fail.accept(callbackError); }
       }
     }, fail, () -> {
+      if (!eventReceived.get()) {
+        fail.accept(new IOException("A2A streaming response closed without an event"));
+        return;
+      }
       if (ended.compareAndSet(false, true)) {
         try { complete.run(); result.complete(null); }
         catch (RuntimeException error) { result.completeExceptionally(error); }

@@ -19,12 +19,12 @@
 
 package dev.openan.workflow.engine.core;
 
-import dev.openan.workflow.engine.client.RemoteProblemException;
+import dev.openan.workflow.engine.client.RemoteA2AErrorException;
 import dev.openan.workflow.engine.model.BusinessFailure;
 import dev.openan.workflow.engine.model.TaskResult;
 import java.util.*;
 
-/** Maps generic failures, remote problem facts, or explicitly safe host-selected business facts. */
+/** Maps generic failures, standard A2A errors, or explicitly safe host-selected business facts. */
 final class FailureMapping {
   static TaskResult from(Throwable error) {
     Throwable root = error;
@@ -32,7 +32,7 @@ final class FailureMapping {
     while (root.getCause() != null
         && seen.add(root)
         && !(root instanceof BusinessFailure)
-        && !(root instanceof RemoteProblemException)) {
+        && !(root instanceof RemoteA2AErrorException)) {
       root = root.getCause();
     }
     if (root instanceof BusinessFailure business) {
@@ -43,18 +43,23 @@ final class FailureMapping {
           .errorDetails(business.details())
           .build();
     }
-    if (root instanceof RemoteProblemException problem) {
+    RemoteA2AErrorException remoteError = RemoteA2AErrorException.findIn(root);
+    if (remoteError != null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("httpStatus", remoteError.getHttpStatus());
+      details.put("code", remoteError.getCode());
+      if (!remoteError.getStatus().isBlank()) details.put("status", remoteError.getStatus());
+      if (!remoteError.getReason().isBlank()) details.put("reason", remoteError.getReason());
+      if (!remoteError.getDomain().isBlank()) details.put("domain", remoteError.getDomain());
+      if (!remoteError.getDetails().isEmpty()) details.put("details", remoteError.getDetails());
+      if (!remoteError.getRetryAfter().isBlank()) {
+        details.put("retryAfter", remoteError.getRetryAfter());
+      }
       return TaskResult.builder()
           .success(false)
-          .errorCode("remote.problem." + problem.getStatus())
-          .error(problem.getMessage())
-          .errorDetails(
-              Map.of(
-                  "status", problem.getStatus(),
-                  "title", problem.getTitle(),
-                  "detail", problem.getDetail(),
-                  "type", problem.getType(),
-                  "timestamp", problem.getTimestamp()))
+          .errorCode(remoteError.workflowErrorCode())
+          .error(remoteError.getMessage())
+          .errorDetails(details)
           .build();
     }
     String code =
