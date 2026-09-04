@@ -51,17 +51,17 @@ class WorkbenchTaskFlowTest {
                         "status",
                         "failed",
                         "errorCode",
-                        "remote.problem.429",
+                        "a2a.active_task_limit_exceeded",
                         "error",
                         "OMC capacity reached",
                         "errorDetails",
                         Map.of(
-                            "status",
+                            "httpStatus",
                             429,
-                            "detail",
-                            "capacity reached",
-                            "type",
-                            "",
+                            "status",
+                            "RESOURCE_EXHAUSTED",
+                            "reason",
+                            "ACTIVE_TASK_LIMIT_EXCEEDED",
                             "accessSession",
                             "private-token")),
                     Map.of(
@@ -76,8 +76,8 @@ class WorkbenchTaskFlowTest {
             .build();
     String summary = WorkbenchOrchestrator.buildResultText(result);
     assertTrue(summary.contains("city1"));
-    assertTrue(summary.contains("remote.problem.429"));
-    assertTrue(summary.contains("capacity reached"));
+    assertTrue(summary.contains("a2a.active_task_limit_exceeded"));
+    assertTrue(summary.contains("RESOURCE_EXHAUSTED"));
     assertTrue(summary.contains("city2"));
     org.junit.jupiter.api.Assertions.assertFalse(summary.contains("private-token"));
     org.junit.jupiter.api.Assertions.assertFalse(summary.contains("partial diagnosis"));

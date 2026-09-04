@@ -53,7 +53,8 @@ class SpringSpnDemoFailureE2ETest {
   @ParameterizedTest
   @ValueSource(ints = {400, 429})
   @org.junit.jupiter.api.Timeout(60)
-  void remoteProblemReachesNorthboundFailureWithoutMergeOrResubmission(int status) throws Exception {
+  void standardA2AErrorReachesNorthboundFailureWithoutMergeOrResubmission(int status)
+      throws Exception {
     var firstCalls = new AtomicInteger();
     var secondCalls = new AtomicInteger();
     HttpServer city1 = omc(status, firstCalls);
@@ -70,7 +71,7 @@ class SpringSpnDemoFailureE2ETest {
       var error = assertThrows(IllegalStateException.class,
           () -> new SpringSpnDemo().run(arguments(first, second)));
       assertTrue(error.getMessage().contains("TASK_STATE_FAILED"), error.getMessage());
-      assertTrue(error.getMessage().contains("remote.problem." + status), error.getMessage());
+      assertTrue(error.getMessage().contains(errorCode(status)), error.getMessage());
       assertTrue(error.getMessage().contains(reason(status)), error.getMessage());
       assertTrue(error.getMessage().contains("diagnosis_city2"));
       assertEquals(1, firstCalls.get());
@@ -79,11 +80,14 @@ class SpringSpnDemoFailureE2ETest {
       assertTrue(evidence.contains("OPERATION_FAILED extension=Authorization-T"));
       assertTrue(evidence.contains("OPERATION_FAILED extension=Notification-T"));
       assertTrue(evidence.contains("[Executor] TASK_FAILED executionId="));
-      assertTrue(evidence.contains("errorCode=remote.problem." + status));
+      assertTrue(evidence.contains("errorCode=" + errorCode(status)));
       assertTrue(evidence.contains("skippedSteps=[merge_analysis]"));
       assertTrue(evidence.contains("[Orchestrator] WORKFLOW_FINISH success=false, history=2"));
-      assertTrue(evidence.contains("=== SSE data (JSON display; not wire text) ==="));
-      assertTrue(evidence.contains("\"status\": " + status));
+      assertTrue(evidence.contains("\"error\""));
+      // The projected errorDetails keep the observed numeric HTTP status; the envelope's
+      // "status" field is the canonical string (INVALID_ARGUMENT), not the number.
+      assertTrue(evidence.contains("\"httpStatus\":" + status));
+      assertTrue(evidence.contains("\"status\":\"" + canonicalStatus(status) + "\""));
       assertTrue(evidence.contains("[SpringWorkbench] TASK_FAILED"));
       assertTrue(evidence.contains("[Demo] SHUTDOWN_DONE success=false"));
       assertFalse(evidence.contains("[ERROR] null"));
@@ -128,75 +132,73 @@ class SpringSpnDemoFailureE2ETest {
         : "Current active tasks have reached the maximum limit 10. Please try again later.";
   }
 
+  private static String errorCode(int status) {
+    return status == 400 ? "a2a.invalid_params" : "a2a.active_task_limit_exceeded";
+  }
+
+  private static String canonicalStatus(int status) {
+    return status == 400 ? "INVALID_ARGUMENT" : "RESOURCE_EXHAUSTED";
+  }
+
+  private static String errorResponse(int status, String message) throws java.io.IOException {
+    String canonical = status == 400 ? "INVALID_ARGUMENT"
+        : status == 429 ? "RESOURCE_EXHAUSTED" : "UNAVAILABLE";
+    String errorReason = status == 400 ? "INVALID_PARAMS"
+        : status == 429 ? "ACTIVE_TASK_LIMIT_EXCEEDED" : "OPERATION_REJECTED";
+    String domain = status == 400 ? "a2a-protocol.org" : "fixture.invalid";
+    return JSON.writeValueAsString(Map.of("error", Map.of(
+        "code", status,
+        "status", canonical,
+        "message", message,
+        "details", List.of(Map.of(
+            "@type", "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason", errorReason,
+            "domain", domain)))));
+  }
+
   private static HttpServer omc(int status, AtomicInteger calls) throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext(
-        "/",
-        exchange -> {
-          if ("GET".equals(exchange.getRequestMethod())
-              && exchange.getRequestURI().getPath().endsWith("/tasks")) {
-            byte[] bytes =
-                JSON.writeValueAsBytes(Map.of("tasks", List.of(), "totalSize", 0, "pageSize", 0));
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, bytes.length);
-            try (var output = exchange.getResponseBody()) {
-              output.write(bytes);
-            } finally {
-              exchange.close();
-            }
-            return;
-          }
-          var request = JSON.readTree(exchange.getRequestBody());
-          boolean task = request.path("message").path("metadata").has(A2ATExtension.TASK_T.uri());
-          String response;
-          if (!task) {
-            // Deliberate pre-position failures must not prevent the subsequent workflow tasks.
-            response =
-                JSON.writeValueAsString(
-                    Map.of("status", 503, "detail", "Independent operation rejected"));
-          } else if (status != 0) {
-            calls.incrementAndGet();
-            response =
-                JSON.writeValueAsString(
-                    Map.of(
-                        "status",
-                        status,
-                        "detail",
-                        reason(status),
-                        "type",
-                        "",
-                        "timestamp",
-                        "2026-08-31T09:07:35Z"));
-          } else {
-            calls.incrementAndGet();
-            response =
-                JSON.writeValueAsString(
-                    Map.of(
-                        "task",
-                        Map.of(
-                            "id",
-                            "city2-diagnosis",
-                            "contextId",
-                            request.path("message").path("contextId").asText(),
-                            "status",
-                            Map.of("state", "TASK_STATE_COMPLETED"),
-                            "artifacts",
-                            List.of(
-                                Map.of(
-                                    "artifactId",
-                                    "diagnosis",
-                                    "parts",
-                                    List.of(Map.of("text", "City2 diagnosis")))))));
-          }
-          byte[] bytes = ("data: " + response + "\n\n").getBytes(StandardCharsets.UTF_8);
-          exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
-          exchange.sendResponseHeaders(200, 0);
-          try (var output = exchange.getResponseBody()) {
-            output.write(bytes);
-          } finally {
-            exchange.close();
-          }
-        });
+    server.createContext("/", exchange -> {
+      if ("GET".equals(exchange.getRequestMethod())
+          && exchange.getRequestURI().getPath().endsWith("/tasks")) {
+        byte[] bytes =
+            JSON.writeValueAsBytes(
+                Map.of("tasks", List.of(), "totalSize", 0, "pageSize", 0));
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (var output = exchange.getResponseBody()) {
+          output.write(bytes);
+        } finally {
+          exchange.close();
+        }
+        return;
+      }
+      var request = JSON.readTree(exchange.getRequestBody());
+      boolean task = request.path("message").path("metadata").has(A2ATExtension.TASK_T.uri());
+      String response;
+      if (!task) {
+        // Deliberate pre-position failures must not prevent the subsequent workflow tasks.
+        response = errorResponse(503, "Independent operation rejected");
+      } else if (status != 0) {
+        calls.incrementAndGet();
+        response = errorResponse(status, reason(status));
+      } else {
+        calls.incrementAndGet();
+        response = JSON.writeValueAsString(Map.of("task", Map.of(
+            "id", "city2-diagnosis", "contextId", request.path("message").path("contextId").asText(),
+            "status", Map.of("state", "TASK_STATE_COMPLETED"),
+            "artifacts", List.of(Map.of("artifactId", "diagnosis", "parts", List.of(Map.of("text", "City2 diagnosis")))))));
+      }
+      boolean failed = !task || status != 0;
+      byte[] bytes = (failed ? response : "data: " + response + "\n\n")
+          .getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().set(
+          "Content-Type", failed ? "application/a2a+json" : "text/event-stream;charset=UTF-8");
+      if (status == 429) exchange.getResponseHeaders().set("Retry-After", "5");
+      exchange.sendResponseHeaders(failed ? (!task ? 503 : status) : 200, bytes.length);
+      try (var output = exchange.getResponseBody()) { output.write(bytes); }
+      finally { exchange.close(); }
+    });
     server.start();
     return server;
   }
