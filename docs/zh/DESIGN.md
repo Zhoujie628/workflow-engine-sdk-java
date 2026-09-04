@@ -164,7 +164,7 @@ flowchart TB
     EXE --- MODEL
     CP --- MODEL
     EXE --> CTXB
-    EXE -->|"分发 / 晚到结果拦截"| WEC
+    EXE -->|"任务下发"| WEC
     WEC --> TRANS
     EXT --> TRANS
     TRANS --> OBSV
@@ -180,7 +180,8 @@ flowchart TB
 适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
 位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
 经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
-AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。
+AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务下发后，若回调超时或工作流已被
+取消，迟到完成的结果会被忽略，不再发送到远端。
 
 ### 3.1 Layer 0 - 通信层
 

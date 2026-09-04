@@ -175,7 +175,7 @@ flowchart TB
     EXE --- MODEL
     CP --- MODEL
     EXE --> CTXB
-    EXE -->|"dispatch / late-result interception"| WEC
+    EXE -->|"task dispatch"| WEC
     WEC --> TRANS
     EXT --> TRANS
     TRANS --> OBSV
@@ -194,7 +194,8 @@ place inside the engine that references a2a-t-sdk. All four interaction types wi
 Task-T, Negotiation-T, Authorization-T, Notification-T — travel over a2a-java-sdk transports, with
 authorization and subscription on channels independent of the workflow. The orchestration and registry
 centers are only reached by the engine clients for workflow-definition search and AgentCard retrieval; the
-selection strategy itself belongs to the host.
+selection strategy itself belongs to the host. Once a task is dispatched, a result that completes after the
+callback budget expires or the run is cancelled is ignored and never sent to the remote agent.
 
 ### 3.1 Layer 0 - Communication
 
