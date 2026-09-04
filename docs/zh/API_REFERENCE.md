@@ -245,7 +245,7 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 | `ProtocolResponses`           | A2A 事件与结果组装辅助方法 |
 | `ClientEventMapper`           | 面向回调和诊断的稳定事件投影 |
 | `WireLog`                     | 关联上下文与协议观测门面 |
-| `RemoteProblemException`      | 结构化远程问题响应（`status`、`title`、`detail`、`type`、`timestamp`） |
+| `RemoteA2AErrorException`     | 标准 A2A HTTP 错误投影（`code`、`status`、`message`、类型化详情及安全响应头） |
 
 ---
 
@@ -561,10 +561,10 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 
 ## 错误处理
 
-- 顶层远端 problem 错误通过 `RemoteProblemException` 保留；可用 `findIn(Throwable)` 查找包装异常中的原因。
-  工作流任务失败信息为 `remote.problem.<status>`，详情进入 history / TASK_RESPONSE，不作为业务 outputs。
+- 顶层标准 A2A 错误信封通过 `RemoteA2AErrorException` 保留；`findIn(Throwable)` 也会投影包装的 SDK 错误。
+  工作流任务失败信息为 `a2a.<reason>` 或 `a2a.http.<status>`，详情进入 history / TASK_RESPONSE，不作为业务 outputs。
   引擎节点事件携带 executionId，任务结果事件和 history 携带逻辑 taskId。
-  失败传播、并行步骤失败规则和日志职责见 [集成指南](INTEGRATION_GUIDE.md#14-远端错误响应)。
+  失败传播、并行步骤失败规则和日志职责见 [集成指南](INTEGRATION_GUIDE.md#14-a2a-错误与任务失败)。
 
 - 回调异常／空值／超时明确失败；SDK 内容错误由宿主转换为 BusinessFailure，必要时保留安全的 code/details。
 - maxNegotiationExchanges 耗尽或本地 Stop 只结束本地交互，不自动发送 Abort。业务 Send(Abort) 不算任务成功。
@@ -622,7 +622,7 @@ a2at:
 | `eventBusProcessor` | `MainEventBusProcessor`       | 事件总线处理器                                         |
 | `requestHandler`    | `RequestHandler`              | 默认请求处理器                                         |
 | `restHandler`       | `RestHandler`                 | REST 协议处理器                                        |
-| `a2aController`     | `A2AController`               | Spring MVC 控制器（`message:send` + `message:stream`） |
+| `a2aController`     | `A2AController`               | 消息和任务端点的 Spring MVC 控制器                    |
 
 ### A2AController
 
@@ -630,6 +630,13 @@ a2at:
 
 - `POST {path-prefix}/message:send` — 阻塞式发送
 - `POST {path-prefix}/message:stream` — SSE 流式
+- `GET {path-prefix}/tasks/{id}` — 查询任务
+- `GET {path-prefix}/tasks` — 按可选条件分页查询任务
+- `POST {path-prefix}/tasks/{id}:cancel` — 取消任务
+- `POST {path-prefix}/tasks/{id}:subscribe` — 通过 SSE 订阅任务更新
+
+HTTP+JSON 响应使用 `application/a2a+json`，成功建立的流式响应使用 `text/event-stream`。连接结束时，控制器会取消
+Publisher 订阅并通知 SDK 停止事件消费，避免服务端轮询继续占用资源。
 
 ### 用法
 

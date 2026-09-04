@@ -514,30 +514,31 @@ Demo 在打开独立协议通道和启动工作流之前，先查询每个被调
 `A2A_TASK_CLEANUP_MAX_TASKS` 配置。任务查询受认证身份权限约束；若多个实例共用同一身份，Demo 可能取消其他实例创建的活跃任务。
 应使用隔离身份，或在提供等价的任务归属清理策略后关闭该功能。
 
-## 14. 远端错误响应
+## 14. A2A 错误与任务失败
 
-响应头成功不代表任务成功。HTTP 200 的 SSE data 也可能返回顶层错误对象，例如：
+任务创建前和创建后的失败必须分开处理。请求在任务创建前被拒绝时，返回非 2xx HTTP 状态和标准
+A2A `google.rpc.Status` JSON 错误信封：
 
 ```json
-{"status":429,"detail":"Current active tasks have reached the maximum limit 10.","type":""}
+{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"缺少必填参数","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INVALID_PARAMS","domain":"a2a-protocol.org","metadata":{"field":"port"}}]}}
 ```
 
-通信层识别顶层数字 status 为 400–599 且携带 title/detail 的错误对象，
-以 `RemoteProblemException` 保留 status、title、detail、type、timestamp。
-同步响应和流式响应均检查；普通任务内容或 artifact 内嵌的同名字段不被当成协议错误。
-该识别以 SDK 实际交付的正文为限：真实 HTTP 非 2xx 可能先被 SDK/适配器作为 HTTP 或认证错误拒绝，
-不保证可取得 problem 正文；没有该正文时仍走原有通用失败路径，不伪造 errorDetails。
-错误不生成成功结果、不触发 onNegotiation，也不自动重新提交请求。400 应核对业务参数；
-429 应检查被调度智能体的容量、活跃任务和订阅，再由业务决定是否重试。
-只有合法 Negotiation-T Propose 才进入协商回调。
+`RemoteA2AErrorException` 保留实际观察到的 HTTP 状态、信封 code/status/message、类型化 details、
+ErrorInfo reason/domain 及安全响应头；`findIn(Throwable)` 也会投影 A2A Java SDK 的类型化错误。
+直连传输检查普通响应，并防御性识别被 SDK 作为 SSE data 暴露的建流前顶层错误信封。
+Task、Message 或 Artifact 内嵌的 `error` 对象仍属于业务内容，不会被误判为协议错误。
 
-直接调用客户端时可用 `RemoteProblemException.findIn(error)` 检查 cause 链（没有则返回 null）；
-工作流执行时沿现有失败路径报告错误：
-任务结果及执行 history / TASK_RESPONSE 事件中的 errorCode 为 `remote.problem.400`、
-`remote.problem.429` 等，error 包含原因，errorDetails 包含上述五个字段，outputs 为空。
-错误内容中的已知凭据字段按协议日志的规则脱敏；未识别的 SDK 异常仍只暴露异常类型。
-预置授权、通知订阅的错误仍由其独立生命周期处理，不决定工作流执行结果。
-协议 pretty 日志仅用于展示，不改写原始收到的错误对象。
+若 SSE 调用未产生任何 A2A 事件便结束，传输会立即失败，不再等待工作流发送超时。底层 SDK 不暴露空流响应的 HTTP
+状态，因此该场景报告为传输/协议失败，不会虚构 HTTP 错误码。
+
+工作流 history 和 TASK_RESPONSE 使用 `a2a.invalid_params` 等稳定错误码；未知 HTTP 错误回退为
+`a2a.http.<status>`。`errorDetails` 保留协议事实及实际取得的 `retryAfter`。这类错误不生成成功输出、
+不触发 onNegotiation，也不自动重试。
+
+任务创建成功后的业务执行失败不是 HTTP 协议错误。被调度智能体返回 HTTP 200，并通过 Task 或
+StatusUpdate 的 `TASK_STATE_FAILED` 表示失败；TaskStatus 消息、任务 metadata 和 artifact 携带失败证据。
+引擎将工作流任务标记为失败，把证据保留在 `receivedMessages`，但不解释扩展协议的业务结果 schema。
+独立授权和通知订阅的失败仍按各自生命周期处理，不决定工作流结果。
 
 对于 `ALL_SUCCESS` 步骤，一个任务失败不会追溯取消已下发的并行任务；引擎在另一任务返回或超时后报告 `success=false`。后续步骤不执行，成功的并行结果保留在 history，不伪造整体成功结果。引擎不自动重试、排队或部分成功汇总；`ANY_SUCCESS` 节点仍遵循声明的任一成功语义。
 
@@ -547,9 +548,9 @@ Demo 在打开独立协议通道和启动工作流之前，先查询每个被调
 宿主智能体决定如何向调用方暴露失败，但不得把失败执行转换为成功 artifact。常驻宿主以独立生命周期管理通知订阅。
 
 **日志职责**：PROTOCOL 记录已观察到的请求/响应，按 requestId 关联并发报文；
-REMOTE_PROBLEM 记录通信层识别的远端拒绝，TASK_FAILED 记录执行 ID、节点、逻辑任务 ID、
+A2A_ERROR 记录协议拒绝，TASK_FAILED 记录执行 ID、节点、逻辑任务 ID、
 智能体、错误码和原因，WORKFLOW_STOPPED 列出未执行节点。示例 TASK_RESPONSE 日志同时包含
-contextId 与 executionId，供跨层定位。已识别的远端问题使用 WARN 摘要，
+contextId 与 executionId，供跨层定位。已识别的 A2A 错误使用 WARN 摘要，
 未知异常保留 ERROR 堆栈；错误详情中的已知凭据及 Bearer/Basic 值脱敏。
 日志开关、pretty 展示和观察回调不会改变任务结果。
 

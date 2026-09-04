@@ -257,7 +257,7 @@ runtime, diagnostic adapter, or explicit lifecycle requires them.
 | `ProtocolResponses`           | A2A event/result assembly helpers |
 | `ClientEventMapper`           | Stable event projection for callbacks and diagnostics |
 | `WireLog`                     | Correlation context and protocol-observation facade |
-| `RemoteProblemException`      | Structured remote problem response (`status`, `title`, `detail`, `type`, `timestamp`) |
+| `RemoteA2AErrorException`     | Standard A2A HTTP error projection (`code`, `status`, `message`, typed details and safe headers) |
 
 ---
 
@@ -590,11 +590,11 @@ not add private negotiation-state keys to the wire message.
 
 ## Error Handling
 
-- Top-level remote problem responses retain their fields in `RemoteProblemException`;
-  `findIn(Throwable)` finds it through wrappers. Workflow failures use `remote.problem.<status>`,
-  with details in history / TASK_RESPONSE rather than business outputs.
+- Standard top-level A2A error envelopes retain their fields in `RemoteA2AErrorException`;
+  `findIn(Throwable)` also projects wrapped SDK errors. Workflow failures use `a2a.<reason>` or
+  `a2a.http.<status>`, with details in history / TASK_RESPONSE rather than business outputs.
   Executor node events include executionId; task response events and history include the logical taskId.
-  See [integration guidance](INTEGRATION_GUIDE.md#14-remote-problem-responses) for propagation and logging.
+  See [integration guidance](INTEGRATION_GUIDE.md#14-a2a-errors-and-task-failures) for propagation and logging.
 
 - Missing/null/exceptional/timed-out callbacks fail explicitly. Host SDK errors may be mapped to BusinessFailure with
   safe code/details.
@@ -656,7 +656,7 @@ Auto-configures the following beans (all `@ConditionalOnMissingBean`, so you can
 | `eventBusProcessor` | `MainEventBusProcessor`       | Event bus processor                                       |
 | `requestHandler`    | `RequestHandler`              | Default request handler                                   |
 | `restHandler`       | `RestHandler`                 | REST protocol handler                                     |
-| `a2aController`     | `A2AController`               | Spring MVC controller (`message:send` + `message:stream`) |
+| `a2aController`     | `A2AController`               | Spring MVC controller for message and task endpoints     |
 
 ### A2AController
 
@@ -664,6 +664,14 @@ Spring MVC controller that exposes A2A REST endpoints:
 
 - `POST {path-prefix}/message:send` — blocking send
 - `POST {path-prefix}/message:stream` — SSE streaming
+- `GET {path-prefix}/tasks/{id}` — query a task
+- `GET {path-prefix}/tasks` — list tasks with optional filters
+- `POST {path-prefix}/tasks/{id}:cancel` — cancel a task
+- `POST {path-prefix}/tasks/{id}:subscribe` — subscribe to task updates over SSE
+
+HTTP+JSON responses use `application/a2a+json`; successful streaming responses use `text/event-stream`. When a stream
+closes, the controller cancels its publisher subscription and notifies the SDK event consumer so that server-side
+polling does not remain active.
 
 ### Usage
 

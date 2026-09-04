@@ -21,6 +21,7 @@
 - Propagate workflow cancellation and close execution-owned resources exactly once.
 - Anonymize orchestration access tokens and bound registry response deadlines.
 - Preserve multi-value results from arbitrary terminal workflow nodes.
+- Map pre-task failures from the standard A2A error envelope while keeping post-creation failures in task state.
 - Publish a compiled host integration example and require sample regression tests.
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
