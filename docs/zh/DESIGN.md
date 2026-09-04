@@ -138,7 +138,7 @@ flowchart TB
             direction LR
             WEC["DefaultWorkflowEngineClient<br/>任务分发 · 协商关联与回复校验"]
             EXT["DefaultExtensionSender<br/>授权 / 订阅（独立通道）"]
-            TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 提取"]
+            TRANS["A2ATransport 传输基座<br/>A2A 运行时 · 认证 · SSE 提取 · 标准错误信封检测"]
             OBSV["WireLog · ProtocolLogger<br/>真实报文观测"]
             REGC["LoadPsop · RegistryClient<br/>编排 / 注册中心客户端"]
             MSG["A2atMessages 等薄转换辅助"]
@@ -180,8 +180,10 @@ flowchart TB
 适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
 位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
 经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
-AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务下发后，若回调超时或工作流已被
-取消，迟到完成的结果会被忽略，不再发送到远端。
+AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务创建前被对端以非 2xx 和标准
+A2A 错误信封拒绝的调用，由传输层识别并投影为稳定错误码（`a2a.<reason>`），不进入协商、不自动重试；
+任务创建后的业务失败仍以 HTTP 200 和 `TASK_STATE_FAILED` 携带失败证据上报。任务下发后，若回调超时
+或工作流已被取消，迟到完成的结果会被忽略，不再发送到远端。
 
 ### 3.1 Layer 0 - 通信层
 
@@ -328,4 +330,5 @@ RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 
 ## 10. 设计决策总结
 
 最终内容与协议调度分离，宿主不自行维护 A2A 信封。 本地多输出和远端完整证据统一进入下游窗口，不丢失 metadata、不拍平数组。
-协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。
+协商回复内容归业务，任务关联／去重／有界等待归引擎；本地 Stop 与协议 Abort 分离。 任务创建前的协议错误按标准
+A2A 错误信封投影为稳定错误码，任务创建后的业务失败随任务终态上报。 独立授权和通知不成为工作流前提，业务回调与传输实现分离。 协议日志在实际边界采集并强制脱敏，详情见 [集成指南](INTEGRATION_GUIDE.md)。

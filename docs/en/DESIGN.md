@@ -149,7 +149,7 @@ flowchart TB
             direction LR
             WEC["DefaultWorkflowEngineClient<br/>task dispatch · negotiation correlation and reply validation"]
             EXT["DefaultExtensionSender<br/>authorization / subscription (independent channels)"]
-            TRANS["A2ATransport base<br/>A2A runtime · authentication · SSE extraction"]
+            TRANS["A2ATransport base<br/>A2A runtime · authentication · SSE extraction · standard error-envelope detection"]
             OBSV["WireLog · ProtocolLogger<br/>wire-level observation"]
             REGC["LoadPsop · RegistryClient<br/>orchestration / registry clients"]
             MSG["Thin conversion helpers (A2atMessages and peers)"]
@@ -194,7 +194,11 @@ place inside the engine that references a2a-t-sdk. All four interaction types wi
 Task-T, Negotiation-T, Authorization-T, Notification-T — travel over a2a-java-sdk transports, with
 authorization and subscription on channels independent of the workflow. The orchestration and registry
 centers are only reached by the engine clients for workflow-definition search and AgentCard retrieval; the
-selection strategy itself belongs to the host. Once a task is dispatched, a result that completes after the
+selection strategy itself belongs to the host. A call rejected before task creation with a non-2xx
+response and the standard A2A error envelope is detected by the transport layer and projected to a
+stable error code (`a2a.<reason>`); it enters no negotiation and is not retried automatically. A
+business failure after task creation is still reported as HTTP 200 with `TASK_STATE_FAILED`
+carrying the failure evidence. Once a task is dispatched, a result that completes after the
 callback budget expires or the run is cancelled is ignored and never sent to the remote agent.
 
 ### 3.1 Layer 0 - Communication
@@ -364,5 +368,7 @@ Templates and slot schemas come from the pinned SDK jar, not sample resource ove
 Final content is separate from protocol scheduling; hosts do not maintain A2A envelopes. Local multiple outputs and
 complete remote evidence enter the selected upstream window without losing metadata or flattening arrays. Business owns
 negotiation reply content; the engine owns association, deduplication and bounded waiting. Stop and Abort are distinct.
+Pre-creation protocol errors are projected from the standard A2A error envelope to stable error codes; post-creation
+business failures are reported through the task's terminal state.
 Independent authorization/notification never gate the workflow; transport runtimes share the same callback contract. Protocol logs
 observe actual boundaries with mandatory redaction; see [Integration guide](INTEGRATION_GUIDE.md).
