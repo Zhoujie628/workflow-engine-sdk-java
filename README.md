@@ -49,7 +49,7 @@ upgrade guidance.
 
 ```xml
 <dependency>
-    <groupId>dev.openan.workflow.sdk</groupId>
+    <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -59,7 +59,7 @@ For Spring Boot server-side integration:
 
 ```xml
 <dependency>
-    <groupId>dev.openan.workflow.sdk</groupId>
+    <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>spring-boot-starter</artifactId>
     <version>1.0.0</version>
 </dependency>
