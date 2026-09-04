@@ -23,10 +23,11 @@ name: Release to Maven Central
 #        SIGNING_KEY_ID          key id (last 8 hex chars is enough)
 #        SIGNING_PASSWORD        private key passphrase
 #
-# Publishing scope: only workflow-engine and spring-boot-starter are deployed.
-# samples is excluded from deployment via maven.deploy.skip, but the release gate still
-# builds and tests the full main reactor (main has no vendor-jar dependency; the Eastcom
-# adapter exists only on the dev branch).
+# Publishing scope: the parent pom, workflow-engine and spring-boot-starter are deployed.
+# The parent must ship: module poms take their groupId from it, and Central rejects a
+# bundle whose module coordinates cannot be resolved. samples is excluded from deployment
+# via maven.deploy.skip, but the release gate still builds and tests the full main reactor
+# (main has no vendor-jar dependency; the Eastcom adapter exists only on the dev branch).
 
 on:
   push:
@@ -134,7 +135,6 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Publishing version ${VERSION} from tag ${GITHUB_REF_NAME}"
           mvn -B -Prelease deploy \
-            -pl workflow-engine,spring-boot-starter \
             -Drevision="${VERSION}" \
             -Dgpg.executable=gpg \
             -Dgpg.keyname="${SIGNING_KEY_ID}"
