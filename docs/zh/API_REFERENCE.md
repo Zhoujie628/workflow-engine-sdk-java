@@ -586,6 +586,7 @@ classpath 时，自动将所有 A2A SDK 服务端组件注册为 Spring Bean。
 |----------------------------------------------|----------------------------|----------------------------------------------------------|
 | `a2at.server.agent-card`                     | `classpath:agentcard.json` | AgentCard JSON 文件路径（支持 classpath: 或 file: 前缀） |
 | `a2at.server.path-prefix`                    | `/a2a/json`                | A2A 端点的 URL 路径前缀                                  |
+| `a2at.server.slash-action-aliases-enabled`   | `false`                    | 为拒绝冒号路径的网关暴露斜杠动作别名                    |
 | `a2at.server.agent-timeout-seconds`          | `30`                       | Agent 执行超时（秒）                                     |
 | `a2at.server.consumption-timeout-seconds`    | `5`                        | 消费超时（秒）                                           |
 | `a2at.server.reconciliation-timeout-seconds` | `1`                        | 协调等待超时（秒）                                       |
@@ -599,6 +600,7 @@ a2at:
   server:
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
+    slash-action-aliases-enabled: false
     agent-timeout-seconds: 30
     executor-core-size: 8
     executor-max-size: 16
@@ -622,6 +624,7 @@ a2at:
 | `requestHandler`    | `RequestHandler`              | 默认请求处理器                                         |
 | `restHandler`       | `RestHandler`                 | REST 协议处理器                                        |
 | `a2aController`     | `A2AController`               | 消息和任务端点的 Spring MVC 控制器                    |
+| `a2aSlashActionAliasController` | 内部控制器         | 可选的斜杠形式动作端点别名                            |
 
 ### A2AController
 
@@ -633,6 +636,18 @@ a2at:
 - `GET {path-prefix}/tasks` — 按可选条件分页查询任务
 - `POST {path-prefix}/tasks/{id}:cancel` — 取消任务
 - `POST {path-prefix}/tasks/{id}:subscribe` — 通过 SSE 订阅任务更新
+
+冒号形式是 A2A HTTP+JSON 标准端点，始终启用。配置
+`a2at.server.slash-action-aliases-enabled=true` 后，starter 还会暴露以下兼容别名；它们委托给同一个控制器，
+认证、请求体、响应、错误、流式处理和生命周期行为完全相同：
+
+- `POST {path-prefix}/message/send`
+- `POST {path-prefix}/message/stream`
+- `POST {path-prefix}/tasks/{id}/cancel`
+- `POST {path-prefix}/tasks/{id}/subscribe`
+
+优先在 API 网关把公开的斜杠路径重写到后端标准冒号路径；只有网关不能重写后端路径时才开启别名。
+别名不会改变 AgentCard 结构，也不会让 A2A Java REST 客户端的操作后缀变成可配置项。
 
 HTTP+JSON 响应使用 `application/a2a+json`，成功建立的流式响应使用 `text/event-stream`。连接结束时，控制器会取消
 Publisher 订阅并通知 SDK 停止事件消费，避免服务端轮询继续占用资源。

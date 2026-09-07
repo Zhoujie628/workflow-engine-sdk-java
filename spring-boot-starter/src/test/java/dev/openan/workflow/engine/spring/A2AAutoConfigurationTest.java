@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,6 +42,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.a2aproject.sdk.server.ServerCallContext;
+import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
 import org.a2aproject.sdk.server.auth.TaskOperation;
 import org.a2aproject.sdk.server.config.A2AConfigProvider;
 import org.a2aproject.sdk.server.requesthandlers.RequestHandler;
@@ -309,6 +311,120 @@ class A2AAutoConfigurationTest {
         .andExpect(status().is(501))
         .andExpect(content().contentTypeCompatibleWith("application/a2a+json"));
     verifyNoInteractions(requestHandler);
+  }
+
+  @Test
+  void slashActionAliasesDelegateToTheCanonicalController() throws Exception {
+    RestHandler restHandler = mock(RestHandler.class);
+    when(restHandler.sendMessage(any(), eq(""), eq("{}")))
+        .thenReturn(new RestHandler.HTTPRestResponse(200, "application/json", "{}"));
+    RequestHandler requestHandler = mock(RequestHandler.class);
+    AgentCard agentCard = mock(AgentCard.class);
+    A2AController canonical = new A2AController(restHandler, requestHandler, agentCard);
+    var aliases = new A2ASlashActionAliasController(canonical);
+    MockMvc mockMvc =
+        MockMvcBuilders.standaloneSetup(aliases)
+            .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+            .build();
+
+    mockMvc
+        .perform(post("/a2a/json/message/send").content("{}"))
+        .andExpect(status().isOk())
+        .andExpect(content().contentTypeCompatibleWith("application/a2a+json"));
+
+    verify(restHandler).sendMessage(any(), eq(""), eq("{}"));
+  }
+
+  @Test
+  void everySlashActionAliasUsesTheConfiguredPrefix() throws Exception {
+    String placeholder = "${a2at.server.path-prefix}";
+    Class<?> aliases = A2ASlashActionAliasController.class;
+
+    assertEquals(
+        placeholder + "/message/send",
+        aliases
+            .getDeclaredMethod(
+                "sendMessage", jakarta.servlet.http.HttpServletRequest.class, String.class)
+            .getAnnotation(PostMapping.class)
+            .value()[0]);
+    assertEquals(
+        placeholder + "/message/stream",
+        aliases
+            .getDeclaredMethod(
+                "streamMessage", jakarta.servlet.http.HttpServletRequest.class, String.class)
+            .getAnnotation(PostMapping.class)
+            .value()[0]);
+    assertEquals(
+        placeholder + "/tasks/{id}/cancel",
+        aliases
+            .getDeclaredMethod(
+                "cancelTask",
+                jakarta.servlet.http.HttpServletRequest.class,
+                String.class,
+                String.class)
+            .getAnnotation(PostMapping.class)
+            .value()[0]);
+    assertEquals(
+        placeholder + "/tasks/{id}/subscribe",
+        aliases
+            .getDeclaredMethod(
+                "subscribeToTask", jakarta.servlet.http.HttpServletRequest.class, String.class)
+            .getAnnotation(PostMapping.class)
+            .value()[0]);
+  }
+
+  @Test
+  void slashStreamingAliasUsesTheCanonicalA2aErrorEnvelope() throws Exception {
+    RestHandler restHandler = mock(RestHandler.class);
+    when(restHandler.createErrorResponse(any()))
+        .thenReturn(
+            new RestHandler.HTTPRestResponse(
+                501,
+                "application/a2a+json",
+                "{\"error\":{\"code\":-32004,\"status\":\"UNIMPLEMENTED\"}}"));
+    RequestHandler requestHandler = mock(RequestHandler.class);
+    AgentCard agentCard = mock(AgentCard.class);
+    when(agentCard.capabilities()).thenReturn(AgentCapabilities.builder().streaming(false).build());
+    A2AController canonical = new A2AController(restHandler, requestHandler, agentCard);
+    var aliases = new A2ASlashActionAliasController(canonical);
+    MockMvc mockMvc =
+        MockMvcBuilders.standaloneSetup(aliases)
+            .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+            .build();
+
+    mockMvc
+        .perform(post("/a2a/json/message/stream").content("{}"))
+        .andExpect(status().is(501))
+        .andExpect(content().contentTypeCompatibleWith("application/a2a+json"));
+
+    verifyNoInteractions(requestHandler);
+  }
+
+  @Test
+  void slashActionAliasesAreOptIn() {
+    A2AController canonical = mock(A2AController.class);
+    WebApplicationContextRunner runner =
+        new WebApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+            .withBean(AgentCard.class, () -> mock(AgentCard.class))
+            .withBean(AgentExecutor.class, () -> mock(AgentExecutor.class))
+            .withBean(RequestHandler.class, () -> mock(RequestHandler.class))
+            .withBean(RestHandler.class, () -> mock(RestHandler.class))
+            .withBean(A2AController.class, () -> canonical);
+
+    runner.run(
+        context -> assertFalse(context.containsBean("a2aSlashActionAliasController")));
+    runner
+        .withPropertyValues("a2at.server.slash-action-aliases-enabled=true")
+        .run(context -> assertTrue(context.containsBean("a2aSlashActionAliasController")));
+  }
+
+  @Test
+  void slashActionAliasPropertyDefaultsToDisabled() {
+    A2AProperties properties = new A2AProperties();
+    assertFalse(properties.isSlashActionAliasesEnabled());
+    properties.setSlashActionAliasesEnabled(true);
+    assertTrue(properties.isSlashActionAliasesEnabled());
   }
 
   @Test

@@ -39,6 +39,12 @@ public class A2AProperties {
   /** URL path prefix for A2A endpoints; all controller mappings are anchored under it. */
   private String pathPrefix = "/a2a/json";
 
+  /**
+   * Whether to expose slash-style aliases for A2A action endpoints for gateways that reject
+   * colons in published paths. Standard colon-style endpoints always remain available.
+   */
+  private boolean slashActionAliasesEnabled = false;
+
   /** Timeout for blocking agent execution. */
   private int agentTimeoutSeconds = 30;
 
@@ -87,6 +93,14 @@ public class A2AProperties {
 
   public void setPathPrefix(String pathPrefix) {
     this.pathPrefix = pathPrefix;
+  }
+
+  public boolean isSlashActionAliasesEnabled() {
+    return slashActionAliasesEnabled;
+  }
+
+  public void setSlashActionAliasesEnabled(boolean slashActionAliasesEnabled) {
+    this.slashActionAliasesEnabled = slashActionAliasesEnabled;
   }
 
   public int getAgentTimeoutSeconds() {
