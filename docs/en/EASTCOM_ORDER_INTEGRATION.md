@@ -1,6 +1,6 @@
 # Eastcom Instruction-Platform Integration Guide
 
-> Applies to the `dev` branch with workflow engine `1.0.0`, A2A-T SDK `1.1.0`, A2A Java SDK
+> Applies to the `dev` branch with workflow engine `0.0.2`, A2A-T SDK `1.1.0`, A2A Java SDK
 > `1.2.0.Final`, and Eastcom `order-shaded-client:1.1.18`. This guide describes the current
 > implementation only; it does not cover legacy A2A-T or Order APIs.
 
@@ -367,6 +367,20 @@ mvn install:install-file \
   -Dversion=1.1.18 \
   -Dpackaging=jar
 ```
+
+## CI runner setup
+
+The dev sample gate runs on a trusted self-hosted runner with the `eastcom-sdk` label.
+Use runner v2.327.1 or newer with JDK 17 and Maven. Install the vendor artifact using the
+command above under the runner service account, then run `mvn -B clean verify` under that same
+account. Its Maven cache must contain the vendor jar; your interactive user's cache is not enough.
+Keep the sample ports free and avoid simultaneous full-reactor runs on the same host.
+
+A job cancelled after waiting for a runner for 24 hours has not executed the tests. In the
+repository's Settings > Actions > Runners, confirm repository access, Online status, and both
+`self-hosted` and `eastcom-sdk` labels; start or repair the runner service and re-run the failed
+jobs. PR jobs do not execute vendor-dependent code on this runner; trusted branch pushes and
+manual runs must pass both direct and Order tests. See [Contributing](../../CONTRIBUTING.md#eastcom-release-gate-dev).
 
 ## Relevant code
 

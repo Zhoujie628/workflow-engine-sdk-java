@@ -152,3 +152,15 @@ Restrict that runner to trusted repositories/branch pushes and manual runs; it m
 The CI sample job runs the full reactor, including direct and Order simulator tests, without `continue-on-error`.
 A missing/offline runner is an unmet release prerequisite, not permission to skip the gate.
 Configuring runner access and branch protection is a repository-administration step, separate from this source change.
+
+Provision the runner under Settings > Actions > Runners for the repository that actually runs CI.
+Use runner v2.327.1 or newer for the Node 24 actions, attach both `self-hosted` and `eastcom-sdk`
+labels, and start its service. Under that service account, install the vendor jar using the
+[integration guide](docs/en/EASTCOM_ORDER_INTEGRATION.md#dependency), then run `mvn -B clean verify`
+once to populate and validate its Maven repository. The developer's own Maven cache is not shared
+automatically with the runner service account. Ensure the sample ports are free and run one reactor
+at a time on each host.
+
+If CI reports that it waited for a runner for 24 hours, check repository access, both labels and the
+runner's Online status first; no Maven build ran in that job. Once the runner is ready, re-run the
+failed jobs and require successful direct and Order sample reports before accepting the dev build.
