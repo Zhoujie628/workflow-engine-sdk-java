@@ -67,6 +67,7 @@ import org.springframework.core.io.ResourceLoader;
  *   <li>{@link MainEventBusProcessor} - the event bus
  *   <li>{@link A2AController} - the Spring MVC controller (message send/stream plus task
  *       query, list, cancel, and subscribe endpoints)
+ *   <li>Optional slash-style aliases for gateways that cannot publish colon-style action paths
  * </ul>
  *
  * <p>The partner only needs to provide an {@link AgentExecutor} implementation as a
@@ -213,5 +214,18 @@ public class A2AAutoConfiguration {
   public A2AController a2aController(
       RestHandler restHandler, RequestHandler requestHandler, AgentCard agentCard) {
     return new A2AController(restHandler, requestHandler, agentCard);
+  }
+
+  /**
+   * Adds non-standard slash-style action aliases without changing the canonical A2A endpoints.
+   * This compatibility surface is disabled unless explicitly enabled for a constrained gateway.
+   */
+  @Bean
+  @ConditionalOnMissingBean(A2ASlashActionAliasController.class)
+  @ConditionalOnProperty(
+      name = "a2at.server.slash-action-aliases-enabled",
+      havingValue = "true")
+  A2ASlashActionAliasController a2aSlashActionAliasController(A2AController delegate) {
+    return new A2ASlashActionAliasController(delegate);
   }
 }
