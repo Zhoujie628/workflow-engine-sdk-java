@@ -514,6 +514,32 @@ Demo 在打开独立协议通道和启动工作流之前，先查询每个被调
 `A2A_TASK_CLEANUP_MAX_TASKS` 配置。任务查询受认证身份权限约束；若多个实例共用同一身份，Demo 可能取消其他实例创建的活跃任务。
 应使用隔离身份，或在提供等价的任务归属清理策略后关闭该功能。
 
+### 13.4 不接受冒号路径的 API 网关
+
+A2A HTTP+JSON 定义了 `message:send`、`message:stream`、`tasks/{id}:cancel` 和
+`tasks/{id}:subscribe` 等动作端点，标准端点应始终保留。首选由 API 网关发布斜杠形式的公开路径，
+并重写到后端标准路径，例如：
+
+```text
+/gateway/service/a2a/json/message/send   -> /a2a/json/message:send
+/gateway/service/a2a/json/message/stream -> /a2a/json/message:stream
+```
+
+如果网关不能重写后端路径，可开启 starter 的兼容别名：
+
+```yaml
+a2at:
+  server:
+    path-prefix: /a2a/json
+    slash-action-aliases-enabled: true
+```
+
+此时网关可以原样转发 `/message/send` 和 `/message/stream`；同一配置还会开放
+`/tasks/{id}/cancel` 和 `/tasks/{id}/subscribe`。如果网关转发前会去掉它管理的公开前缀，
+不要把该前缀写进 `path-prefix`；只有应用实际收到该前缀时才需要配置。A2A-T SDK 不发送 HTTP 请求，
+A2A Java REST transport 会在 AgentCard 基础 URL 后追加标准动作后缀。因此，必须发出斜杠路径的调用方
+需要使用网关重写或传输适配器，仅修改 AgentCard 基础 URL 不够。
+
 ## 14. A2A 错误与任务失败
 
 任务创建前和创建后的失败必须分开处理。请求在任务创建前被拒绝时，返回非 2xx HTTP 状态和标准

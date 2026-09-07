@@ -549,6 +549,33 @@ Cleanup is enabled and fail-fast by default so stale tasks cannot silently lead 
 the demo may cancel active tasks created by another installation; use an isolated identity or disable cleanup after
 providing an equivalent ownership-aware policy.
 
+### 13.4 API gateways that reject colon-style paths
+
+A2A HTTP+JSON defines action endpoints such as `message:send`, `message:stream`, `tasks/{id}:cancel` and
+`tasks/{id}:subscribe`. Keep these canonical routes enabled. Prefer configuring the API gateway to publish slash-style
+paths and rewrite them to the canonical backend paths, for example:
+
+```text
+/gateway/service/a2a/json/message/send   -> /a2a/json/message:send
+/gateway/service/a2a/json/message/stream -> /a2a/json/message:stream
+```
+
+If the gateway cannot rewrite the backend path, enable the starter's aliases:
+
+```yaml
+a2at:
+  server:
+    path-prefix: /a2a/json
+    slash-action-aliases-enabled: true
+```
+
+The gateway can then forward `/message/send` and `/message/stream` unchanged. The same option also exposes
+`/tasks/{id}/cancel` and `/tasks/{id}/subscribe`. Do not put the gateway-owned public prefix into `path-prefix` when the
+gateway removes it before forwarding; add it only when the application actually receives that prefix. The A2A-T SDK
+does not send HTTP requests, and the A2A Java REST transport appends canonical operation suffixes to the AgentCard base
+URL. A caller that must emit slash-style paths therefore needs gateway rewriting or a transport adapter; changing the
+AgentCard base URL alone is insufficient.
+
 ## 14. A2A errors and task failures
 
 Keep failures before and after task creation separate. A request rejected before a task is created uses a

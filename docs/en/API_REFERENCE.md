@@ -620,6 +620,7 @@ Configuration properties prefixed with `a2at.server`:
 |----------------------------------------------|----------------------------|------------------------------------------------------------------------|
 | `a2at.server.agent-card`                     | `classpath:agentcard.json` | Path to the AgentCard JSON file (classpath: or file: prefix supported) |
 | `a2at.server.path-prefix`                    | `/a2a/json`                | URL path prefix for A2A endpoints                                      |
+| `a2at.server.slash-action-aliases-enabled`   | `false`                    | Expose slash-style action aliases for gateways that reject colons      |
 | `a2at.server.agent-timeout-seconds`          | `30`                       | Agent execution timeout in seconds                                     |
 | `a2at.server.consumption-timeout-seconds`    | `5`                        | Consumption timeout in seconds                                         |
 | `a2at.server.reconciliation-timeout-seconds` | `1`                        | Reconciliation wait timeout in seconds                                 |
@@ -633,6 +634,7 @@ a2at:
   server:
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
+    slash-action-aliases-enabled: false
     agent-timeout-seconds: 30
     executor-core-size: 8
     executor-max-size: 16
@@ -656,6 +658,7 @@ Auto-configures the following beans (all `@ConditionalOnMissingBean`, so you can
 | `requestHandler`    | `RequestHandler`              | Default request handler                                   |
 | `restHandler`       | `RestHandler`                 | REST protocol handler                                     |
 | `a2aController`     | `A2AController`               | Spring MVC controller for message and task endpoints     |
+| `a2aSlashActionAliasController` | internal controller | Optional slash-style aliases for action endpoints         |
 
 ### A2AController
 
@@ -667,6 +670,20 @@ Spring MVC controller that exposes A2A REST endpoints:
 - `GET {path-prefix}/tasks` — list tasks with optional filters
 - `POST {path-prefix}/tasks/{id}:cancel` — cancel a task
 - `POST {path-prefix}/tasks/{id}:subscribe` — subscribe to task updates over SSE
+
+The colon-style routes are the canonical A2A HTTP+JSON endpoints and are always enabled. When
+`a2at.server.slash-action-aliases-enabled=true`, the starter additionally exposes compatibility aliases that delegate
+to the same controller and therefore have identical authentication, request bodies, responses, errors, streaming and
+lifecycle behavior:
+
+- `POST {path-prefix}/message/send`
+- `POST {path-prefix}/message/stream`
+- `POST {path-prefix}/tasks/{id}/cancel`
+- `POST {path-prefix}/tasks/{id}/subscribe`
+
+Prefer an API-gateway rewrite from slash-style public paths to canonical colon-style backend paths. Enable the aliases
+only when the gateway cannot rewrite the backend path. The aliases do not change the AgentCard schema or make operation
+suffixes configurable in the A2A Java REST client.
 
 HTTP+JSON responses use `application/a2a+json`; successful streaming responses use `text/event-stream`. When a stream
 closes, the controller cancels its publisher subscription and notifies the SDK event consumer so that server-side
