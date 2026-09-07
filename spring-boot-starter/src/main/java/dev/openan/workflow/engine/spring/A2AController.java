@@ -176,9 +176,10 @@ public class A2AController {
             }
           }
         };
-    SseEmitter emitter = track(new SseEmitter(0L), release);
+    SseEmitter emitter = new SseEmitter(0L);
+    Runnable finish = track(emitter, release);
     final AtomicLong seq = new AtomicLong(0);
-    publisher.subscribe(
+    Flow.Subscriber<StreamingEventKind> subscriber =
         new Flow.Subscriber<>() {
           @Override
           public void onSubscribe(Flow.Subscription s) {
@@ -222,7 +223,14 @@ public class A2AController {
             release.run();
             emitter.complete();
           }
-        });
+        };
+    try {
+      publisher.subscribe(subscriber);
+    } catch (RuntimeException | Error error) {
+      // MVC never receives this emitter when setup throws, so its callbacks cannot release it.
+      finish.run();
+      throw error;
+    }
     return emitter;
   }
 
@@ -331,7 +339,7 @@ public class A2AController {
     return activeStreams.get();
   }
 
-  private <T extends ResponseBodyEmitter> T track(T emitter, Runnable cleanup) {
+  private Runnable track(ResponseBodyEmitter emitter, Runnable cleanup) {
     activeStreams.incrementAndGet();
     AtomicBoolean completed = new AtomicBoolean();
     Runnable finish =
@@ -347,7 +355,7 @@ public class A2AController {
     emitter.onCompletion(finish);
     emitter.onTimeout(finish);
     emitter.onError(ignored -> finish.run());
-    return emitter;
+    return finish;
   }
 
   private static ResponseEntity<String> toResponse(RestHandler.HTTPRestResponse response) {
