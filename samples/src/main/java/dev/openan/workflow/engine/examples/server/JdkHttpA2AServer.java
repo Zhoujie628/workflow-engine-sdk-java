@@ -641,7 +641,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
     }
   }
 
-  private static void writeStream(
+  static void writeStream(
       HttpExchange exchange,
       Flow.Publisher<StreamingEventKind> publisher,
       ServerCallContext context)
@@ -652,7 +652,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
     CountDownLatch done = new CountDownLatch(1);
     OutputStream output = exchange.getResponseBody();
     StreamCancellation cancellation = new StreamCancellation(context);
-    publisher.subscribe(
+    Flow.Subscriber<StreamingEventKind> subscriber =
         new Flow.Subscriber<>() {
           @Override
           public void onSubscribe(Flow.Subscription subscription) {
@@ -667,7 +667,8 @@ public class JdkHttpA2AServer implements AutoCloseable {
                   formatSse(seq.incrementAndGet(), payload).getBytes(StandardCharsets.UTF_8));
               output.flush();
               cancellation.requestNext();
-            } catch (IOException error) {
+            } catch (Exception error) {
+              log.error("[SSE] Write failed for {}: {}", exchange.getRequestURI(), error.getMessage(), error);
               cancellation.release();
               done.countDown();
             }
@@ -675,6 +676,7 @@ public class JdkHttpA2AServer implements AutoCloseable {
 
           @Override
           public void onError(Throwable error) {
+            log.error("[SSE] Stream failed for {}: {}", exchange.getRequestURI(), error.getMessage(), error);
             cancellation.release();
             done.countDown();
           }
@@ -684,11 +686,15 @@ public class JdkHttpA2AServer implements AutoCloseable {
             cancellation.release();
             done.countDown();
           }
-        });
+        };
     try {
+      publisher.subscribe(subscriber);
       done.await();
     } catch (InterruptedException error) {
       Thread.currentThread().interrupt();
+    } catch (RuntimeException error) {
+      // HTTP 200 is already committed; close the stream without attempting a second response.
+      log.error("[SSE] Subscription failed for {}: {}", exchange.getRequestURI(), error.getMessage(), error);
     } finally {
       cancellation.release();
       output.close();

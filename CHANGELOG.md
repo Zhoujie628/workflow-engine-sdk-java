@@ -1,6 +1,17 @@
 # Changelog
 
-## [Unreleased] — 1.0.0 release candidate
+## [Unreleased]
+
+- Release streaming resources when publisher subscription setup throws synchronously.
+- Align published dependency examples with 0.0.2 and refresh neutral architecture terminology.
+- Update GitHub Actions to Node 24-compatible action versions.
+
+## [0.0.2] — 2026-09-07
+
+- Publish the main-branch baseline under `net.openan.workflow.sdk`, including the parent POM,
+  workflow-engine and spring-boot-starter. This tag has the same source tree as 0.0.1.
+
+## [0.0.1] — 2026-09-04
 
 - Use published A2A-T 1.1.0 from Maven Central; remove SDK source checkout/install from CI; move content generation,
   validation, templates and SDK initialization to the host.
@@ -25,5 +36,5 @@
 - Publish a compiled host integration example and require sample regression tests.
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
-This repository prepares the initial 1.0.0 SDK release. Earlier internal development notes are not published API
-contracts or evidence of a Maven release. Release publication/tagging is a separate, explicitly authorized operation.
+Published Maven artifacts use the version selected by the release tag. The default source-build
+`revision=1.0.0` is a development version, not the version to use when consuming Maven Central artifacts.
