@@ -155,7 +155,7 @@ flowchart TB
         direction LR
         ORCH["编排中心<br/>工作流定义（PSOP）"]
         REGT["注册中心<br/>AgentCard"]
-        OMC["被调度智能体（OMC）"]
+        DISPATCHED["被调度智能体"]
     end
 
     WB ==>|"选择工作流并启动"| EXE
@@ -170,7 +170,7 @@ flowchart TB
     TRANS --> OBSV
     TRANS --> A2AJ
     MSG -.->|"引擎内唯一引用位置"| A2ATC
-    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| DISPATCHED
     REGC -->|"检索工作流"| ORCH
     REGC -->|"获取 AgentCard"| REGT
 ```
@@ -178,7 +178,7 @@ flowchart TB
 模块视图要点：引擎以 Maven 依赖嵌入宿主进程，由宿主代码启动并实现回调；调度内核（core/control/model
 包）不引用任何 A2A-T SDK 类型，该边界由 `ContentDependencyBoundaryTest` 架构测试守护；client 协议
 适配层（A2ATExtension、A2atMessages、DefaultWorkflowEngineClient）是引擎内引用 a2a-t-sdk 的唯一
-位置；与被调度智能体（OMC）的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
+位置；与被调度智能体的 Task-T、Negotiation-T、Authorization-T、Notification-T 四类交互全部
 经 a2a-java-sdk 传输，授权与订阅使用独立于工作流的通道；编排中心与注册中心仅在工作流定义检索和
 AgentCard 获取时被引擎客户端访问，检索与选择策略属宿主职责。任务创建前被对端以非 2xx 和标准
 A2A 错误信封拒绝的调用，由传输层识别并投影为稳定错误码（`a2a.<reason>`），不进入协商、不自动重试；

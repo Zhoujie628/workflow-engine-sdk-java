@@ -23,5 +23,3 @@
  * through the callback contracts in {@code control}.
  */
 package dev.openan.workflow.engine;
-
-
