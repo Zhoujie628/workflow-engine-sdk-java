@@ -166,6 +166,78 @@ class A2AAutoConfigurationTest {
     assertEquals(0, controller.activeStreamCount());
   }
 
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"before-subscribe", "after-subscribe", "during-request"})
+  void synchronousPublisherFailureReleasesResourcesBeforeMvcDispatch(String phase) throws Exception {
+    for (String endpoint : new String[] {"/message:stream", "/tasks/task-1:subscribe"}) {
+      RestHandler restHandler = mock(RestHandler.class);
+      when(restHandler.createErrorResponse(any()))
+          .thenReturn(new RestHandler.HTTPRestResponse(
+              500, "application/a2a+json",
+              "{\"error\":{\"code\":500,\"status\":\"INTERNAL\",\"message\":\"Setup failed\"}}"));
+      RequestHandler requestHandler = mock(RequestHandler.class);
+      AgentCard agentCard = mock(AgentCard.class);
+      when(agentCard.capabilities()).thenReturn(AgentCapabilities.builder().streaming(true).build());
+      var agentInterface = mock(org.a2aproject.sdk.spec.AgentInterface.class);
+      when(agentInterface.protocolVersion()).thenReturn("1.0");
+      when(agentCard.supportedInterfaces()).thenReturn(java.util.List.of(agentInterface));
+      AtomicInteger subscriptionCancellations = new AtomicInteger();
+      AtomicInteger eventConsumerCancellations = new AtomicInteger();
+      AtomicReference<Flow.Subscriber<? super StreamingEventKind>> subscriber = new AtomicReference<>();
+      org.mockito.stubbing.Answer<Flow.Publisher<StreamingEventKind>> answer =
+          invocation -> {
+            ServerCallContext context = invocation.getArgument(1);
+            context.setEventConsumerCancelCallback(eventConsumerCancellations::incrementAndGet);
+            return receiver -> {
+              subscriber.set(receiver);
+              if (!phase.equals("before-subscribe")) {
+                receiver.onSubscribe(new Flow.Subscription() {
+                  @Override
+                  public void request(long count) {
+                    if (phase.equals("during-request")) {
+                      throw new IllegalStateException("Request failed");
+                    }
+                  }
+
+                  @Override
+                  public void cancel() {
+                    subscriptionCancellations.incrementAndGet();
+                  }
+                });
+              }
+              throw new IllegalStateException("Subscribe failed");
+            };
+          };
+      when(requestHandler.onSubscribeToTask(any(), any())).thenAnswer(answer);
+      when(requestHandler.onMessageSendStream(any(), any())).thenAnswer(answer);
+      var controller = new A2AController(restHandler, requestHandler, agentCard);
+      MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+          .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+          .build();
+
+      mockMvc.perform(post("/a2a/json" + endpoint)
+              .header("A2A-Version", "1.0")
+              .contentType("application/json")
+              .accept("text/event-stream")
+              .content("{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\","
+                  + "\"parts\":[{\"text\":\"test\"}]}}"))
+          .andExpect(status().isInternalServerError())
+          .andExpect(request().asyncNotStarted())
+          .andExpect(content().contentTypeCompatibleWith("application/a2a+json"))
+          .andExpect(content().string(containsString("\"status\":\"INTERNAL\"")));
+
+      assertEquals(0, controller.activeStreamCount());
+      assertTrue(controller.awaitStreamsDrained(java.time.Duration.ofMillis(10)));
+      assertEquals(1, eventConsumerCancellations.get());
+      assertEquals(phase.equals("before-subscribe") ? 0 : 1, subscriptionCancellations.get());
+      subscriber.get().onComplete();
+      assertEquals(0, controller.activeStreamCount());
+      assertEquals(1, eventConsumerCancellations.get());
+    }
+  }
+
   @Test
   void nonStreamingA2AResponseUsesProtocolMediaType() throws Exception {
     RestHandler restHandler = mock(RestHandler.class);

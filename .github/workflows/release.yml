@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout (full history for tag ancestry validation)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -80,7 +80,7 @@ jobs:
           test -n "${SIGNING_PASSWORD}" || { echo "SIGNING_PASSWORD is not set"; exit 1; }
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'

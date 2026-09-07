@@ -166,7 +166,7 @@ flowchart TB
         direction LR
         ORCH["Orchestration center<br/>workflow definitions (PSOP)"]
         REGT["Registry center<br/>AgentCards"]
-        OMC["Dispatched agents (OMC)"]
+        DISPATCHED["Dispatched agents"]
     end
 
     WB ==>|"selects workflow and starts"| EXE
@@ -181,7 +181,7 @@ flowchart TB
     TRANS --> OBSV
     TRANS --> A2AJ
     MSG -.->|"only reference site inside the engine"| A2ATC
-    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| OMC
+    A2AJ -->|"Task-T · Negotiation-T<br/>Authorization-T · Notification-T"| DISPATCHED
     REGC -->|"workflow search"| ORCH
     REGC -->|"AgentCard retrieval"| REGT
 ```
@@ -190,7 +190,7 @@ Key properties of the module view: the engine is embedded in the host process as
 by host code and extended through the callbacks. The scheduling kernel (core/control/model packages)
 references no A2A-T SDK types — a boundary guarded by the `ContentDependencyBoundaryTest` architecture test.
 The client protocol adaptation layer (A2ATExtension, A2atMessages, DefaultWorkflowEngineClient) is the only
-place inside the engine that references a2a-t-sdk. All four interaction types with dispatched agents (OMC) —
+place inside the engine that references a2a-t-sdk. All four interaction types with dispatched agents —
 Task-T, Negotiation-T, Authorization-T, Notification-T — travel over a2a-java-sdk transports, with
 authorization and subscription on channels independent of the workflow. The orchestration and registry
 centers are only reached by the engine clients for workflow-definition search and AgentCard retrieval; the
