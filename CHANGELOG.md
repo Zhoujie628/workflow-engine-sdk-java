@@ -2,9 +2,22 @@
 
 ## [Unreleased]
 
+## [0.0.4] — 2026-09-08
+
+- Make the Spring Boot A2A server auto-configuration opt-in: server beans are registered only
+  when `a2at.server.enabled=true` (previously on by default). Host applications that expose A2A
+  endpoints must now set the property explicitly.
+- Open `A2ASlashActionAliasController` for host-side registration: public, non-final class with
+  a public constructor, so applications outside the starter package can instantiate, replace or
+  proxy it (`@ConditionalOnMissingBean` replacement was previously unreachable from host code).
+
+## [0.0.3] — 2026-09-07
+
 - Release streaming resources when publisher subscription setup throws synchronously.
 - Align published dependency examples with 0.0.2 and refresh neutral architecture terminology.
 - Update GitHub Actions to Node 24-compatible action versions.
+- Add optional slash-style alias endpoints for A2A actions, disabled unless
+  `a2at.server.slash-action-aliases-enabled=true`.
 
 ## [0.0.2] — 2026-09-07
 
