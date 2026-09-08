@@ -565,6 +565,7 @@ If the gateway cannot rewrite the backend path, enable the starter's aliases:
 ```yaml
 a2at:
   server:
+    enabled: true
     path-prefix: /a2a/json
     slash-action-aliases-enabled: true
 ```

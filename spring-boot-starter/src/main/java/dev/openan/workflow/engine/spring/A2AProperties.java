@@ -30,8 +30,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "a2at.server")
 public class A2AProperties {
 
-  /** Whether A2A server autoconfiguration is enabled. Set false to disable all A2A beans. */
-  private boolean enabled = true;
+  /** Whether A2A server autoconfiguration is enabled. Set true to create the A2A server beans. */
+  private boolean enabled = false;
 
   /** Path to the AgentCard JSON file (classpath: or file: prefix supported). */
   private String agentCard = "classpath:agentcard.json";
