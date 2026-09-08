@@ -71,13 +71,13 @@ import org.springframework.core.io.ResourceLoader;
  * </ul>
  *
  * <p>The partner only needs to provide an {@link AgentExecutor} implementation as a
- * {@code @Component} or {@code @Bean}. Set {@code a2at.server.enabled=false} to disable the whole
+ * {@code @Component} or {@code @Bean}. Set {@code a2at.server.enabled=true} to enable the
  * server-side autoconfiguration.
  */
 @AutoConfiguration
 @ConditionalOnWebApplication
 @ConditionalOnClass(AgentExecutor.class)
-@ConditionalOnProperty(name = "a2at.server.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "a2at.server.enabled", havingValue = "true")
 @EnableConfigurationProperties(A2AProperties.class)
 public class A2AAutoConfiguration {
 

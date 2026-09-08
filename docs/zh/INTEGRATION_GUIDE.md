@@ -530,6 +530,7 @@ A2A HTTP+JSON 定义了 `message:send`、`message:stream`、`tasks/{id}:cancel` 
 ```yaml
 a2at:
   server:
+    enabled: true
     path-prefix: /a2a/json
     slash-action-aliases-enabled: true
 ```

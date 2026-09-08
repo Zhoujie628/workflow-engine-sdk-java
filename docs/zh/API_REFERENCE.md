@@ -575,8 +575,8 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 
 ## spring-boot-starter 模块
 
-`spring-boot-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。当位于 Spring Boot Web 应用的
-classpath 时，自动将所有 A2A SDK 服务端组件注册为 Spring Bean。
+`spring-boot-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。在 Spring Boot Web 应用中配置
+`a2at.server.enabled=true` 后，才会将 A2A SDK 服务端组件注册为 Spring Bean。
 
 ### A2AProperties
 
@@ -584,6 +584,7 @@ classpath 时，自动将所有 A2A SDK 服务端组件注册为 Spring Bean。
 
 | 属性                                         | 默认值                     | 说明                                                     |
 |----------------------------------------------|----------------------------|----------------------------------------------------------|
+| `a2at.server.enabled`                        | `false`                    | 启用 A2A 服务端自动配置                                  |
 | `a2at.server.agent-card`                     | `classpath:agentcard.json` | AgentCard JSON 文件路径（支持 classpath: 或 file: 前缀） |
 | `a2at.server.path-prefix`                    | `/a2a/json`                | A2A 端点的 URL 路径前缀                                  |
 | `a2at.server.slash-action-aliases-enabled`   | `false`                    | 为拒绝冒号路径的网关暴露斜杠动作别名                    |
@@ -598,6 +599,7 @@ classpath 时，自动将所有 A2A SDK 服务端组件注册为 Spring Bean。
 ```yaml
 a2at:
   server:
+    enabled: true
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
     slash-action-aliases-enabled: false
@@ -624,7 +626,7 @@ a2at:
 | `requestHandler`    | `RequestHandler`              | 默认请求处理器                                         |
 | `restHandler`       | `RestHandler`                 | REST 协议处理器                                        |
 | `a2aController`     | `A2AController`               | 消息和任务端点的 Spring MVC 控制器                    |
-| `a2aSlashActionAliasController` | 内部控制器         | 可选的斜杠形式动作端点别名                            |
+| `a2aSlashActionAliasController` | `A2ASlashActionAliasController` | 可选的斜杠动作别名公共控制器                    |
 
 ### A2AController
 

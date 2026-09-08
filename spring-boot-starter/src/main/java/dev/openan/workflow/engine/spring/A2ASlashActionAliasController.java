@@ -35,13 +35,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  */
 @RestController
 @ConditionalOnProperty(
-    name = "a2at.server.slash-action-aliases-enabled",
+    prefix = "a2at.server",
+    name = {"enabled", "slash-action-aliases-enabled"},
     havingValue = "true")
-final class A2ASlashActionAliasController {
+public class A2ASlashActionAliasController {
 
   private final A2AController delegate;
 
-  A2ASlashActionAliasController(A2AController delegate) {
+  public A2ASlashActionAliasController(A2AController delegate) {
     this.delegate = delegate;
   }
 

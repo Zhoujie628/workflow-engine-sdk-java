@@ -36,6 +36,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.hamcrest.Matchers.containsString;
 
+import java.lang.reflect.Modifier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Flow;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -410,7 +411,8 @@ class A2AAutoConfigurationTest {
             .withBean(AgentExecutor.class, () -> mock(AgentExecutor.class))
             .withBean(RequestHandler.class, () -> mock(RequestHandler.class))
             .withBean(RestHandler.class, () -> mock(RestHandler.class))
-            .withBean(A2AController.class, () -> canonical);
+            .withBean(A2AController.class, () -> canonical)
+            .withPropertyValues("a2at.server.enabled=true");
 
     runner.run(
         context -> assertFalse(context.containsBean("a2aSlashActionAliasController")));
@@ -425,6 +427,17 @@ class A2AAutoConfigurationTest {
     assertFalse(properties.isSlashActionAliasesEnabled());
     properties.setSlashActionAliasesEnabled(true);
     assertTrue(properties.isSlashActionAliasesEnabled());
+  }
+
+  @Test
+  void slashActionAliasControllerIsPubliclyAccessible() throws Exception {
+    assertTrue(Modifier.isPublic(A2ASlashActionAliasController.class.getModifiers()));
+    assertFalse(Modifier.isFinal(A2ASlashActionAliasController.class.getModifiers()));
+    assertTrue(
+        Modifier.isPublic(
+            A2ASlashActionAliasController.class
+                .getConstructor(A2AController.class)
+                .getModifiers()));
   }
 
   @Test
@@ -485,6 +498,24 @@ class A2AAutoConfigurationTest {
               assertFalse(context.containsBean("eventBus"));
               assertFalse(context.containsBean("taskStore"));
             });
+  }
+
+  @Test
+  void whenEnabledIsMissingThenNoA2ABeansCreated() {
+    new WebApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+        .run(
+            context -> {
+              assertFalse(context.containsBean("a2aController"));
+              assertFalse(context.containsBean("agentExecutorPool"));
+              assertFalse(context.containsBean("eventBus"));
+            });
+  }
+
+  @Test
+  void serverEnabledPropertyDefaultsToFalse() {
+    A2AProperties properties = new A2AProperties();
+    assertFalse(properties.isEnabled());
   }
 
   @Test
