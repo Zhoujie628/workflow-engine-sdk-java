@@ -609,7 +609,7 @@ not add private negotiation-state keys to the wire message.
 ## spring-boot-starter Module
 
 The `spring-boot-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the
-client/workflow side). When on the classpath of a Spring Boot web application, it auto-registers all A2A SDK server
+client/workflow side). In a Spring Boot web application, set `a2at.server.enabled=true` to register the A2A SDK server
 components as Spring beans.
 
 ### A2AProperties
@@ -618,6 +618,7 @@ Configuration properties prefixed with `a2at.server`:
 
 | Property                                     | Default                    | Description                                                            |
 |----------------------------------------------|----------------------------|------------------------------------------------------------------------|
+| `a2at.server.enabled`                        | `false`                    | Enable A2A server auto-configuration                                   |
 | `a2at.server.agent-card`                     | `classpath:agentcard.json` | Path to the AgentCard JSON file (classpath: or file: prefix supported) |
 | `a2at.server.path-prefix`                    | `/a2a/json`                | URL path prefix for A2A endpoints                                      |
 | `a2at.server.slash-action-aliases-enabled`   | `false`                    | Expose slash-style action aliases for gateways that reject colons      |
@@ -632,6 +633,7 @@ Configuration properties prefixed with `a2at.server`:
 ```yaml
 a2at:
   server:
+    enabled: true
     agent-card: classpath:agentcard/my_agent.json
     path-prefix: /a2a/json
     slash-action-aliases-enabled: false
@@ -658,7 +660,7 @@ Auto-configures the following beans (all `@ConditionalOnMissingBean`, so you can
 | `requestHandler`    | `RequestHandler`              | Default request handler                                   |
 | `restHandler`       | `RestHandler`                 | REST protocol handler                                     |
 | `a2aController`     | `A2AController`               | Spring MVC controller for message and task endpoints     |
-| `a2aSlashActionAliasController` | internal controller | Optional slash-style aliases for action endpoints         |
+| `a2aSlashActionAliasController` | `A2ASlashActionAliasController` | Optional public controller for slash-style action aliases |
 
 ### A2AController
 

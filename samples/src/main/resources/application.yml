@@ -14,6 +14,7 @@ spring:
 
 a2at:
   server:
+    enabled: true
     agent-card: classpath:agentcard/transport_workbench_agent.json
     path-prefix: /a2a/json
 
