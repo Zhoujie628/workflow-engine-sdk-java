@@ -19,18 +19,42 @@
 
 package dev.openan.workflow.engine.core;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
-import dev.openan.workflow.engine.model.*;
-import org.junit.jupiter.api.Test;
-
-import java.util.*;
-import java.util.concurrent.*;
+import dev.openan.workflow.engine.model.ExecutionResult;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.StepType;
+import dev.openan.workflow.engine.model.Task;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.TaskResult;
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowStep;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests for WorkflowExecutor: DAG traversal, parallel subtasks, ANY_SUCCESS, conditional routing,
@@ -66,9 +90,7 @@ class WorkflowExecutorTest {
     return JumpCondition.builder().step(step).condition(cond).build();
   }
 
-  /**
-   * ControlPoint that prepares task content and allows every conditional edge.
-   */
+  /** ControlPoint that prepares task content and allows every conditional edge. */
   private ControlPoint autoCp() {
     return new ControlPoint() {
       @Override
@@ -275,9 +297,9 @@ class WorkflowExecutorTest {
           @Override
           public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
             return CompletableFuture.completedFuture(
-                    routeRequest.nextStep().equals("s3")
-                            ? RouteDecision.allow("chose s3")
-                            : RouteDecision.deny("not selected"));
+                routeRequest.nextStep().equals("s3")
+                    ? RouteDecision.allow("chose s3")
+                    : RouteDecision.deny("not selected"));
           }
         };
     WorkflowExecutor exec = new WorkflowExecutor(wf, cp, stub, recordingCallback(), "", "zh");
@@ -292,125 +314,125 @@ class WorkflowExecutorTest {
   @Test
   void mixedOutgoingEdgesRunUnconditionalAndAllowedConditionalTargets() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(
-                            List.of(
-                                    jump("always", ""),
-                                    jump("matched", "matched condition"),
-                                    jump("alsoMatched", "another match"),
-                                    jump("denied", "denied condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(
+                List.of(
+                    jump("always", ""),
+                    jump("matched", "matched condition"),
+                    jump("alsoMatched", "another match"),
+                    jump("denied", "denied condition")))
+            .build();
     List<WorkflowStep> targets =
-            List.of(
-                    WorkflowStep.builder().name("always").subtasks(List.of(task("B", "always"))).build(),
-                    WorkflowStep.builder().name("matched").subtasks(List.of(task("C", "matched"))).build(),
-                    WorkflowStep.builder()
-                            .name("alsoMatched")
-                            .subtasks(List.of(task("D", "also matched")))
-                            .build(),
-                    WorkflowStep.builder().name("denied").subtasks(List.of(task("E", "denied"))).build());
+        List.of(
+            WorkflowStep.builder().name("always").subtasks(List.of(task("B", "always"))).build(),
+            WorkflowStep.builder().name("matched").subtasks(List.of(task("C", "matched"))).build(),
+            WorkflowStep.builder()
+                .name("alsoMatched")
+                .subtasks(List.of(task("D", "also matched")))
+                .build(),
+            WorkflowStep.builder().name("denied").subtasks(List.of(task("E", "denied"))).build());
     List<RouteRequest> requests = Collections.synchronizedList(new ArrayList<>());
     List<Map<String, Object>> routeEvents = Collections.synchronizedList(new ArrayList<>());
     EventCallback routeEventCallback =
-            new EventCallback() {
-              @Override
-              public void onEvent(String type, Map<String, Object> data) {
-                if (EventType.ROUTE_DECISION.equals(type)) {
-                  routeEvents.add(Map.copyOf(data));
-                }
-              }
-            };
+        new EventCallback() {
+          @Override
+          public void onEvent(String type, Map<String, Object> data) {
+            if (EventType.ROUTE_DECISION.equals(type)) {
+              routeEvents.add(Map.copyOf(data));
+            }
+          }
+        };
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(
-                            request -> {
-                              requests.add(request);
-                              return CompletableFuture.completedFuture(
-                                      request.nextStep().equals("denied")
-                                              ? RouteDecision.deny("not applicable")
-                                              : RouteDecision.allow("matched"));
-                            })
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(
+                request -> {
+                  requests.add(request);
+                  return CompletableFuture.completedFuture(
+                      request.nextStep().equals("denied")
+                          ? RouteDecision.deny("not applicable")
+                          : RouteDecision.allow("matched"));
+                })
+            .build();
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder()
-                            .name("mixed-routes")
-                            .steps(
-                                    java.util.stream.Stream.concat(
-                                                    java.util.stream.Stream.of(start), targets.stream())
-                                            .toList())
-                            .build(),
-                    callbacks,
-                    new StubWorkflowEngineClient("A", "B", "C", "D", "E"),
-                    routeEventCallback,
-                    "intent",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder()
+                    .name("mixed-routes")
+                    .steps(
+                        java.util.stream.Stream.concat(
+                                java.util.stream.Stream.of(start), targets.stream())
+                            .toList())
+                    .build(),
+                callbacks,
+                new StubWorkflowEngineClient("A", "B", "C", "D", "E"),
+                routeEventCallback,
+                "intent",
+                "zh")
+            .run()
+            .join();
 
     assertTrue(result.isSuccess());
     assertEquals(
-            Set.of("matched", "alsoMatched", "denied"),
-            requests.stream().map(RouteRequest::nextStep).collect(java.util.stream.Collectors.toSet()));
+        Set.of("matched", "alsoMatched", "denied"),
+        requests.stream().map(RouteRequest::nextStep).collect(java.util.stream.Collectors.toSet()));
     assertEquals(3, requests.size(), "unconditional edges must bypass onRoute");
     assertEquals(4, routeEvents.size());
     assertTrue(
-            routeEvents.stream()
-                    .anyMatch(
-                            event ->
-                                    event.get("next").equals("always")
-                                            && event.get("conditional").equals(false)
-                                            && event.get("allowed").equals(true)));
+        routeEvents.stream()
+            .anyMatch(
+                event ->
+                    event.get("next").equals("always")
+                        && event.get("conditional").equals(false)
+                        && event.get("allowed").equals(true)));
     assertTrue(
-            routeEvents.stream()
-                    .anyMatch(
-                            event ->
-                                    event.get("next").equals("denied")
-                                            && event.get("conditional").equals(true)
-                                            && event.get("allowed").equals(false)
-                                            && event.get("reason").equals("not applicable")));
+        routeEvents.stream()
+            .anyMatch(
+                event ->
+                    event.get("next").equals("denied")
+                        && event.get("conditional").equals(true)
+                        && event.get("allowed").equals(false)
+                        && event.get("reason").equals("not applicable")));
     assertEquals(
-            Set.of("A", "B", "C", "D"),
-            result.getHistory().stream()
-                    .map(item -> String.valueOf(item.get("agent")))
-                    .collect(java.util.stream.Collectors.toSet()));
+        Set.of("A", "B", "C", "D"),
+        result.getHistory().stream()
+            .map(item -> String.valueOf(item.get("agent")))
+            .collect(java.util.stream.Collectors.toSet()));
   }
 
   @Test
   void whitespaceOnlyConditionIsUnconditional() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(List.of(jump("next", "   \t")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(List.of(jump("next", "   \t")))
+            .build();
     WorkflowStep next =
-            WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
+        WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .build();
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder().name("blank-condition").steps(List.of(start, next)).build(),
-                    callbacks,
-                    new StubWorkflowEngineClient("A", "B"),
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder().name("blank-condition").steps(List.of(start, next)).build(),
+                callbacks,
+                new StubWorkflowEngineClient("A", "B"),
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertTrue(result.isSuccess());
     assertEquals(2, result.getHistory().size());
@@ -419,47 +441,47 @@ class WorkflowExecutorTest {
   @Test
   void conditionalEdgesAreEvaluatedConcurrently() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(List.of(jump("left", "left condition"), jump("right", "right condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(List.of(jump("left", "left condition"), jump("right", "right condition")))
+            .build();
     WorkflowStep left =
-            WorkflowStep.builder().name("left").subtasks(List.of(task("B", "left"))).build();
+        WorkflowStep.builder().name("left").subtasks(List.of(task("B", "left"))).build();
     WorkflowStep right =
-            WorkflowStep.builder().name("right").subtasks(List.of(task("C", "right"))).build();
+        WorkflowStep.builder().name("right").subtasks(List.of(task("C", "right"))).build();
     ExecutorService routeExecutor = Executors.newFixedThreadPool(2);
     CyclicBarrier routeBarrier = new CyclicBarrier(2);
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(
-                            request ->
-                                    CompletableFuture.supplyAsync(
-                                            () -> {
-                                              awaitBarrier(routeBarrier);
-                                              return RouteDecision.allow("matched");
-                                            },
-                                            routeExecutor))
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(
+                request ->
+                    CompletableFuture.supplyAsync(
+                        () -> {
+                          awaitBarrier(routeBarrier);
+                          return RouteDecision.allow("matched");
+                        },
+                        routeExecutor))
+            .build();
 
     try {
       ExecutionResult result =
-              new WorkflowExecutor(
-                      Workflow.builder()
-                              .name("parallel-routes")
-                              .steps(List.of(start, left, right))
-                              .build(),
-                      callbacks,
-                      new StubWorkflowEngineClient("A", "B", "C"),
-                      recordingCallback(),
-                      "",
-                      "zh")
-                      .run()
-                      .join();
+          new WorkflowExecutor(
+                  Workflow.builder()
+                      .name("parallel-routes")
+                      .steps(List.of(start, left, right))
+                      .build(),
+                  callbacks,
+                  new StubWorkflowEngineClient("A", "B", "C"),
+                  recordingCallback(),
+                  "",
+                  "zh")
+              .run()
+              .join();
       assertTrue(result.isSuccess());
       assertEquals(3, result.getHistory().size());
     } finally {
@@ -470,55 +492,55 @@ class WorkflowExecutorTest {
   @Test
   void routeFailurePreventsUnconditionalAndAllowedTargetsFromStarting() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(
-                            List.of(
-                                    jump("always", ""),
-                                    jump("failed", "cannot evaluate"),
-                                    jump("allowed", "matched")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(
+                List.of(
+                    jump("always", ""),
+                    jump("failed", "cannot evaluate"),
+                    jump("allowed", "matched")))
+            .build();
     WorkflowStep always =
-            WorkflowStep.builder().name("always").subtasks(List.of(task("B", "always"))).build();
+        WorkflowStep.builder().name("always").subtasks(List.of(task("B", "always"))).build();
     WorkflowStep failed =
-            WorkflowStep.builder().name("failed").subtasks(List.of(task("C", "failed"))).build();
+        WorkflowStep.builder().name("failed").subtasks(List.of(task("C", "failed"))).build();
     WorkflowStep allowed =
-            WorkflowStep.builder().name("allowed").subtasks(List.of(task("D", "allowed"))).build();
+        WorkflowStep.builder().name("allowed").subtasks(List.of(task("D", "allowed"))).build();
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(
-                            request ->
-                                    request.nextStep().equals("failed")
-                                            ? CompletableFuture.failedFuture(
-                                            new IllegalStateException("route evaluation unavailable"))
-                                            : CompletableFuture.completedFuture(RouteDecision.allow()))
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(
+                request ->
+                    request.nextStep().equals("failed")
+                        ? CompletableFuture.failedFuture(
+                            new IllegalStateException("route evaluation unavailable"))
+                        : CompletableFuture.completedFuture(RouteDecision.allow()))
+            .build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A", "B", "C", "D");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder()
-                            .name("atomic-routes")
-                            .steps(List.of(start, always, failed, allowed))
-                            .build(),
-                    callbacks,
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder()
+                    .name("atomic-routes")
+                    .steps(List.of(start, always, failed, allowed))
+                    .build(),
+                callbacks,
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("start -> failed"));
     assertTrue(result.getError().contains("route evaluation unavailable"));
     assertEquals(
-            List.of("A"), client.getSentMessages().stream().map(message -> message.agentName).toList());
+        List.of("A"), client.getSentMessages().stream().map(message -> message.agentName).toList());
   }
 
   @Test
@@ -596,99 +618,99 @@ class WorkflowExecutorTest {
   @Test
   void onRouteNullFutureFailsAfterInvokingEveryConditionalEdge() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(List.of(jump("first", "first condition"), jump("second", "second condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(List.of(jump("first", "first condition"), jump("second", "second condition")))
+            .build();
     WorkflowStep first =
-            WorkflowStep.builder().name("first").subtasks(List.of(task("B", "first"))).build();
+        WorkflowStep.builder().name("first").subtasks(List.of(task("B", "first"))).build();
     WorkflowStep second =
-            WorkflowStep.builder().name("second").subtasks(List.of(task("C", "second"))).build();
+        WorkflowStep.builder().name("second").subtasks(List.of(task("C", "second"))).build();
     List<String> evaluated = Collections.synchronizedList(new ArrayList<>());
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(
-                            request -> {
-                              evaluated.add(request.nextStep());
-                              return request.nextStep().equals("first")
-                                      ? null
-                                      : CompletableFuture.completedFuture(RouteDecision.allow());
-                            })
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(
+                request -> {
+                  evaluated.add(request.nextStep());
+                  return request.nextStep().equals("first")
+                      ? null
+                      : CompletableFuture.completedFuture(RouteDecision.allow());
+                })
+            .build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A", "B", "C");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder()
-                            .name("null-route-future")
-                            .steps(List.of(start, first, second))
-                            .build(),
-                    callbacks,
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder()
+                    .name("null-route-future")
+                    .steps(List.of(start, first, second))
+                    .build(),
+                callbacks,
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertEquals(List.of("first", "second"), evaluated);
     assertTrue(result.getError().contains("start -> first"));
     assertTrue(result.getError().contains("onRoute returned null future"));
     assertEquals(
-            result.getError().indexOf("onRoute failed for edge"),
-            result.getError().lastIndexOf("onRoute failed for edge"));
+        result.getError().indexOf("onRoute failed for edge"),
+        result.getError().lastIndexOf("onRoute failed for edge"));
     assertEquals(List.of("A"), client.getSentMessages().stream().map(m -> m.agentName).toList());
   }
 
   @Test
   void synchronousRouteExceptionFailsAfterInvokingEveryConditionalEdge() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(List.of(jump("first", "first condition"), jump("second", "second condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(List.of(jump("first", "first condition"), jump("second", "second condition")))
+            .build();
     WorkflowStep first =
-            WorkflowStep.builder().name("first").subtasks(List.of(task("B", "first"))).build();
+        WorkflowStep.builder().name("first").subtasks(List.of(task("B", "first"))).build();
     WorkflowStep second =
-            WorkflowStep.builder().name("second").subtasks(List.of(task("C", "second"))).build();
+        WorkflowStep.builder().name("second").subtasks(List.of(task("C", "second"))).build();
     List<String> evaluated = Collections.synchronizedList(new ArrayList<>());
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(
-                            request -> {
-                              evaluated.add(request.nextStep());
-                              if (request.nextStep().equals("first")) {
-                                throw new IllegalArgumentException("invalid routing data");
-                              }
-                              return CompletableFuture.completedFuture(RouteDecision.allow());
-                            })
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(
+                request -> {
+                  evaluated.add(request.nextStep());
+                  if (request.nextStep().equals("first")) {
+                    throw new IllegalArgumentException("invalid routing data");
+                  }
+                  return CompletableFuture.completedFuture(RouteDecision.allow());
+                })
+            .build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A", "B", "C");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder()
-                            .name("synchronous-route-failure")
-                            .steps(List.of(start, first, second))
-                            .build(),
-                    callbacks,
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder()
+                    .name("synchronous-route-failure")
+                    .steps(List.of(start, first, second))
+                    .build(),
+                callbacks,
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertEquals(List.of("first", "second"), evaluated);
@@ -700,39 +722,39 @@ class WorkflowExecutorTest {
   @Test
   void onRouteTimeoutIdentifiesTheConditionalEdge() throws Exception {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "start")))
-                    .next(List.of(jump("next", "slow condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "start")))
+            .next(List.of(jump("next", "slow condition")))
+            .build();
     WorkflowStep next =
-            WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
+        WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
     ControlPoint callbacks =
-            ControlPoint.builder()
-                    .onTask(
-                            request ->
-                                    CompletableFuture.completedFuture(
-                                            MessageContent.text(request.getInstruction())))
-                    .onRoute(request -> new CompletableFuture<>())
-                    .build();
+        ControlPoint.builder()
+            .onTask(
+                request ->
+                    CompletableFuture.completedFuture(
+                        MessageContent.text(request.getInstruction())))
+            .onRoute(request -> new CompletableFuture<>())
+            .build();
     StubWorkflowEngineClient client =
-            new StubWorkflowEngineClient("A", "B") {
-              @Override
-              public long callbackTimeoutSeconds() {
-                return 1;
-              }
-            };
+        new StubWorkflowEngineClient("A", "B") {
+          @Override
+          public long callbackTimeoutSeconds() {
+            return 1;
+          }
+        };
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder().name("route-timeout").steps(List.of(start, next)).build(),
-                    callbacks,
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .get(3, TimeUnit.SECONDS);
+        new WorkflowExecutor(
+                Workflow.builder().name("route-timeout").steps(List.of(start, next)).build(),
+                callbacks,
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .get(3, TimeUnit.SECONDS);
 
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("start -> next"));
@@ -940,25 +962,25 @@ class WorkflowExecutorTest {
   @Test
   void duplicateOutgoingTargetFailsBeforeExecution() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "run")))
-                    .next(List.of(jump("next", ""), jump("next", "condition")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "run")))
+            .next(List.of(jump("next", ""), jump("next", "condition")))
+            .build();
     WorkflowStep next =
-            WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
+        WorkflowStep.builder().name("next").subtasks(List.of(task("B", "next"))).build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A", "B");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder().name("duplicate-route").steps(List.of(start, next)).build(),
-                    autoCp(),
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder().name("duplicate-route").steps(List.of(start, next)).build(),
+                autoCp(),
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("duplicate outgoing target next"));
@@ -968,23 +990,23 @@ class WorkflowExecutorTest {
   @Test
   void nullOutgoingEdgeFailsBeforeExecution() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "run")))
-                    .next(Collections.singletonList(null))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "run")))
+            .next(Collections.singletonList(null))
+            .build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder().name("null-edge").steps(List.of(start)).build(),
-                    autoCp(),
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder().name("null-edge").steps(List.of(start)).build(),
+                autoCp(),
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("null outgoing edge"));
@@ -994,23 +1016,23 @@ class WorkflowExecutorTest {
   @Test
   void blankOutgoingTargetFailsBeforeExecution() {
     WorkflowStep start =
-            WorkflowStep.builder()
-                    .name("start")
-                    .subtasks(List.of(task("A", "run")))
-                    .next(List.of(jump("  ", "")))
-                    .build();
+        WorkflowStep.builder()
+            .name("start")
+            .subtasks(List.of(task("A", "run")))
+            .next(List.of(jump("  ", "")))
+            .build();
     StubWorkflowEngineClient client = new StubWorkflowEngineClient("A");
 
     ExecutionResult result =
-            new WorkflowExecutor(
-                    Workflow.builder().name("blank-target").steps(List.of(start)).build(),
-                    autoCp(),
-                    client,
-                    recordingCallback(),
-                    "",
-                    "zh")
-                    .run()
-                    .join();
+        new WorkflowExecutor(
+                Workflow.builder().name("blank-target").steps(List.of(start)).build(),
+                autoCp(),
+                client,
+                recordingCallback(),
+                "",
+                "zh")
+            .run()
+            .join();
 
     assertFalse(result.isSuccess());
     assertTrue(result.getError().contains("blank target"));
@@ -1101,9 +1123,9 @@ class WorkflowExecutorTest {
           @Override
           public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
             return CompletableFuture.completedFuture(
-                    routeRequest.nextStep().equals("right")
-                            ? RouteDecision.allow("test")
-                            : RouteDecision.deny("test"));
+                routeRequest.nextStep().equals("right")
+                    ? RouteDecision.allow("test")
+                    : RouteDecision.deny("test"));
           }
         };
     StubWorkflowEngineClient stub = new StubWorkflowEngineClient("A", "B", "C", "M");

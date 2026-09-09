@@ -19,8 +19,13 @@
 
 package dev.openan.workflow.engine.control;
 
-import dev.openan.workflow.engine.model.*;
-
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.NegotiationReply;
+import dev.openan.workflow.engine.model.NegotiationRequest;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.TaskResult;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -46,16 +51,14 @@ public interface ControlPoint {
         new IllegalStateException("onSelfTask handler is required for " + request.getStepName()));
   }
 
-  /**
-   * Evaluates one conditional edge. Unconditional edges bypass this callback and always run.
-   */
+  /** Evaluates one conditional edge. Unconditional edges bypass this callback and always run. */
   default CompletableFuture<RouteDecision> onRoute(RouteRequest request) {
     return CompletableFuture.failedFuture(
-            new IllegalStateException(
-                    "onRoute handler is required for edge "
-                            + request.stepName()
-                            + " -> "
-                            + request.nextStep()));
+        new IllegalStateException(
+            "onRoute handler is required for edge "
+                + request.stepName()
+                + " -> "
+                + request.nextStep()));
   }
 
   /** Answers the proposal. Missing handlers never implicitly consent. */

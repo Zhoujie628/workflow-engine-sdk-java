@@ -23,15 +23,39 @@ import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
-import dev.openan.workflow.engine.model.*;
+import dev.openan.workflow.engine.model.ExecutionResult;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.StepType;
+import dev.openan.workflow.engine.model.Task;
+import dev.openan.workflow.engine.model.TaskExecutionResult;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.TaskResult;
+import dev.openan.workflow.engine.model.TaskStatus;
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowInput;
+import dev.openan.workflow.engine.model.WorkflowStep;
 import dev.openan.workflow.engine.util.SensitiveDataRedactor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Main entry point. Traverses DAG, calls ControlPoint at decision points. Mirrors Python
@@ -232,19 +256,19 @@ public class WorkflowExecutor {
   }
 
   private static IllegalStateException routeEvaluationFailure(
-          WorkflowStep step, JumpCondition edge, Throwable error) {
+      WorkflowStep step, JumpCondition edge, Throwable error) {
     Throwable cause = unwrapCompletionException(error);
     if (cause instanceof RouteEvaluationException routeError) {
       return routeError;
     }
     return new RouteEvaluationException(
-            "onRoute failed for edge "
-                    + step.getName()
-                    + " -> "
-                    + edge.getStep()
-                    + ": "
-                    + failureMessage(cause),
-            cause);
+        "onRoute failed for edge "
+            + step.getName()
+            + " -> "
+            + edge.getStep()
+            + ": "
+            + failureMessage(cause),
+        cause);
   }
 
   private static String failureMessage(Throwable error) {
@@ -543,16 +567,16 @@ public class WorkflowExecutor {
                 v -> {
                   emit(EventType.WORKFLOW_COMPLETE, Map.of("success", !failed.get()));
                   log.info(
-                          "[Executor] WORKFLOW_FINISHED executionId={}, workflow={}, success={},"
-                                  + " tasks={}",
+                      "[Executor] WORKFLOW_FINISHED executionId={}, workflow={}, success={},"
+                          + " tasks={}",
                       executionId,
                       workflow.getName(),
                       !failed.get(),
                       executionHistory.size());
                   if (failed.get()) {
                     log.warn(
-                            "[Executor] WORKFLOW_STOPPED executionId={}, reason=step_failed,"
-                                    + " skippedSteps={}",
+                        "[Executor] WORKFLOW_STOPPED executionId={}, reason=step_failed,"
+                            + " skippedSteps={}",
                         executionId,
                         java.util.stream.IntStream.range(0, workflow.getSteps().size())
                             .filter(index -> !executed.contains(index))
@@ -576,7 +600,7 @@ public class WorkflowExecutor {
                       .success(false)
                       .history(new ArrayList<>(executionHistory))
                       .stepOutputs(new HashMap<>(stepOutputs))
-                          .error(message)
+                      .error(message)
                       .build();
                 });
     execution.whenComplete(
@@ -654,8 +678,8 @@ public class WorkflowExecutor {
     log.info("[Executor] Task {} -> {}: {}", task.getDescription(), task.getAgent(), status);
     if (!response.isSuccess()) {
       log.warn(
-              "[Executor] TASK_FAILED executionId={}, step={}, taskId={}, agent={}, errorCode={},"
-                      + " reason={}",
+          "[Executor] TASK_FAILED executionId={}, step={}, taskId={}, agent={}, errorCode={},"
+              + " reason={}",
           executionId,
           step.getName(),
           taskId(step.getName(), subtaskIndex),
@@ -744,7 +768,7 @@ public class WorkflowExecutor {
       }
       if (isTerminalRoute(name)) {
         throw new IllegalArgumentException(
-                "Workflow step name is reserved for a terminal route: " + name);
+            "Workflow step name is reserved for a terminal route: " + name);
       }
       if (indices.put(name, i) != null) {
         throw new IllegalArgumentException("Duplicate workflow step name: " + name);
@@ -759,22 +783,22 @@ public class WorkflowExecutor {
       for (JumpCondition jump : step.getNext()) {
         if (jump == null) {
           throw new IllegalArgumentException(
-                  "Step " + step.getName() + " contains a null outgoing edge");
+              "Step " + step.getName() + " contains a null outgoing edge");
         }
         String nextStep = jump.getStep();
         if (nextStep == null || nextStep.isBlank()) {
           throw new IllegalArgumentException(
-                  "Step " + step.getName() + " contains an outgoing edge with a blank target");
+              "Step " + step.getName() + " contains an outgoing edge with a blank target");
         }
         if (!targets.add(nextStep)) {
           throw new IllegalArgumentException(
-                  "Step " + step.getName() + " contains duplicate outgoing target " + nextStep);
+              "Step " + step.getName() + " contains duplicate outgoing target " + nextStep);
         }
         if (isTerminalRoute(nextStep)) continue;
         Integer target = indices.get(nextStep);
         if (target == null) {
           throw new IllegalArgumentException(
-                  "Step " + step.getName() + " references missing step " + nextStep);
+              "Step " + step.getName() + " references missing step " + nextStep);
         }
         graph.get(i).add(target);
       }
@@ -784,22 +808,22 @@ public class WorkflowExecutor {
       if (contextFrom == null || contextFrom.isEmpty()) continue;
       if (contextFrom.contains("*") && contextFrom.size() != 1) {
         throw new IllegalArgumentException(
-                "Step " + step.getName() + " cannot combine '*' with named context sources");
+            "Step " + step.getName() + " cannot combine '*' with named context sources");
       }
       if (contextFrom.contains("*")) continue;
       Set<String> ancestors = Set.copyOf(contextBuilder.getAllPredecessors(step.getName()));
       for (String source : contextFrom) {
         if (!indices.containsKey(source)) {
           throw new IllegalArgumentException(
-                  "Step " + step.getName() + " references missing context source " + source);
+              "Step " + step.getName() + " references missing context source " + source);
         }
         if (!ancestors.contains(source)) {
           throw new IllegalArgumentException(
-                  "Step "
-                          + step.getName()
-                          + " context source "
-                          + source
-                          + " is not an upstream dependency");
+              "Step "
+                  + step.getName()
+                  + " context source "
+                  + source
+                  + " is not an upstream dependency");
         }
       }
     }
@@ -814,34 +838,34 @@ public class WorkflowExecutor {
     var workflowInput = contextBuilder.buildWorkflowInput(step, stepExecutionResults);
     var currentResults = stepExecutionResults.getOrDefault(step.getName(), List.of());
     List<RouteEvaluation> evaluations =
-            step.getNext().stream()
-                    .map(edge -> evaluateRoute(step, edge, workflowInput, currentResults))
-                    .toList();
+        step.getNext().stream()
+            .map(edge -> evaluateRoute(step, edge, workflowInput, currentResults))
+            .toList();
     CompletableFuture<Void> completed =
-            CompletableFuture.allOf(
-                    evaluations.stream().map(RouteEvaluation::decision).toArray(CompletableFuture[]::new));
+        CompletableFuture.allOf(
+            evaluations.stream().map(RouteEvaluation::decision).toArray(CompletableFuture[]::new));
     return completed.thenApply(ignored -> collectAllowedTargets(step, evaluations));
   }
 
   private RouteEvaluation evaluateRoute(
-          WorkflowStep step,
-          JumpCondition edge,
-          WorkflowInput workflowInput,
-          List<TaskExecutionResult> currentResults) {
+      WorkflowStep step,
+      JumpCondition edge,
+      WorkflowInput workflowInput,
+      List<TaskExecutionResult> currentResults) {
     if (isUnconditional(edge)) {
       return new RouteEvaluation(
-              edge,
-              false,
-              CompletableFuture.completedFuture(RouteDecision.allow("unconditional edge")));
+          edge,
+          false,
+          CompletableFuture.completedFuture(RouteDecision.allow("unconditional edge")));
     }
     var request =
-            new RouteRequest(
+        new RouteRequest(
             executionId,
             step.getName(),
-                    edge.getStep(),
-                    edge.getCondition(),
-                    workflowInput,
-                    currentResults);
+            edge.getStep(),
+            edge.getCondition(),
+            workflowInput,
+            currentResults);
     CompletableFuture<RouteDecision> decision;
     try {
       decision = controlPoint.onRoute(request);
@@ -850,33 +874,33 @@ public class WorkflowExecutor {
     }
     if (decision == null) {
       decision =
-              CompletableFuture.failedFuture(
-                      routeEvaluationFailure(
-                              step, edge, new NullPointerException("onRoute returned null future")));
+          CompletableFuture.failedFuture(
+              routeEvaluationFailure(
+                  step, edge, new NullPointerException("onRoute returned null future")));
     }
     return new RouteEvaluation(
-            edge,
-            true,
-            decision
-                    .orTimeout(engineClient.callbackTimeoutSeconds(), TimeUnit.SECONDS)
-                    .handle(
-                            (value, error) -> {
-                              if (error != null) {
-                                throw new CompletionException(routeEvaluationFailure(step, edge, error));
-                              }
-                              if (value == null) {
-                                throw new CompletionException(
-                                        routeEvaluationFailure(
-                                                step,
-                                                edge,
-                                                new NullPointerException("onRoute returned null decision")));
-                              }
-                              return value;
-                            }));
+        edge,
+        true,
+        decision
+            .orTimeout(engineClient.callbackTimeoutSeconds(), TimeUnit.SECONDS)
+            .handle(
+                (value, error) -> {
+                  if (error != null) {
+                    throw new CompletionException(routeEvaluationFailure(step, edge, error));
+                  }
+                  if (value == null) {
+                    throw new CompletionException(
+                        routeEvaluationFailure(
+                            step,
+                            edge,
+                            new NullPointerException("onRoute returned null decision")));
+                  }
+                  return value;
+                }));
   }
 
   private List<Integer> collectAllowedTargets(
-          WorkflowStep step, List<RouteEvaluation> evaluations) {
+      WorkflowStep step, List<RouteEvaluation> evaluations) {
     List<Integer> indices = new ArrayList<>();
     for (RouteEvaluation evaluation : evaluations) {
       var decision = evaluation.decision().join();
@@ -885,7 +909,7 @@ public class WorkflowExecutor {
       Integer index = contextBuilder.findStepIndex(evaluation.edge().getStep());
       if (index == null) {
         throw new IllegalStateException(
-                "Route target does not exist: " + evaluation.edge().getStep());
+            "Route target does not exist: " + evaluation.edge().getStep());
       }
       indices.add(index);
     }
@@ -893,24 +917,24 @@ public class WorkflowExecutor {
   }
 
   private void emitRouteDecision(
-          WorkflowStep step, RouteEvaluation evaluation, RouteDecision decision) {
+      WorkflowStep step, RouteEvaluation evaluation, RouteDecision decision) {
     String condition =
-            evaluation.edge().getCondition() == null ? "" : evaluation.edge().getCondition();
+        evaluation.edge().getCondition() == null ? "" : evaluation.edge().getCondition();
     log.info(
-            "Route edge '{} -> {}': allowed={} ({})",
-            step.getName(),
-            evaluation.edge().getStep(),
-            decision.allowed(),
-            decision.reason());
+        "Route edge '{} -> {}': allowed={} ({})",
+        step.getName(),
+        evaluation.edge().getStep(),
+        decision.allowed(),
+        decision.reason());
     emit(
-            EventType.ROUTE_DECISION,
-            Map.of(
-                    "step", step.getName(),
-                    "next", evaluation.edge().getStep(),
-                    "condition", condition,
-                    "conditional", evaluation.conditional(),
-                    "allowed", decision.allowed(),
-                    "reason", decision.reason()));
+        EventType.ROUTE_DECISION,
+        Map.of(
+            "step", step.getName(),
+            "next", evaluation.edge().getStep(),
+            "condition", condition,
+            "conditional", evaluation.conditional(),
+            "allowed", decision.allowed(),
+            "reason", decision.reason()));
   }
 
   private static final class RouteEvaluationException extends IllegalStateException {
@@ -920,8 +944,7 @@ public class WorkflowExecutor {
   }
 
   private record RouteEvaluation(
-          JumpCondition edge, boolean conditional, CompletableFuture<RouteDecision> decision) {
-  }
+      JumpCondition edge, boolean conditional, CompletableFuture<RouteDecision> decision) {}
 
   private record StepResult(
       String taskDesc,
