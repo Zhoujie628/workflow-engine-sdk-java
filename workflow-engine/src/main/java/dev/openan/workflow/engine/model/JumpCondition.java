@@ -25,9 +25,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * One outgoing edge of a {@link WorkflowStep}: the next step name and a descriptive condition
- * label offered to routing callbacks. Targets {@code end}, {@code retry}, and {@code endNode}
- * are terminal routes, not step names.
+ * One outgoing edge of a {@link WorkflowStep}. A null, empty, or whitespace-only condition makes
+ * the edge unconditional; otherwise the engine offers this single edge to the routing callback.
+ * Targets {@code end}, {@code retry}, and {@code endNode} are terminal routes, not step names.
  */
 @Data
 @NoArgsConstructor

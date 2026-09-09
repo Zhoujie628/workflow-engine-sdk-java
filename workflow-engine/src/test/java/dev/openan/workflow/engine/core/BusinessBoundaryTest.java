@@ -19,14 +19,19 @@
 
 package dev.openan.workflow.engine.core;
 
-import static org.junit.jupiter.api.Assertions.*;
-
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.control.*;
+import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.model.*;
-import java.util.*;
-import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 class BusinessBoundaryTest {
   private WorkflowStep step(String name, String next, List<String> context) {
@@ -87,7 +92,7 @@ class BusinessBoundaryTest {
               .onRoute(
                   q -> {
                     seen.add(q);
-                    return CompletableFuture.completedFuture(new RouteDecision("endNode", "done"));
+                    return CompletableFuture.completedFuture(RouteDecision.allow("done"));
                   })
               .build();
       assertTrue(

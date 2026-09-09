@@ -19,11 +19,12 @@
 
 package dev.openan.workflow.engine.model;
 
-import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.util.List;
 
 /**
  * One node of a {@link Workflow}: the subtasks to dispatch, the outgoing jumps, and the upstream
@@ -34,14 +35,23 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class WorkflowStep {
-  /** Unique step name; the terminal routes {@code end}, {@code retry}, {@code endNode} are reserved. */
+  /**
+   * Unique step name; the terminal routes {@code end}, {@code retry}, {@code endNode} are reserved.
+   */
   private String name;
+
   /** Subtasks dispatched in parallel; completion policy is governed by {@code stepType}. */
   @Builder.Default private List<Task> subtasks = List.of();
-  /** Outgoing edges, evaluated after the step completes. */
+
+  /**
+   * Outgoing edges, evaluated after the step completes. Unconditional edges all run; each
+   * conditional edge is independently allowed or denied by the host.
+   */
   @Builder.Default private List<JumpCondition> next = List.of();
+
   /** Layout hint retained for PSOP compatibility; not used by scheduling. */
   @Builder.Default private int layer = 0;
+
   /**
    * Selects which ancestor results the callbacks for this step receive. {@code null} selects the
    * direct predecessors, an empty list selects none, {@code "*"} selects all ancestors, and named
@@ -49,10 +59,11 @@ public class WorkflowStep {
    * non-ancestor, fails validation before execution starts.
    */
   private List<String> contextFrom;
+
   /**
    * Completion policy: {@code ALL_SUCCESS} advances only after every subtask succeeds, {@code
-   * ANY_SUCCESS} advances on the first success and cancels the rest, {@code SELF_LOOP} runs
-   * locally through {@code onSelfTask} with no agent network calls.
+   * ANY_SUCCESS} advances on the first success and cancels the rest, {@code SELF_LOOP} runs locally
+   * through {@code onSelfTask} with no agent network calls.
    */
   @Builder.Default private StepType stepType = StepType.ALL_SUCCESS;
 }

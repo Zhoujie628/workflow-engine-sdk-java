@@ -25,25 +25,20 @@ import dev.openan.workflow.engine.control.DefaultControlPoint;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.util.LlmHelper;
-import dev.openan.workflow.engine.model.MessageContent;
-import dev.openan.workflow.engine.model.NegotiationReply;
-import dev.openan.workflow.engine.model.NegotiationRequest;
-import dev.openan.workflow.engine.model.RouteDecision;
-import dev.openan.workflow.engine.model.RouteRequest;
-import dev.openan.workflow.engine.model.TaskRequest;
-import dev.openan.workflow.engine.model.TaskResult;
+import dev.openan.workflow.engine.model.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * ControlPoint for the SPN cross-city diagnosis workflow.
  *
- * <p>Handles task dispatch (with city-specific message enrichment), route decisions (fault-based
- * routing to recovery steps), and negotiation responses. Authorization-T and Notification-T are
- * initiated independently of the workflow, not handled here.
+ * <p>Handles task content, local aggregation, and negotiation responses. The sample workflow uses
+ * only unconditional edges, so it does not define a conditional routing policy. Authorization-T and
+ * Notification-T are initiated independently of the workflow, not handled here.
  *
  * <p>SRP: this class only contains workflow decision logic, separating it from the agent executor
  * that handles message I/O.
@@ -127,7 +122,8 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                                 .get(dev.openan.workflow.engine.client.A2ATExtension.TASK_T.uri())
                                 .toString()));
                     log.info(
-                        "[onTask] DEMO_NEGOTIATION agent={}, fault=missing-port, source=explicit-sample-switch",
+                            "[onTask] DEMO_NEGOTIATION agent={}, fault=missing-port,"
+                                    + " source=explicit-sample-switch",
                         request.getAgentName());
                     return new MessageContent(content.parts(), metadata, content.extensions());
                   }
@@ -161,10 +157,8 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
 
   @Override
   public CompletableFuture<RouteDecision> onRoute(RouteRequest request) {
-    // merge_analysis has an unconditional next -> endNode, so the executor
-    // never calls onRoute for it. Recovery is self-triggered by SPN agents
-    // via the active Authorization-T whitelist and reported through
-    // the Notification-T channel. Just delegate to the default routing.
+    // The sample PSOP has only unconditional edges, which bypass this callback. Fail fast if an
+    // orchestration center supplies a conditional edge without a matching host business policy.
     return super.onRoute(request);
   }
 

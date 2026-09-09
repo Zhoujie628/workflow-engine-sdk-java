@@ -19,21 +19,43 @@
 
 package dev.openan.workflow.engine.model;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 /**
- * Chosen next step returned by an {@code onRoute} callback. {@code nextStep} must be one of the
- * candidates offered by {@link RouteRequest}; any other value fails the workflow instead of
- * being silently ignored.
+ * Business decision for one conditional outgoing edge. A denied edge is skipped; an allowed edge is
+ * activated together with every unconditional edge and every other allowed conditional edge.
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
-public class RouteDecision {
-  private String nextStep;
-  @Builder.Default private String reason = "";
+public record RouteDecision(boolean allowed, String reason) {
+  /**
+   * Creates a decision and normalizes a null reason to an empty string.
+   */
+  public RouteDecision {
+    reason = reason == null ? "" : reason;
+  }
+
+  /**
+   * Allows the edge without an explanatory reason.
+   */
+  public static RouteDecision allow() {
+    return new RouteDecision(true, "");
+  }
+
+  /**
+   * Allows the edge and records the business reason for observability.
+   */
+  public static RouteDecision allow(String reason) {
+    return new RouteDecision(true, reason);
+  }
+
+  /**
+   * Denies the edge without an explanatory reason.
+   */
+  public static RouteDecision deny() {
+    return new RouteDecision(false, "");
+  }
+
+  /**
+   * Denies the edge and records the business reason for observability.
+   */
+  public static RouteDecision deny(String reason) {
+    return new RouteDecision(false, reason);
+  }
 }
