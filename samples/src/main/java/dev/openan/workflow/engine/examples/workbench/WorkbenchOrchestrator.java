@@ -19,21 +19,31 @@
 
 package dev.openan.workflow.engine.examples.workbench;
 
-import dev.openan.workflow.engine.client.*;
+import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
+import dev.openan.workflow.engine.client.A2ATransport;
+import dev.openan.workflow.engine.client.AuthProvider;
+import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
+import dev.openan.workflow.engine.client.WorkflowEngineClient;
+import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
-import dev.openan.workflow.engine.model.*;
+import dev.openan.workflow.engine.model.ExecutionResult;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.StepType;
+import dev.openan.workflow.engine.model.Task;
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowSearchResult;
+import dev.openan.workflow.engine.model.WorkflowStep;
 import dev.openan.workflow.engine.registry.LoadPsop;
 import dev.openan.workflow.engine.runner.ExecutePsop;
-import org.a2aproject.sdk.spec.AgentCard;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import org.a2aproject.sdk.spec.AgentCard;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Workflow orchestration for the SPN cross-city diagnosis.
@@ -153,11 +163,11 @@ public class WorkbenchOrchestrator {
     }
     return output.values().stream()
         .filter(value -> value != null && !String.valueOf(value).isBlank())
-            .flatMap(
-                    value ->
-                            value instanceof List<?> values
-                                    ? values.stream()
-                                    : java.util.stream.Stream.of(value))
+        .flatMap(
+            value ->
+                value instanceof List<?> values
+                    ? values.stream()
+                    : java.util.stream.Stream.of(value))
         .map(WorkbenchOrchestrator::renderOutput)
         .collect(java.util.stream.Collectors.joining("\n\n"));
   }
@@ -174,17 +184,17 @@ public class WorkbenchOrchestrator {
   static String buildResultText(ExecutionResult result, Workflow workflow) {
     if (result.isSuccess() && result.getStepOutputs() != null) {
       String terminalOutputs =
-              workflow.getSteps().stream()
-                      .filter(step -> result.getStepOutputs().containsKey(step.getName()))
-                      .filter(
-                              step ->
-                                      step.getNext() == null
-                                              || step.getNext().stream()
-                                              .noneMatch(
-                                                      next -> result.getStepOutputs().containsKey(next.getStep())))
-                      .map(step -> outputText(result.getStepOutputs().get(step.getName())))
-                      .filter(output -> !output.isBlank())
-                      .collect(java.util.stream.Collectors.joining("\n\n"));
+          workflow.getSteps().stream()
+              .filter(step -> result.getStepOutputs().containsKey(step.getName()))
+              .filter(
+                  step ->
+                      step.getNext() == null
+                          || step.getNext().stream()
+                              .noneMatch(
+                                  next -> result.getStepOutputs().containsKey(next.getStep())))
+              .map(step -> outputText(result.getStepOutputs().get(step.getName())))
+              .filter(output -> !output.isBlank())
+              .collect(java.util.stream.Collectors.joining("\n\n"));
       if (!terminalOutputs.isBlank()) return terminalOutputs;
     }
     return buildResultText(result);
@@ -403,8 +413,8 @@ public class WorkbenchOrchestrator {
           case EventType.TASK_REQUEST -> log.info("  [TASK_REQUEST] agent={}", data.get("agent"));
           case EventType.TASK_RESPONSE ->
               log.info(
-                      "  [TASK_RESPONSE] contextId={}, executionId={}, step={}, taskId={}, agent={},"
-                              + " success={}, errorCode={}",
+                  "  [TASK_RESPONSE] contextId={}, executionId={}, step={}, taskId={}, agent={},"
+                      + " success={}, errorCode={}",
                   contextId,
                   data.get("executionId"),
                   data.get("step"),
@@ -429,7 +439,8 @@ public class WorkbenchOrchestrator {
                   data.get("agent"),
                   data.get("text") != null ? ((String) data.get("text")).length() : 0);
           case EventType.STEP_COMPLETE -> log.info("  [STEP_COMPLETE] {}", data.get("step"));
-          case EventType.ROUTE_DECISION -> log.info(
+          case EventType.ROUTE_DECISION ->
+              log.info(
                   "  [ROUTE] {} -> {}, conditional={}, allowed={}, reason={}",
                   data.get("step"),
                   data.get("next"),

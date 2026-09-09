@@ -19,13 +19,24 @@
 
 package dev.openan.workflow.engine.runner;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
-import dev.openan.workflow.engine.model.*;
-import org.junit.jupiter.api.Test;
-
+import dev.openan.workflow.engine.model.ExecutionResult;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.Task;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowStep;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -35,8 +46,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests for ExecutePsop: end-to-end event flow, lifecycle, on_finish, on_event transformer, START
@@ -51,33 +61,33 @@ class ExecutePsopTest {
     var finished = new java.util.concurrent.CountDownLatch(1);
     var closes = new AtomicInteger();
     var stub = new StubWorkflowEngineClient("A", "B");
-      var execution =
-              ExecutePsop.builder()
-                      .psop(linearWorkflow())
-                      .engineClient(stub)
-                      .controlPoint(
-                              ControlPoint.builder()
-                                      .onTask(
-                                              request -> {
-                                                  entered.countDown();
-                                                  return prepared;
-                                              })
-                                      .build())
-                      .eventCallback(
-                              new EventCallback() {
-                                  @Override
-                                  public void onEvent(String type, Map<String, Object> data) {
-                                      if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
-                                  }
-                              })
-                      .onFinish(
-                              (result, events) -> {
-                                  assertFalse(result.isSuccess());
-                                  assertEquals("Workflow execution cancelled", result.getError());
-                                  finished.countDown();
-                                  return CompletableFuture.completedFuture(null);
-                              })
-                      .execute();
+    var execution =
+        ExecutePsop.builder()
+            .psop(linearWorkflow())
+            .engineClient(stub)
+            .controlPoint(
+                ControlPoint.builder()
+                    .onTask(
+                        request -> {
+                          entered.countDown();
+                          return prepared;
+                        })
+                    .build())
+            .eventCallback(
+                new EventCallback() {
+                  @Override
+                  public void onEvent(String type, Map<String, Object> data) {
+                    if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
+                  }
+                })
+            .onFinish(
+                (result, events) -> {
+                  assertFalse(result.isSuccess());
+                  assertEquals("Workflow execution cancelled", result.getError());
+                  finished.countDown();
+                  return CompletableFuture.completedFuture(null);
+                })
+            .execute();
     assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS));
     assertTrue(execution.cancel(true));
     prepared.complete(MessageContent.text("must not send"));
@@ -91,20 +101,20 @@ class ExecutePsopTest {
   void cancellationWhileOnFinishIsPendingStillClosesExactlyOnce() {
     var finish = new CompletableFuture<Void>();
     var closes = new AtomicInteger();
-      var execution =
-              ExecutePsop.builder()
-                      .psop(linearWorkflow())
-                      .engineClient(new StubWorkflowEngineClient("A", "B"))
-                      .controlPoint(autoCp())
-                      .eventCallback(
-                              new EventCallback() {
-                                  @Override
-                                  public void onEvent(String type, Map<String, Object> data) {
-                                      if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
-                                  }
-                              })
-                      .onFinish((result, events) -> finish)
-                      .execute();
+    var execution =
+        ExecutePsop.builder()
+            .psop(linearWorkflow())
+            .engineClient(new StubWorkflowEngineClient("A", "B"))
+            .controlPoint(autoCp())
+            .eventCallback(
+                new EventCallback() {
+                  @Override
+                  public void onEvent(String type, Map<String, Object> data) {
+                    if (EventType.CLOSE.equals(type)) closes.incrementAndGet();
+                  }
+                })
+            .onFinish((result, events) -> finish)
+            .execute();
     assertTrue(execution.cancel(true));
     assertEquals(1, closes.get());
     finish.complete(null);
@@ -114,22 +124,22 @@ class ExecutePsopTest {
   @Test
   void cancelledRunnerClosesItsOwnedRuntime() {
     var closes = new AtomicInteger();
-      var runtime =
-              (dev.openan.workflow.engine.client.A2AJavaClientRuntime)
-                      java.lang.reflect.Proxy.newProxyInstance(
-                              getClass().getClassLoader(),
-                              new Class<?>[]{dev.openan.workflow.engine.client.A2AJavaClientRuntime.class},
-                              (proxy, method, args) -> {
-                                  if (method.getName().equals("close")) closes.incrementAndGet();
-                                  return null;
-                              });
-      var execution =
-              ExecutePsop.builder()
-                      .psop(linearWorkflow())
-                      .a2aClientRuntime(runtime)
-                      .controlPoint(
-                              ControlPoint.builder().onTask(request -> new CompletableFuture<>()).build())
-                      .execute();
+    var runtime =
+        (dev.openan.workflow.engine.client.A2AJavaClientRuntime)
+            java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {dev.openan.workflow.engine.client.A2AJavaClientRuntime.class},
+                (proxy, method, args) -> {
+                  if (method.getName().equals("close")) closes.incrementAndGet();
+                  return null;
+                });
+    var execution =
+        ExecutePsop.builder()
+            .psop(linearWorkflow())
+            .a2aClientRuntime(runtime)
+            .controlPoint(
+                ControlPoint.builder().onTask(request -> new CompletableFuture<>()).build())
+            .execute();
     assertTrue(execution.cancel(true));
     assertEquals(1, closes.get());
   }
@@ -147,7 +157,7 @@ class ExecutePsopTest {
 
       @Override
       public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
-          return CompletableFuture.completedFuture(RouteDecision.allow("test"));
+        return CompletableFuture.completedFuture(RouteDecision.allow("test"));
       }
     };
   }
@@ -411,7 +421,7 @@ class ExecutePsopTest {
 
           @Override
           public CompletableFuture<RouteDecision> onRoute(RouteRequest routeRequest) {
-              return CompletableFuture.completedFuture(RouteDecision.allow());
+            return CompletableFuture.completedFuture(RouteDecision.allow());
           }
         };
     List<String> events = Collections.synchronizedList(new ArrayList<>());

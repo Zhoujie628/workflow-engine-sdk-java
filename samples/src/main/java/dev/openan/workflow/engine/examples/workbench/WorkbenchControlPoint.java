@@ -25,13 +25,18 @@ import dev.openan.workflow.engine.control.DefaultControlPoint;
 import dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.util.LlmHelper;
-import dev.openan.workflow.engine.model.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import dev.openan.workflow.engine.model.MessageContent;
+import dev.openan.workflow.engine.model.NegotiationReply;
+import dev.openan.workflow.engine.model.NegotiationRequest;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.TaskResult;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ControlPoint for the SPN cross-city diagnosis workflow.
@@ -122,8 +127,8 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                                 .get(dev.openan.workflow.engine.client.A2ATExtension.TASK_T.uri())
                                 .toString()));
                     log.info(
-                            "[onTask] DEMO_NEGOTIATION agent={}, fault=missing-port,"
-                                    + " source=explicit-sample-switch",
+                        "[onTask] DEMO_NEGOTIATION agent={}, fault=missing-port,"
+                            + " source=explicit-sample-switch",
                         request.getAgentName());
                     return new MessageContent(content.parts(), metadata, content.extensions());
                   }
