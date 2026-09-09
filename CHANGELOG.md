@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.5] — 2026-09-09
+
 ### Breaking: per-edge conditional routing
 
 - `onRoute` now evaluates one conditional edge at a time: `RouteRequest` describes a single edge (step, condition,
