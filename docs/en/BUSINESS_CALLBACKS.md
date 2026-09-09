@@ -154,6 +154,53 @@ The engine waits for every route decision before dispatching any successor; a mi
 decision fails the workflow and cannot cause partial successor dispatch. Route failure messages identify the source and
 target edge while preserving the original cause.
 
+### 6.1 Declaring conditional edges (workflow side)
+
+Each `next` entry is a `JumpCondition(step, condition)`; an empty condition makes the edge unconditional:
+
+```java
+WorkflowStep diagnosis = WorkflowStep.builder()
+    .name("diagnosis")
+    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
+    .next(List.of(
+        new JumpCondition("notify", ""),                       // unconditional: always active, never reaches onRoute
+        new JumpCondition("hardware_recovery", "fault.hardware"),
+        new JumpCondition("escalate", "fault.unresolved")))
+    .build();
+```
+
+### 6.2 Implementing the per-edge decision (host side)
+
+onRoute receives one conditional edge per call and reads this step's fresh results from `currentResults()`:
+
+```java
+.onRoute(request -> {
+    // Different edges may call back concurrently: read only the request, share no mutable state
+    String diagnosis = request.currentResults().stream()
+        .flatMap(r -> r.outputs().stream().map(String::valueOf))
+        .findFirst()
+        .orElse("");
+    boolean hardwareFault = diagnosis.contains("hardware fault");
+
+    return switch (request.condition()) {
+      case "fault.hardware" -> CompletableFuture.completedFuture(
+          hardwareFault
+              ? RouteDecision.allow("hardware fault confirmed")
+              : RouteDecision.deny("no hardware fault in: " + diagnosis));
+      case "fault.unresolved" -> CompletableFuture.completedFuture(
+          diagnosis.isBlank()
+              ? RouteDecision.allow("diagnosis inconclusive")
+              : RouteDecision.deny("diagnosis conclusive: " + diagnosis));
+      default -> CompletableFuture.completedFuture(
+          RouteDecision.deny("unknown condition: " + request.condition()));
+    };
+})
+```
+
+In this example the unconditional `notify` edge always activates; the two conditional edges are judged independently
+and may fan out together with it. Replace the business check with real parsing of `currentResults()` outputs (structured
+output comes as JSON in outputs; natural-language output calls for text matching or the host's own judgement).
+
 Callbacks for different conditional edges may run concurrently; do not hold shared mutable current-task state. Each
 workflow task activation
 (preparation and dispatch combined) is bounded by the client timeout (default sendTimeoutSeconds=600). Routing has a

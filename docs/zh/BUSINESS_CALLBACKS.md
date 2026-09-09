@@ -132,6 +132,52 @@ RouteDecision.allow (reason) 激活该边，或返回 RouteDecision.deny (reason
 引擎等待全部路由判断完成后才下发任何后继节点；回调缺失、返回 null、异常或超时都会使工作流失败，不会发生部分后继任务已下发。
 路由失败信息会标明源节点和目标节点，并保留原始异常原因。
 
+### 6.1 声明条件边（工作流侧）
+
+`next` 里每项是一条 `JumpCondition(step, condition)`；condition 留空即为无条件边：
+
+```java
+WorkflowStep diagnosis = WorkflowStep.builder()
+    .name("diagnosis")
+    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
+    .next(List.of(
+        new JumpCondition("notify", ""),                       // 无条件：始终激活，不经 onRoute
+        new JumpCondition("hardware_recovery", "fault.hardware"),
+        new JumpCondition("escalate", "fault.unresolved")))
+    .build();
+```
+
+### 6.2 实现逐边判断（宿主侧）
+
+onRoute 每次收到一条条件边，从 `currentResults()` 读取本步骤刚产生的结果，按业务规则放行或拒绝：
+
+```java
+.onRoute(request -> {
+    // 不同条件边可能并发回调：只读 request，不共享可变状态
+    String diagnosis = request.currentResults().stream()
+        .flatMap(r -> r.outputs().stream().map(String::valueOf))
+        .findFirst()
+        .orElse("");
+    boolean hardwareFault = diagnosis.contains("hardware fault");
+
+    return switch (request.condition()) {
+        case "fault.hardware" -> CompletableFuture.completedFuture(
+            hardwareFault
+                ? RouteDecision.allow("hardware fault confirmed")
+                : RouteDecision.deny("no hardware fault in: " + diagnosis));
+        case "fault.unresolved" -> CompletableFuture.completedFuture(
+            diagnosis.isBlank()
+                ? RouteDecision.allow("diagnosis inconclusive")
+                : RouteDecision.deny("diagnosis conclusive: " + diagnosis));
+        default -> CompletableFuture.completedFuture(
+            RouteDecision.deny("unknown condition: " + request.condition()));
+    };
+})
+```
+
+上面的示例中：`notify` 无条件边总是激活；两条条件边独立判断后可与它同时扇出。业务判断应替换为对
+`currentResults()` 输出的真实解析（结构化输出用 outputs 里的 JSON，自然语言输出用文本包含或宿主自己的判定逻辑）。
+
 不同条件边的回调可能并发，不要共享可变的“当前任务”状态。每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
 sendTimeoutSeconds=600； 路由单独限制回调等待时间，dispatch／协商另有总等待截止时间。取消／超时后晚到结果不发送，
 但不等于自动取消宿主正在运行的 LLM 或业务操作，宿主负责清理其资源。 同步回调入口应迅速返回，阻塞任务应交给异步执行器。
