@@ -30,9 +30,8 @@ A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T
 
 完整可运行源码：[HostQuickStart.java](../../samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java)。
 该源码参与编译，远端任务→本地汇总流程由 HostQuickStartTest 验证。
-可复制到集成方工程，或在 IDEA 的 samples 模块运行，传入注册中心 URL、目标 AgentCard 名称、凭证路径。
-下列片段解释同一套 API；AgentCard 加载方式二选一，Task-T 内容生成需要由业务实现。
-非空业务条件必须实现 onRoute 策略；这里使用无条件边，不依赖默认选路。
+可复制到集成方工程，或在 IDEA 的 samples 模块运行，传入注册中心 URL、目标 AgentCard 名称、凭证路径。 下列片段解释同一套
+API；AgentCard 加载方式二选一，Task-T 内容生成需要由业务实现。 每条非空业务条件都需要 onRoute 独立判断；这里使用无条件边，不依赖默认选路。
 
 ### 4.1 定义工作流
 
@@ -109,8 +108,9 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
-选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
+对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
+不回显成功、不默认放行条件边、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ```java
@@ -120,8 +120,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onRoute(request -> CompletableFuture.completedFuture(
+        RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();

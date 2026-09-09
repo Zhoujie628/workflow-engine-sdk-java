@@ -16,8 +16,9 @@ interface ControlPoint {
 ```
 
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
-onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
-Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
+returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
+echo-success, implicit route approval or automatic consent.
 See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ```java
@@ -27,8 +28,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onRoute(request -> CompletableFuture.completedFuture(
+        RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();
@@ -145,11 +146,16 @@ SDK-specific content exception classes.
 
 ## 6. Routing, concurrency and failures
 
-RouteRequest(executionId, stepName, workflowInput, currentResults, candidates). Candidates are RouteOption(nextStep,
-condition); return RouteDecision.builder().nextStep(allowed).build(). Unconditional edges fan out without calling
-onRoute; conditional selection must be an allowed destination.
+RouteRequest (executionId, stepName, nextStep, condition, workflowInput, currentResults) describes one conditional edge.
+Return RouteDecision.allow (reason) to activate it or RouteDecision.deny (reason) to skip it. Null, empty and
+whitespace-only conditions are unconditional: they bypass onRoute and always activate. Each nonblank edge is evaluated
+independently, so the result can activate zero, one or many conditional targets together with all unconditional targets.
+The engine waits for every route decision before dispatching any successor; a missing, null, exceptional or timed-out
+decision fails the workflow and cannot cause partial successor dispatch. Route failure messages identify the source and
+target edge while preserving the original cause.
 
-Callbacks may run concurrently; do not hold shared mutable current-task state. Each workflow task activation
+Callbacks for different conditional edges may run concurrently; do not hold shared mutable current-task state. Each
+workflow task activation
 (preparation and dispatch combined) is bounded by the client timeout (default sendTimeoutSeconds=600). Routing has a
 callback timeout; dispatch/negotiation additionally has its own total wait deadline. Cancellation/timeout prevents late
 sends; it does not automatically stop external business/LLM work. Hosts own cancellation of their resources. Synchronous
