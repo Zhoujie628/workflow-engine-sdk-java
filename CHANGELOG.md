@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Breaking: per-edge conditional routing
+
+- `onRoute` now evaluates one conditional edge at a time: `RouteRequest` describes a single edge (step, condition,
+  upstream window) and the callback returns `RouteDecision.allow()` /
+  `deny()` for that edge. Unconditional edges always run and bypass the callback; allowed conditional edges activate in
+  parallel with them. This replaces the previous N-choose-1 candidate selection (`RouteDecision.nextStep` and
+  `RouteRequest.candidates` are removed)
+  and fixes mixed-edge steps, where all unconditional edges were not previously guaranteed to activate.
+- Workflow validation now rejects duplicate outgoing targets on one step, null edges and blank targets.
+- After all route decisions succeed, `route_decision` is emitted once per outgoing edge, including unconditional edges,
+  instead of once per step. A callback failure emits the workflow error and no partial per-edge decisions.
+
 ## [0.0.4] — 2026-09-08
 
 - Make the Spring Boot A2A server auto-configuration opt-in: server beans are registered only

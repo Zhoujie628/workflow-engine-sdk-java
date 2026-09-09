@@ -150,7 +150,11 @@ public class WorkbenchOrchestrator {
     }
     return output.values().stream()
         .filter(value -> value != null && !String.valueOf(value).isBlank())
-        .flatMap(value -> value instanceof List<?> values ? values.stream() : java.util.stream.Stream.of(value))
+        .flatMap(
+            value ->
+                value instanceof List<?> values
+                    ? values.stream()
+                    : java.util.stream.Stream.of(value))
         .map(WorkbenchOrchestrator::renderOutput)
         .collect(java.util.stream.Collectors.joining("\n\n"));
   }
@@ -166,13 +170,18 @@ public class WorkbenchOrchestrator {
 
   static String buildResultText(ExecutionResult result, Workflow workflow) {
     if (result.isSuccess() && result.getStepOutputs() != null) {
-      String terminalOutputs = workflow.getSteps().stream()
-          .filter(step -> result.getStepOutputs().containsKey(step.getName()))
-          .filter(step -> step.getNext() == null || step.getNext().stream()
-              .noneMatch(next -> result.getStepOutputs().containsKey(next.getStep())))
-          .map(step -> outputText(result.getStepOutputs().get(step.getName())))
-          .filter(output -> !output.isBlank())
-          .collect(java.util.stream.Collectors.joining("\n\n"));
+      String terminalOutputs =
+          workflow.getSteps().stream()
+              .filter(step -> result.getStepOutputs().containsKey(step.getName()))
+              .filter(
+                  step ->
+                      step.getNext() == null
+                          || step.getNext().stream()
+                              .noneMatch(
+                                  next -> result.getStepOutputs().containsKey(next.getStep())))
+              .map(step -> outputText(result.getStepOutputs().get(step.getName())))
+              .filter(output -> !output.isBlank())
+              .collect(java.util.stream.Collectors.joining("\n\n"));
       if (!terminalOutputs.isBlank()) return terminalOutputs;
     }
     return buildResultText(result);
@@ -390,7 +399,8 @@ public class WorkbenchOrchestrator {
           case EventType.TASK_REQUEST -> log.info("  [TASK_REQUEST] agent={}", data.get("agent"));
           case EventType.TASK_RESPONSE ->
               log.info(
-                  "  [TASK_RESPONSE] contextId={}, executionId={}, step={}, taskId={}, agent={}, success={}, errorCode={}",
+                  "  [TASK_RESPONSE] contextId={}, executionId={}, step={}, taskId={}, agent={},"
+                      + " success={}, errorCode={}",
                   contextId,
                   data.get("executionId"),
                   data.get("step"),
@@ -416,7 +426,13 @@ public class WorkbenchOrchestrator {
                   data.get("text") != null ? ((String) data.get("text")).length() : 0);
           case EventType.STEP_COMPLETE -> log.info("  [STEP_COMPLETE] {}", data.get("step"));
           case EventType.ROUTE_DECISION ->
-              log.info("  [ROUTE] {} -> {}", data.get("step"), data.get("next"));
+              log.info(
+                  "  [ROUTE] {} -> {}, conditional={}, allowed={}, reason={}",
+                  data.get("step"),
+                  data.get("next"),
+                  data.get("conditional"),
+                  data.get("allowed"),
+                  data.get("reason"));
           case EventType.COMPLETE -> log.info("  [COMPLETE]");
           case EventType.ERROR ->
               log.error(

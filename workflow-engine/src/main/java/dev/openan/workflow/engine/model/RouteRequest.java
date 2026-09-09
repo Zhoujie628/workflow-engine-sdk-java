@@ -20,19 +20,30 @@
 package dev.openan.workflow.engine.model;
 
 import java.util.List;
+import java.util.Objects;
 
-/** Conditional route input; upstream selection is identical to task callbacks. */
+/**
+ * Business input for evaluating one conditional outgoing edge.
+ */
 public record RouteRequest(
     String executionId,
     String stepName,
+    String nextStep,
+    String condition,
     WorkflowInput workflowInput,
-    List<TaskExecutionResult> currentResults,
-    List<RouteOption> candidates) {
+    List<TaskExecutionResult> currentResults) {
+  /** Creates and validates the immutable request for one nonblank conditional edge. */
   public RouteRequest {
+    Objects.requireNonNull(executionId, "executionId");
+    Objects.requireNonNull(stepName, "stepName");
+    Objects.requireNonNull(nextStep, "nextStep");
+    Objects.requireNonNull(condition, "condition");
+    Objects.requireNonNull(workflowInput, "workflowInput");
+    Objects.requireNonNull(currentResults, "currentResults");
+    if (executionId.isBlank()) throw new IllegalArgumentException("executionId must not be blank");
+    if (stepName.isBlank()) throw new IllegalArgumentException("stepName must not be blank");
+    if (nextStep.isBlank()) throw new IllegalArgumentException("nextStep must not be blank");
+    if (condition.isBlank()) throw new IllegalArgumentException("condition must not be blank");
     currentResults = List.copyOf(currentResults);
-    candidates = List.copyOf(candidates);
   }
-
-  /** A permitted target and its business condition. */
-  public record RouteOption(String nextStep, String condition) {}
 }

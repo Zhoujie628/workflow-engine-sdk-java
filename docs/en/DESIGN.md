@@ -248,8 +248,9 @@ interface ControlPoint {
 ```
 
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
-onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
-Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
+returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
+echo-success, implicit route approval or automatic consent.
 See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ## 5. A2A-T Extension Model
@@ -282,12 +283,16 @@ open until the host closes them.
 A step's `next` list holds `JumpCondition(step, condition)` entries. The routing rule is:
 
 - **No `next`** - terminal; the step completes the branch.
-- **All conditions empty** - unconditional fan-out: dispatch every non-terminal next step in parallel.
-- **Has conditions** - conditional: call `ControlPoint.onRoute`, which returns a single `RouteDecision.nextStep`. The
-  engine enforces that the returned step is among the declared conditions; an invalid return fails the workflow with an
-  error.
+- **Blank condition** - unconditional edge: activate it without calling `ControlPoint.onRoute`. Null, empty and
+  whitespace-only values are all blank.
+- **Nonblank condition** - conditional edge: invoke `ControlPoint.onRoute` once for that edge and activate it only when
+  the returned `RouteDecision.allowed` is true.
 
-This makes conditional branches an N-choose-1 selection and keeps unconditional fan-out as automatic parallel dispatch.
+All conditional edges are evaluated independently and may run concurrently. The engine waits for every decision before
+atomically activating all unconditional and allowed conditional targets. Multiple true decisions therefore create a
+parallel fan-out; all false decisions are valid and end the branch when no unconditional target exists. Callback
+failure, timeout or null fails routing before any successor is dispatched. Route failures identify the source and target
+edge and preserve the original cause. Duplicate targets from the same source are rejected during graph validation.
 
 ---
 

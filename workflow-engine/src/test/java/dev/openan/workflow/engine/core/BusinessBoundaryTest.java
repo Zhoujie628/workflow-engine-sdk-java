@@ -19,13 +19,29 @@
 
 package dev.openan.workflow.engine.core;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
-import dev.openan.workflow.engine.control.*;
-import dev.openan.workflow.engine.model.*;
-import java.util.*;
-import java.util.concurrent.*;
+import dev.openan.workflow.engine.control.ControlPoint;
+import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
+import dev.openan.workflow.engine.model.StepType;
+import dev.openan.workflow.engine.model.Task;
+import dev.openan.workflow.engine.model.TaskRequest;
+import dev.openan.workflow.engine.model.TaskResult;
+import dev.openan.workflow.engine.model.TaskStatus;
+import dev.openan.workflow.engine.model.Workflow;
+import dev.openan.workflow.engine.model.WorkflowStep;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 
 class BusinessBoundaryTest {
@@ -87,7 +103,7 @@ class BusinessBoundaryTest {
               .onRoute(
                   q -> {
                     seen.add(q);
-                    return CompletableFuture.completedFuture(new RouteDecision("endNode", "done"));
+                    return CompletableFuture.completedFuture(RouteDecision.allow("done"));
                   })
               .build();
       assertTrue(

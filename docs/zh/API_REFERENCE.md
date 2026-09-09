@@ -261,8 +261,9 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
-选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
+对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
+不回显成功、不默认放行条件边、不自动同意。
 
 `DefaultControlPoint` 保留上述快速失败默认值，并可把 `onNegotiation` 委托给注入的
 `NegotiationStrategy`。仅需定制协商策略时实现 `NegotiationStrategy.resolve(NegotiationRequest)`；同时需要定制任务、宿主本地任务或路由时，实现或构建完整 `ControlPoint`。
@@ -281,30 +282,30 @@ public class EventCallback {
 
 ### EventType
 
-| 常量                     | 说明                                               |
-|--------------------------|----------------------------------------------------|
-| `STEP_START`             | 工作流步骤开始                                     |
-| `STEP_COMPLETE`          | 工作流步骤完成                                     |
-| `TASK_REQUEST`           | 任务分派给智能体                                   |
-| `TASK_RESPONSE`          | 收到任务响应                                       |
-| `TASK_STATUS_CHANGED`    | 任务状态变更（pending → running → success/failed） |
-| `AGENT_REQUEST`          | 消息发送给智能体                                   |
-| `AGENT_RESPONSE`         | 收到智能体响应                                     |
-| `AGENT_STATUS_UPDATE`    | 智能体 SSE 状态更新                                |
-| `AGENT_ARTIFACT_UPDATE`  | 智能体 SSE artifact 更新                           |
-| `AGENT_MESSAGE_EVENT`    | 智能体 SSE 消息事件                                |
-| `NEGOTIATION_REQUEST`    | 智能体请求协商                                     |
-| `NEGOTIATION_RESOLVED`   | 补充信息已发送                                     |
-| `NEGOTIATION_FAILED`     | 协商无法解决                                       |
-| `AUTHORIZATION_REQUEST`  | 保留；当前不上报（授权结果经 `ExtensionSender` 返回） |
-| `AUTHORIZATION_RESOLVED` | 保留；当前不上报                                   |
+| 常量                     | 说明                                                               |
+|--------------------------|--------------------------------------------------------------------|
+| `STEP_START`             | 工作流步骤开始                                                     |
+| `STEP_COMPLETE`          | 工作流步骤完成                                                     |
+| `TASK_REQUEST`           | 任务分派给智能体                                                   |
+| `TASK_RESPONSE`          | 收到任务响应                                                       |
+| `TASK_STATUS_CHANGED`    | 任务状态变更（pending → running → success/failed）                 |
+| `AGENT_REQUEST`          | 消息发送给智能体                                                   |
+| `AGENT_RESPONSE`         | 收到智能体响应                                                     |
+| `AGENT_STATUS_UPDATE`    | 智能体 SSE 状态更新                                                |
+| `AGENT_ARTIFACT_UPDATE`  | 智能体 SSE artifact 更新                                           |
+| `AGENT_MESSAGE_EVENT`    | 智能体 SSE 消息事件                                                |
+| `NEGOTIATION_REQUEST`    | 智能体请求协商                                                     |
+| `NEGOTIATION_RESOLVED`   | 补充信息已发送                                                     |
+| `NEGOTIATION_FAILED`     | 协商无法解决                                                       |
+| `AUTHORIZATION_REQUEST`  | 保留；当前不上报（授权结果经 `ExtensionSender` 返回）              |
+| `AUTHORIZATION_RESOLVED` | 保留；当前不上报                                                   |
 | `NOTIFICATION`           | 保留；当前不上报（订阅事件经 `NotificationSubscription` 回调送达） |
-| `ROUTE_DECISION`         | 路由决策已做出                                     |
-| `WORKFLOW_COMPLETE`      | DAG 调度结束，需检查 success；不代表全部节点成功执行 |
-| `START`                  | 工作流执行开始                                     |
-| `COMPLETE`               | 工作流执行成功完成                                 |
-| `ERROR`                  | 工作流执行失败                                     |
-| `CLOSE`                  | 引擎客户端已关闭                                   |
+| `ROUTE_DECISION`         | 路由阶段成功后记录一条出边的放行或拒绝结果                         |
+| `WORKFLOW_COMPLETE`      | DAG 调度结束，需检查 success；不代表全部节点成功执行               |
+| `START`                  | 工作流执行开始                                                     |
+| `COMPLETE`               | 工作流执行成功完成                                                 |
+| `ERROR`                  | 工作流执行失败                                                     |
+| `CLOSE`                  | 引擎客户端已关闭                                                   |
 
 ---
 
@@ -514,12 +515,26 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 | `stepOutputs` | `Map<String, Map>` | 按步骤名索引的输出 |
 | `error`       | `String`           | 错误信息（失败时） |
 
-### RouteDecision
+### RouteRequest / RouteDecision
 
-| 字段       | 类型     | 说明       |
-|------------|----------|------------|
-| `nextStep` | `String` | 下一步执行 |
-| `reason`   | `String` | 决策原因   |
+`RouteRequest` 每次描述一条条件边，不再携带完整出边候选列表：
+
+| 字段             | 类型                        | 说明                 |
+|------------------|-----------------------------|----------------------|
+| `executionId`    | `String`                    | 当前工作流执行标识   |
+| `stepName`       | `String`                    | 源节点               |
+| `nextStep`       | `String`                    | 当前边的目标节点     |
+| `condition`      | `String`                    | 待判断的非空业务条件 |
+| `workflowInput`  | `WorkflowInput`             | 协议无关的上下文窗口 |
+| `currentResults` | `List<TaskExecutionResult>` | 源节点产生的任务结果 |
+
+| `RouteDecision` 字段 | 类型      | 说明               |
+|----------------------|-----------|--------------------|
+| `allowed`            | `boolean` | 是否激活当前条件边 |
+| `reason`             | `String`  | 可选的业务判断原因 |
+
+通过 `RouteDecision.allow(...)` 或 `RouteDecision.deny(...)` 返回判断。所有空条件边直接激活，所有返回 allow 的条件边也会激活，
+所以一个源节点可以同时扇出到多个目标节点。
 
 ### WorkflowSearchResult
 

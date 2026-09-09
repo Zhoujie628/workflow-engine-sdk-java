@@ -25,6 +25,8 @@ import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.model.ExecutionResult;
 import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.RouteDecision;
+import dev.openan.workflow.engine.model.RouteRequest;
 import dev.openan.workflow.engine.model.StepType;
 import dev.openan.workflow.engine.model.Task;
 import dev.openan.workflow.engine.model.TaskExecutionResult;
@@ -39,13 +41,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -169,87 +175,8 @@ public class WorkflowExecutor {
     }
   }
 
-  public CompletableFuture<ExecutionResult> run() {
-    if (!started.compareAndSet(false, true))
-      return CompletableFuture.failedFuture(
-          new IllegalStateException("WorkflowExecutor is single-use"));
-    // NOTE: START lifecycle event is emitted by the runner (ExecutePsop),
-    // not here. Mirrors Python SDK where the executor emits only
-    // step/task/route events and the runner emits start/complete/error/close.
-    log.info(
-        "[Executor] Starting workflow: {} ({} steps)",
-        workflow.getName(),
-        workflow.getSteps().size());
-    try {
-      validateWorkflowGraph();
-    } catch (IllegalArgumentException e) {
-      log.error("[Executor] Invalid workflow graph: {}", e.getMessage());
-      emit(EventType.ERROR, Map.of("error", e.getMessage()));
-      return CompletableFuture.completedFuture(
-          ExecutionResult.builder()
-              .success(false)
-              .history(new ArrayList<>(executionHistory))
-              .stepOutputs(new HashMap<>(stepOutputs))
-              .error(e.getMessage())
-              .build());
-    }
-    Deque<Integer> pending = new ConcurrentLinkedDeque<>();
-    Set<Integer> scheduled = ConcurrentHashMap.newKeySet();
-    Set<Integer> activated = ConcurrentHashMap.newKeySet();
-    for (int i = 0; i < workflow.getSteps().size(); i++) {
-      var s = workflow.getSteps().get(i);
-      if (contextBuilder.getStepPredecessors(s.getName()).isEmpty()) {
-        pending.add(i);
-        scheduled.add(i);
-        activated.add(i);
-      }
-    }
-    Set<Integer> executed = ConcurrentHashMap.newKeySet();
-    AtomicBoolean failed = new AtomicBoolean();
-    CompletableFuture<ExecutionResult> execution =
-        executeSteps(pending, scheduled, executed, activated, failed)
-            .thenApply(
-                v -> {
-                  emit(EventType.WORKFLOW_COMPLETE, Map.of("success", !failed.get()));
-                  log.info(
-                      "[Executor] WORKFLOW_FINISHED executionId={}, workflow={}, success={}, tasks={}",
-                      executionId,
-                      workflow.getName(),
-                      !failed.get(),
-                      executionHistory.size());
-                  if (failed.get()) {
-                    log.warn(
-                        "[Executor] WORKFLOW_STOPPED executionId={}, reason=step_failed, skippedSteps={}",
-                        executionId,
-                        java.util.stream.IntStream.range(0, workflow.getSteps().size())
-                            .filter(index -> !executed.contains(index))
-                            .mapToObj(index -> workflow.getSteps().get(index).getName())
-                            .toList());
-                  }
-                  return ExecutionResult.builder()
-                      .success(!failed.get())
-                      .history(new ArrayList<>(executionHistory))
-                      .stepOutputs(new HashMap<>(stepOutputs))
-                      .error(failed.get() ? "Step execution failed" : null)
-                      .build();
-                })
-            .exceptionally(
-                e -> {
-                  log.error("[Executor] DAG traversal error: {}", e.getMessage(), e);
-                  emit(EventType.ERROR, Map.of("error", e.getMessage()));
-                  return ExecutionResult.builder()
-                      .success(false)
-                      .history(new ArrayList<>(executionHistory))
-                      .stepOutputs(new HashMap<>(stepOutputs))
-                      .error(e.getMessage())
-                      .build();
-                });
-    execution.whenComplete(
-        (value, error) -> {
-          stopped.set(true);
-          activeTasks.forEach(task -> task.cancel(true));
-        });
-    return execution;
+  private static boolean isUnconditional(JumpCondition edge) {
+    return edge.getCondition() == null || edge.getCondition().isBlank();
   }
 
   private CompletableFuture<Void> executeSteps(
@@ -328,111 +255,26 @@ public class WorkflowExecutor {
         .thenCompose(v -> executeSteps(pending, scheduled, executed, activated, failed));
   }
 
-  private CompletableFuture<Void> executeStep(
-      WorkflowStep step,
-      Set<Integer> scheduled,
-      Set<Integer> activated,
-      Deque<Integer> pending,
-      AtomicBoolean failed) {
-    emit(EventType.STEP_START, Map.of("step", step.getName()));
-    log.info("--- Executing step: {} ---", step.getName());
-    return executeSubtasks(step)
-        .thenCompose(
-            result -> {
-              stepOutputs.put(step.getName(), result.results());
-              stepExecutionResults.put(step.getName(), result.taskResults());
-              if (!result.success()) {
-                log.warn(
-                    "[Executor] STEP_FAILED executionId={}, step={}, action=stop-downstream",
-                    executionId,
-                    step.getName());
-                emit(
-                    EventType.ERROR,
-                    Map.of(
-                        "step",
-                        step.getName(),
-                        "results",
-                        result.results(),
-                        "error",
-                        "Step execution failed",
-                        "errorCode",
-                        "workflow.step_failed"));
-                failed.set(true);
-                return CompletableFuture.completedFuture(null);
-              }
-              emit(
-                  EventType.STEP_COMPLETE,
-                  Map.of("step", step.getName(), "results", result.results()));
-              return determineNextSteps(step, result.results())
-                  .thenAccept(
-                      nextIndices -> {
-                        for (int i = nextIndices.size() - 1; i >= 0; i--) {
-                          int nxt = nextIndices.get(i);
-                          activated.add(nxt);
-                          if (scheduled.add(nxt)) {
-                            pending.addFirst(nxt);
-                          }
-                        }
-                      });
-            });
+  private static IllegalStateException routeEvaluationFailure(
+      WorkflowStep step, JumpCondition edge, Throwable error) {
+    Throwable cause = unwrapCompletionException(error);
+    if (cause instanceof RouteEvaluationException routeError) {
+      return routeError;
+    }
+    return new RouteEvaluationException(
+        "onRoute failed for edge "
+            + step.getName()
+            + " -> "
+            + edge.getStep()
+            + ": "
+            + failureMessage(cause),
+        cause);
   }
 
-  private void validateWorkflowGraph() {
-    Map<String, Integer> indices = new HashMap<>();
-    for (int i = 0; i < workflow.getSteps().size(); i++) {
-      String name = workflow.getSteps().get(i).getName();
-      if (name == null || name.isBlank()) {
-        throw new IllegalArgumentException("Workflow step name must not be blank");
-      }
-      if (isTerminalRoute(name)) {
-        throw new IllegalArgumentException(
-            "Workflow step name is reserved for a terminal route: " + name);
-      }
-      if (indices.put(name, i) != null) {
-        throw new IllegalArgumentException("Duplicate workflow step name: " + name);
-      }
-    }
-    List<List<Integer>> graph = new ArrayList<>();
-    for (int i = 0; i < workflow.getSteps().size(); i++) graph.add(new ArrayList<>());
-    for (int i = 0; i < workflow.getSteps().size(); i++) {
-      WorkflowStep step = workflow.getSteps().get(i);
-      if (step.getNext() == null) continue;
-      for (JumpCondition jump : step.getNext()) {
-        if (isTerminalRoute(jump.getStep())) continue;
-        Integer target = indices.get(jump.getStep());
-        if (target == null) {
-          throw new IllegalArgumentException(
-              "Step " + step.getName() + " references missing step " + jump.getStep());
-        }
-        graph.get(i).add(target);
-      }
-    }
-    for (WorkflowStep step : workflow.getSteps()) {
-      List<String> contextFrom = step.getContextFrom();
-      if (contextFrom == null || contextFrom.isEmpty()) continue;
-      if (contextFrom.contains("*") && contextFrom.size() != 1) {
-        throw new IllegalArgumentException(
-            "Step " + step.getName() + " cannot combine '*' with named context sources");
-      }
-      if (contextFrom.contains("*")) continue;
-      Set<String> ancestors = Set.copyOf(contextBuilder.getAllPredecessors(step.getName()));
-      for (String source : contextFrom) {
-        if (!indices.containsKey(source)) {
-          throw new IllegalArgumentException(
-              "Step " + step.getName() + " references missing context source " + source);
-        }
-        if (!ancestors.contains(source)) {
-          throw new IllegalArgumentException(
-              "Step "
-                  + step.getName()
-                  + " context source "
-                  + source
-                  + " is not an upstream dependency");
-        }
-      }
-    }
-    int[] state = new int[workflow.getSteps().size()];
-    for (int i = 0; i < state.length; i++) detectCycle(i, graph, state);
+  private static String failureMessage(Throwable error) {
+    Throwable cause = unwrapCompletionException(error);
+    String message = cause.getMessage();
+    return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
   }
 
   private void detectCycle(int node, List<List<Integer>> graph, int[] state) {
@@ -582,102 +424,12 @@ public class WorkflowExecutor {
         collectExecutionResults(completedResults));
   }
 
-  private StepResult processTaskResult(
-      WorkflowStep step, Task task, int subtaskIndex, TaskResult response) {
-    task.setStatus(response.isSuccess() ? TaskStatus.SUCCESS : TaskStatus.FAILED);
-    emit(
-        EventType.TASK_STATUS_CHANGED,
-        Map.of(
-            "step",
-            step.getName(),
-            "subtask_index",
-            subtaskIndex,
-            "agent",
-            task.getAgent(),
-            "status",
-            task.getStatus().getValue()));
-    String status = response.isSuccess() ? "success" : "failed";
-    log.info("[Executor] Task {} -> {}: {}", task.getDescription(), task.getAgent(), status);
-    if (!response.isSuccess()) {
-      log.warn(
-          "[Executor] TASK_FAILED executionId={}, step={}, taskId={}, agent={}, errorCode={}, reason={}",
-          executionId,
-          step.getName(),
-          taskId(step.getName(), subtaskIndex),
-          task.getAgent(),
-          response.getErrorCode(),
-          SensitiveDataRedactor.redact(response.getError())
-              .replace("\r", "\\r")
-              .replace("\n", "\\n"));
+  private static Throwable unwrapCompletionException(Throwable error) {
+    Throwable current = Objects.requireNonNull(error, "error");
+    while (current instanceof CompletionException && current.getCause() != null) {
+      current = current.getCause();
     }
-    if (response.isSuccess() && !response.getOutputs().isEmpty()) {
-      log.debug("[Executor] Task outputs from {}: [{}]", task.getAgent(), response.getOutputs());
-    }
-    List<Object> outputs = response.getOutputs();
-    executionHistory.add(
-        Map.of(
-            "step",
-            step.getName(),
-            "subtask_index",
-            subtaskIndex,
-            "task",
-            task.getDescription(),
-            "agent",
-            task.getAgent(),
-            "status",
-            status,
-            "taskId",
-            taskId(step.getName(), subtaskIndex),
-            "outputs",
-            outputs,
-            "error",
-            response.getError() == null ? "" : response.getError(),
-            "errorCode",
-            response.getErrorCode() == null ? "" : response.getErrorCode(),
-            "errorDetails",
-            response.getErrorDetails()));
-    emit(
-        EventType.TASK_RESPONSE,
-        Map.of(
-            "step",
-            step.getName(),
-            "subtask_index",
-            subtaskIndex,
-            "agent",
-            task.getAgent(),
-            "task",
-            task.getDescription(),
-            "outputs",
-            outputs,
-            "success",
-            response.isSuccess(),
-            "taskId",
-            taskId(step.getName(), subtaskIndex),
-            "error",
-            response.getError() == null ? "" : response.getError(),
-            "errorCode",
-            response.getErrorCode() == null ? "" : response.getErrorCode(),
-            "errorDetails",
-            response.getErrorDetails()));
-    return new StepResult(
-        task.getDescription(),
-        task.getAgent(),
-        subtaskIndex,
-        outputs,
-        response.isSuccess(),
-        null,
-        List.of(
-            new TaskExecutionResult(
-                task.getAgent(),
-                task.getSkill(),
-                taskId(step.getName(), subtaskIndex),
-                task.getDescription(),
-                task.getStatus(),
-                outputs,
-                response.getReceivedMessages(),
-                response.getError(),
-                response.getErrorCode(),
-                response.getErrorDetails())));
+    return current;
   }
 
   private StepResult processTaskError(WorkflowStep step, Task task, int subtaskIndex, Throwable e) {
@@ -772,78 +524,427 @@ public class WorkflowExecutor {
     return result;
   }
 
-  private CompletableFuture<List<Integer>> determineNextSteps(
-      WorkflowStep step, Map<String, Object> stepResult) {
+  public CompletableFuture<ExecutionResult> run() {
+    if (!started.compareAndSet(false, true))
+      return CompletableFuture.failedFuture(
+          new IllegalStateException("WorkflowExecutor is single-use"));
+    // NOTE: START lifecycle event is emitted by the runner (ExecutePsop),
+    // not here. Mirrors Python SDK where the executor emits only
+    // step/task/route events and the runner emits start/complete/error/close.
+    log.info(
+        "[Executor] Starting workflow: {} ({} steps)",
+        workflow.getName(),
+        workflow.getSteps().size());
+    try {
+      validateWorkflowGraph();
+    } catch (IllegalArgumentException e) {
+      log.error("[Executor] Invalid workflow graph: {}", e.getMessage());
+      emit(EventType.ERROR, Map.of("error", e.getMessage()));
+      return CompletableFuture.completedFuture(
+          ExecutionResult.builder()
+              .success(false)
+              .history(new ArrayList<>(executionHistory))
+              .stepOutputs(new HashMap<>(stepOutputs))
+              .error(e.getMessage())
+              .build());
+    }
+    Deque<Integer> pending = new ConcurrentLinkedDeque<>();
+    Set<Integer> scheduled = ConcurrentHashMap.newKeySet();
+    Set<Integer> activated = ConcurrentHashMap.newKeySet();
+    for (int i = 0; i < workflow.getSteps().size(); i++) {
+      var s = workflow.getSteps().get(i);
+      if (contextBuilder.getStepPredecessors(s.getName()).isEmpty()) {
+        pending.add(i);
+        scheduled.add(i);
+        activated.add(i);
+      }
+    }
+    Set<Integer> executed = ConcurrentHashMap.newKeySet();
+    AtomicBoolean failed = new AtomicBoolean();
+    CompletableFuture<ExecutionResult> execution =
+        executeSteps(pending, scheduled, executed, activated, failed)
+            .thenApply(
+                v -> {
+                  emit(EventType.WORKFLOW_COMPLETE, Map.of("success", !failed.get()));
+                  log.info(
+                      "[Executor] WORKFLOW_FINISHED executionId={}, workflow={}, success={},"
+                          + " tasks={}",
+                      executionId,
+                      workflow.getName(),
+                      !failed.get(),
+                      executionHistory.size());
+                  if (failed.get()) {
+                    log.warn(
+                        "[Executor] WORKFLOW_STOPPED executionId={}, reason=step_failed,"
+                            + " skippedSteps={}",
+                        executionId,
+                        java.util.stream.IntStream.range(0, workflow.getSteps().size())
+                            .filter(index -> !executed.contains(index))
+                            .mapToObj(index -> workflow.getSteps().get(index).getName())
+                            .toList());
+                  }
+                  return ExecutionResult.builder()
+                      .success(!failed.get())
+                      .history(new ArrayList<>(executionHistory))
+                      .stepOutputs(new HashMap<>(stepOutputs))
+                      .error(failed.get() ? "Step execution failed" : null)
+                      .build();
+                })
+            .exceptionally(
+                e -> {
+                  Throwable failure = unwrapCompletionException(e);
+                  String message = failureMessage(failure);
+                  log.error("[Executor] DAG traversal error: {}", message, failure);
+                  emit(EventType.ERROR, Map.of("error", message));
+                  return ExecutionResult.builder()
+                      .success(false)
+                      .history(new ArrayList<>(executionHistory))
+                      .stepOutputs(new HashMap<>(stepOutputs))
+                      .error(message)
+                      .build();
+                });
+    execution.whenComplete(
+        (value, error) -> {
+          stopped.set(true);
+          activeTasks.forEach(task -> task.cancel(true));
+        });
+    return execution;
+  }
+
+  private CompletableFuture<Void> executeStep(
+      WorkflowStep step,
+      Set<Integer> scheduled,
+      Set<Integer> activated,
+      Deque<Integer> pending,
+      AtomicBoolean failed) {
+    emit(EventType.STEP_START, Map.of("step", step.getName()));
+    log.info("--- Executing step: {} ---", step.getName());
+    return executeSubtasks(step)
+        .thenCompose(
+            result -> {
+              stepOutputs.put(step.getName(), result.results());
+              stepExecutionResults.put(step.getName(), result.taskResults());
+              if (!result.success()) {
+                log.warn(
+                    "[Executor] STEP_FAILED executionId={}, step={}, action=stop-downstream",
+                    executionId,
+                    step.getName());
+                emit(
+                    EventType.ERROR,
+                    Map.of(
+                        "step",
+                        step.getName(),
+                        "results",
+                        result.results(),
+                        "error",
+                        "Step execution failed",
+                        "errorCode",
+                        "workflow.step_failed"));
+                failed.set(true);
+                return CompletableFuture.completedFuture(null);
+              }
+              emit(
+                  EventType.STEP_COMPLETE,
+                  Map.of("step", step.getName(), "results", result.results()));
+              return determineNextSteps(step)
+                  .thenAccept(
+                      nextIndices -> {
+                        for (int i = nextIndices.size() - 1; i >= 0; i--) {
+                          int nxt = nextIndices.get(i);
+                          activated.add(nxt);
+                          if (scheduled.add(nxt)) {
+                            pending.addFirst(nxt);
+                          }
+                        }
+                      });
+            });
+  }
+
+  private StepResult processTaskResult(
+      WorkflowStep step, Task task, int subtaskIndex, TaskResult response) {
+    task.setStatus(response.isSuccess() ? TaskStatus.SUCCESS : TaskStatus.FAILED);
+    emit(
+        EventType.TASK_STATUS_CHANGED,
+        Map.of(
+            "step",
+            step.getName(),
+            "subtask_index",
+            subtaskIndex,
+            "agent",
+            task.getAgent(),
+            "status",
+            task.getStatus().getValue()));
+    String status = response.isSuccess() ? "success" : "failed";
+    log.info("[Executor] Task {} -> {}: {}", task.getDescription(), task.getAgent(), status);
+    if (!response.isSuccess()) {
+      log.warn(
+          "[Executor] TASK_FAILED executionId={}, step={}, taskId={}, agent={}, errorCode={},"
+              + " reason={}",
+          executionId,
+          step.getName(),
+          taskId(step.getName(), subtaskIndex),
+          task.getAgent(),
+          response.getErrorCode(),
+          SensitiveDataRedactor.redact(response.getError())
+              .replace("\r", "\\r")
+              .replace("\n", "\\n"));
+    }
+    if (response.isSuccess() && !response.getOutputs().isEmpty()) {
+      log.debug("[Executor] Task outputs from {}: [{}]", task.getAgent(), response.getOutputs());
+    }
+    List<Object> outputs = response.getOutputs();
+    executionHistory.add(
+        Map.of(
+            "step",
+            step.getName(),
+            "subtask_index",
+            subtaskIndex,
+            "task",
+            task.getDescription(),
+            "agent",
+            task.getAgent(),
+            "status",
+            status,
+            "taskId",
+            taskId(step.getName(), subtaskIndex),
+            "outputs",
+            outputs,
+            "error",
+            response.getError() == null ? "" : response.getError(),
+            "errorCode",
+            response.getErrorCode() == null ? "" : response.getErrorCode(),
+            "errorDetails",
+            response.getErrorDetails()));
+    emit(
+        EventType.TASK_RESPONSE,
+        Map.of(
+            "step",
+            step.getName(),
+            "subtask_index",
+            subtaskIndex,
+            "agent",
+            task.getAgent(),
+            "task",
+            task.getDescription(),
+            "outputs",
+            outputs,
+            "success",
+            response.isSuccess(),
+            "taskId",
+            taskId(step.getName(), subtaskIndex),
+            "error",
+            response.getError() == null ? "" : response.getError(),
+            "errorCode",
+            response.getErrorCode() == null ? "" : response.getErrorCode(),
+            "errorDetails",
+            response.getErrorDetails()));
+    return new StepResult(
+        task.getDescription(),
+        task.getAgent(),
+        subtaskIndex,
+        outputs,
+        response.isSuccess(),
+        null,
+        List.of(
+            new TaskExecutionResult(
+                task.getAgent(),
+                task.getSkill(),
+                taskId(step.getName(), subtaskIndex),
+                task.getDescription(),
+                task.getStatus(),
+                outputs,
+                response.getReceivedMessages(),
+                response.getError(),
+                response.getErrorCode(),
+                response.getErrorDetails())));
+  }
+
+  private void validateWorkflowGraph() {
+    Map<String, Integer> indices = new HashMap<>();
+    for (int i = 0; i < workflow.getSteps().size(); i++) {
+      String name = workflow.getSteps().get(i).getName();
+      if (name == null || name.isBlank()) {
+        throw new IllegalArgumentException("Workflow step name must not be blank");
+      }
+      if (isTerminalRoute(name)) {
+        throw new IllegalArgumentException(
+            "Workflow step name is reserved for a terminal route: " + name);
+      }
+      if (indices.put(name, i) != null) {
+        throw new IllegalArgumentException("Duplicate workflow step name: " + name);
+      }
+    }
+    List<List<Integer>> graph = new ArrayList<>();
+    for (int i = 0; i < workflow.getSteps().size(); i++) graph.add(new ArrayList<>());
+    for (int i = 0; i < workflow.getSteps().size(); i++) {
+      WorkflowStep step = workflow.getSteps().get(i);
+      if (step.getNext() == null) continue;
+      Set<String> targets = new HashSet<>();
+      for (JumpCondition jump : step.getNext()) {
+        if (jump == null) {
+          throw new IllegalArgumentException(
+              "Step " + step.getName() + " contains a null outgoing edge");
+        }
+        String nextStep = jump.getStep();
+        if (nextStep == null || nextStep.isBlank()) {
+          throw new IllegalArgumentException(
+              "Step " + step.getName() + " contains an outgoing edge with a blank target");
+        }
+        if (!targets.add(nextStep)) {
+          throw new IllegalArgumentException(
+              "Step " + step.getName() + " contains duplicate outgoing target " + nextStep);
+        }
+        if (isTerminalRoute(nextStep)) continue;
+        Integer target = indices.get(nextStep);
+        if (target == null) {
+          throw new IllegalArgumentException(
+              "Step " + step.getName() + " references missing step " + nextStep);
+        }
+        graph.get(i).add(target);
+      }
+    }
+    for (WorkflowStep step : workflow.getSteps()) {
+      List<String> contextFrom = step.getContextFrom();
+      if (contextFrom == null || contextFrom.isEmpty()) continue;
+      if (contextFrom.contains("*") && contextFrom.size() != 1) {
+        throw new IllegalArgumentException(
+            "Step " + step.getName() + " cannot combine '*' with named context sources");
+      }
+      if (contextFrom.contains("*")) continue;
+      Set<String> ancestors = Set.copyOf(contextBuilder.getAllPredecessors(step.getName()));
+      for (String source : contextFrom) {
+        if (!indices.containsKey(source)) {
+          throw new IllegalArgumentException(
+              "Step " + step.getName() + " references missing context source " + source);
+        }
+        if (!ancestors.contains(source)) {
+          throw new IllegalArgumentException(
+              "Step "
+                  + step.getName()
+                  + " context source "
+                  + source
+                  + " is not an upstream dependency");
+        }
+      }
+    }
+    int[] state = new int[workflow.getSteps().size()];
+    for (int i = 0; i < state.length; i++) detectCycle(i, graph, state);
+  }
+
+  private CompletableFuture<List<Integer>> determineNextSteps(WorkflowStep step) {
     if (step.getNext() == null || step.getNext().isEmpty()) {
       return CompletableFuture.completedFuture(List.of());
     }
-    if (step.getNext().stream()
-        .allMatch(jc -> jc.getCondition() == null || jc.getCondition().isEmpty())) {
-      List<Integer> indices = new ArrayList<>();
-      for (var jc : step.getNext()) {
-        if (isTerminalRoute(jc.getStep())) {
-          continue;
-        }
-        Integer idx = contextBuilder.findStepIndex(jc.getStep());
-        if (idx != null) {
-          indices.add(idx);
-        }
-      }
-      return CompletableFuture.completedFuture(indices);
+    var workflowInput = contextBuilder.buildWorkflowInput(step, stepExecutionResults);
+    var currentResults = stepExecutionResults.getOrDefault(step.getName(), List.of());
+    List<RouteEvaluation> evaluations =
+        step.getNext().stream()
+            .map(edge -> evaluateRoute(step, edge, workflowInput, currentResults))
+            .toList();
+    CompletableFuture<Void> completed =
+        CompletableFuture.allOf(
+            evaluations.stream().map(RouteEvaluation::decision).toArray(CompletableFuture[]::new));
+    return completed.thenApply(ignored -> collectAllowedTargets(step, evaluations));
+  }
+
+  private RouteEvaluation evaluateRoute(
+      WorkflowStep step,
+      JumpCondition edge,
+      WorkflowInput workflowInput,
+      List<TaskExecutionResult> currentResults) {
+    if (isUnconditional(edge)) {
+      return new RouteEvaluation(
+          edge,
+          false,
+          CompletableFuture.completedFuture(RouteDecision.allow("unconditional edge")));
     }
-    var routeRequest =
-        new dev.openan.workflow.engine.model.RouteRequest(
+    var request =
+        new RouteRequest(
             executionId,
             step.getName(),
-            contextBuilder.buildWorkflowInput(step, stepExecutionResults),
-            stepExecutionResults.getOrDefault(step.getName(), List.of()),
-            step.getNext().stream()
-                .map(
-                    option ->
-                        new dev.openan.workflow.engine.model.RouteRequest.RouteOption(
-                            option.getStep(), option.getCondition()))
-                .toList());
-    CompletableFuture<dev.openan.workflow.engine.model.RouteDecision> routeDecision =
-        java.util.Objects.requireNonNull(
-            controlPoint.onRoute(routeRequest), "onRoute returned null future");
-    return routeDecision
-        .orTimeout(engineClient.callbackTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)
-        .thenApply(
-            decision -> {
-              java.util.Objects.requireNonNull(decision, "onRoute returned null decision");
-              log.info(
-                  "Route for '{}': {} ({})",
-                  step.getName(),
-                  decision.getNextStep(),
-                  decision.getReason());
-              emit(
-                  EventType.ROUTE_DECISION,
-                  Map.of(
-                      "step",
-                      step.getName(),
-                      "next",
-                      decision.getNextStep(),
-                      "reason",
-                      decision.getReason()));
-              List<String> allowed =
-                  step.getNext().stream().map(JumpCondition::getStep).collect(Collectors.toList());
-              if (!allowed.contains(decision.getNextStep())) {
-                throw new IllegalStateException(
-                    "onRoute returned '"
-                        + decision.getNextStep()
-                        + "' for step '"
-                        + step.getName()
-                        + "', allowed next steps are "
-                        + allowed);
-              }
-              if (isTerminalRoute(decision.getNextStep())) return List.of();
-              Integer idx = contextBuilder.findStepIndex(decision.getNextStep());
-              if (idx == null)
-                throw new IllegalStateException(
-                    "Route target does not exist: " + decision.getNextStep());
-              return List.of(idx);
-            });
+            edge.getStep(),
+            edge.getCondition(),
+            workflowInput,
+            currentResults);
+    CompletableFuture<RouteDecision> decision;
+    try {
+      decision = controlPoint.onRoute(request);
+    } catch (RuntimeException error) {
+      decision = CompletableFuture.failedFuture(routeEvaluationFailure(step, edge, error));
+    }
+    if (decision == null) {
+      decision =
+          CompletableFuture.failedFuture(
+              routeEvaluationFailure(
+                  step, edge, new NullPointerException("onRoute returned null future")));
+    }
+    return new RouteEvaluation(
+        edge,
+        true,
+        decision
+            .orTimeout(engineClient.callbackTimeoutSeconds(), TimeUnit.SECONDS)
+            .handle(
+                (value, error) -> {
+                  if (error != null) {
+                    throw new CompletionException(routeEvaluationFailure(step, edge, error));
+                  }
+                  if (value == null) {
+                    throw new CompletionException(
+                        routeEvaluationFailure(
+                            step,
+                            edge,
+                            new NullPointerException("onRoute returned null decision")));
+                  }
+                  return value;
+                }));
   }
+
+  private List<Integer> collectAllowedTargets(
+      WorkflowStep step, List<RouteEvaluation> evaluations) {
+    List<Integer> indices = new ArrayList<>();
+    for (RouteEvaluation evaluation : evaluations) {
+      var decision = evaluation.decision().join();
+      emitRouteDecision(step, evaluation, decision);
+      if (!decision.allowed() || isTerminalRoute(evaluation.edge().getStep())) continue;
+      Integer index = contextBuilder.findStepIndex(evaluation.edge().getStep());
+      if (index == null) {
+        throw new IllegalStateException(
+            "Route target does not exist: " + evaluation.edge().getStep());
+      }
+      indices.add(index);
+    }
+    return indices;
+  }
+
+  private void emitRouteDecision(
+      WorkflowStep step, RouteEvaluation evaluation, RouteDecision decision) {
+    String condition =
+        evaluation.edge().getCondition() == null ? "" : evaluation.edge().getCondition();
+    log.info(
+        "Route edge '{} -> {}': allowed={} ({})",
+        step.getName(),
+        evaluation.edge().getStep(),
+        decision.allowed(),
+        decision.reason());
+    emit(
+        EventType.ROUTE_DECISION,
+        Map.of(
+            "step", step.getName(),
+            "next", evaluation.edge().getStep(),
+            "condition", condition,
+            "conditional", evaluation.conditional(),
+            "allowed", decision.allowed(),
+            "reason", decision.reason()));
+  }
+
+  private static final class RouteEvaluationException extends IllegalStateException {
+    private RouteEvaluationException(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  private record RouteEvaluation(
+      JumpCondition edge, boolean conditional, CompletableFuture<RouteDecision> decision) {}
 
   private record StepResult(
       String taskDesc,

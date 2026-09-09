@@ -34,7 +34,7 @@ Complete runnable source: [HostQuickStart.java](../../samples/src/main/java/dev/
 It is compiled and its remote-task/local-aggregation flow is tested by HostQuickStartTest.
 Copy that source into your host project or run it from samples in IDEA (registry URL, target agent name, credentials path).
 The snippets below explain the same API; use one AgentCard loading option, and implement domain-specific content for Task-T.
-Nonempty business conditions require an onRoute policy; this minimal workflow uses unconditional edges.
+Each nonblank business condition requires an onRoute decision; this minimal workflow uses unconditional edges.
 
 ### 4.1 Define a Workflow
 
@@ -112,8 +112,9 @@ interface ControlPoint {
 ```
 
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
-onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
-Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
+returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
+echo-success, implicit route approval or automatic consent.
 See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ```java
@@ -123,8 +124,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onRoute(request -> CompletableFuture.completedFuture(
+        RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();
