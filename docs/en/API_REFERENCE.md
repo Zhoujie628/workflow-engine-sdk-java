@@ -274,8 +274,9 @@ interface ControlPoint {
 ```
 
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
-onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
-Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
+returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
+echo-success, implicit route approval or automatic consent.
 
 `DefaultControlPoint` preserves those fail-fast defaults and can delegate `onNegotiation` to an injected
 `NegotiationStrategy`. Implement `NegotiationStrategy.resolve(NegotiationRequest)` when negotiation policy is the only
@@ -295,30 +296,30 @@ Override to receive real-time execution events. Event types are defined in `Even
 
 ### EventType
 
-| Constant                 | Description                                                  |
-|--------------------------|--------------------------------------------------------------|
-| `STEP_START`             | A workflow step began                                        |
-| `STEP_COMPLETE`          | A workflow step completed                                    |
-| `TASK_REQUEST`           | A task was dispatched to an agent                            |
-| `TASK_RESPONSE`          | A task response was received                                 |
-| `TASK_STATUS_CHANGED`    | A task's status changed (pending → running → success/failed) |
-| `AGENT_REQUEST`          | A message was sent to an agent                               |
-| `AGENT_RESPONSE`         | A response was received from an agent                        |
-| `AGENT_STATUS_UPDATE`    | Agent SSE status update (SUBMITTED, WORKING, etc.)           |
-| `AGENT_ARTIFACT_UPDATE`  | Agent SSE artifact update                                    |
-| `AGENT_MESSAGE_EVENT`    | Agent SSE message event                                      |
-| `NEGOTIATION_REQUEST`    | Agent requested negotiation (INPUT_REQUIRED)                 |
-| `NEGOTIATION_RESOLVED`   | Clarification was sent to agent                              |
-| `NEGOTIATION_FAILED`     | Negotiation could not be resolved                            |
-| `AUTHORIZATION_REQUEST`  | Reserved; not currently emitted (authorization results arrive via the `ExtensionSender` future) |
-| `AUTHORIZATION_RESOLVED` | Reserved; not currently emitted                              |
+| Constant                 | Description                                                                                              |
+|--------------------------|----------------------------------------------------------------------------------------------------------|
+| `STEP_START`             | A workflow step began                                                                                    |
+| `STEP_COMPLETE`          | A workflow step completed                                                                                |
+| `TASK_REQUEST`           | A task was dispatched to an agent                                                                        |
+| `TASK_RESPONSE`          | A task response was received                                                                             |
+| `TASK_STATUS_CHANGED`    | A task's status changed (pending → running → success/failed)                                             |
+| `AGENT_REQUEST`          | A message was sent to an agent                                                                           |
+| `AGENT_RESPONSE`         | A response was received from an agent                                                                    |
+| `AGENT_STATUS_UPDATE`    | Agent SSE status update (SUBMITTED, WORKING, etc.)                                                       |
+| `AGENT_ARTIFACT_UPDATE`  | Agent SSE artifact update                                                                                |
+| `AGENT_MESSAGE_EVENT`    | Agent SSE message event                                                                                  |
+| `NEGOTIATION_REQUEST`    | Agent requested negotiation (INPUT_REQUIRED)                                                             |
+| `NEGOTIATION_RESOLVED`   | Clarification was sent to agent                                                                          |
+| `NEGOTIATION_FAILED`     | Negotiation could not be resolved                                                                        |
+| `AUTHORIZATION_REQUEST`  | Reserved; not currently emitted (authorization results arrive via the `ExtensionSender` future)          |
+| `AUTHORIZATION_RESOLVED` | Reserved; not currently emitted                                                                          |
 | `NOTIFICATION`           | Reserved; not currently emitted (subscription events arrive via the `NotificationSubscription` callback) |
-| `ROUTE_DECISION`         | Route decision was made                                      |
-| `WORKFLOW_COMPLETE`      | DAG scheduling ended; check success, not all nodes necessarily ran |
-| `START`                  | Workflow execution started                                   |
-| `COMPLETE`               | Workflow execution completed successfully                    |
-| `ERROR`                  | Workflow execution failed                                    |
-| `CLOSE`                  | Engine client closed                                         |
+| `ROUTE_DECISION`         | Successful routing result for one outgoing edge                                                          |
+| `WORKFLOW_COMPLETE`      | DAG scheduling ended; check success, not all nodes necessarily ran                                       |
+| `START`                  | Workflow execution started                                                                               |
+| `COMPLETE`               | Workflow execution completed successfully                                                                |
+| `ERROR`                  | Workflow execution failed                                                                                |
+| `CLOSE`                  | Engine client closed                                                                                     |
 
 ---
 
@@ -542,12 +543,26 @@ flattened metadata are transport diagnostics, not substitutes for the complete b
 | `stepOutputs` | `Map<String, Map>` | Outputs keyed by step name |
 | `error`       | `String`           | Error message (if failed)  |
 
-### RouteDecision
+### RouteRequest / RouteDecision
 
-| Field      | Type     | Description          |
-|------------|----------|----------------------|
-| `nextStep` | `String` | Next step to execute |
-| `reason`   | `String` | Decision reason      |
+`RouteRequest` describes one conditional edge, not the complete outgoing-edge list:
+
+| Field            | Type                        | Description                              |
+|------------------|-----------------------------|------------------------------------------|
+| `executionId`    | `String`                    | Current workflow execution               |
+| `stepName`       | `String`                    | Source step                              |
+| `nextStep`       | `String`                    | Target of this edge                      |
+| `condition`      | `String`                    | Nonblank business condition to evaluate  |
+| `workflowInput`  | `WorkflowInput`             | Selected protocol-neutral context window |
+| `currentResults` | `List<TaskExecutionResult>` | Results produced by the source step      |
+
+| `RouteDecision` field | Type      | Description                         |
+|-----------------------|-----------|-------------------------------------|
+| `allowed`             | `boolean` | Whether this edge must be activated |
+| `reason`              | `String`  | Optional business decision reason   |
+
+Use `RouteDecision.allow(...)` or `RouteDecision.deny(...)`. Every blank-condition edge is activated without invoking
+the callback; every allowed conditional edge is activated as well, so one source step can fan out to multiple targets.
 
 ### WorkflowSearchResult
 

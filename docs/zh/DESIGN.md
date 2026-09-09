@@ -224,8 +224,9 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
-选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
+对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
+不回显成功、不默认放行条件边、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ## 5. A2A-T 扩展模型
@@ -252,11 +253,12 @@ Authorization-T 和 Notification-T 是独立业务操作，不属于 DAG。宿�
 步骤的 `next` 列表持有 `JumpCondition(step, condition)` 条目。路由规则：
 
 - **无 `next`** — 终端步骤，完成该分支。
-- **所有条件为空** — 无条件扇出：并行下发每个非终端下一步。
-- **有条件** — 条件路由：调用 `ControlPoint.onRoute`，返回单个 `RouteDecision.nextStep`。
-  引擎强制要求返回的步骤在声明的条件中；无效返回值会使工作流失败并报告错误。
+- **空条件** — 无条件边：不调用 `ControlPoint.onRoute`，直接激活。null、空字符串和纯空白都按空条件处理。
+- **非空条件** — 条件边：针对该边调用一次 `ControlPoint.onRoute`，仅当返回的 `RouteDecision.allowed` 为 true 时激活。
 
-这使得条件分支是 N 选 1 选择，无条件扇出是自动并行下发。
+所有条件边独立判断并可并发执行。引擎等待全部判断结束后，统一激活所有无条件边和判断为 true 的条件边；多个 true 会形成并行扇出。
+全部为 false 且没有无条件边时，当前分支正常结束。回调失败、超时或返回 null 时，任何后继节点都不会下发，工作流明确失败。
+路由失败信息会标明源节点和目标节点，并保留原始异常原因。同一源节点中指向相同目标的重复边会在图校验阶段被拒绝。
 
 ---
 

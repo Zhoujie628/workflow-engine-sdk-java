@@ -35,8 +35,9 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
-选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
+对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
+不回显成功、不默认放行条件边、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ```java
@@ -46,8 +47,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onRoute(request -> CompletableFuture.completedFuture(
+        RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();
@@ -81,26 +82,26 @@ ExecutionResult result = ExecutePsop.builder()
 
 事件来自三层：运行器（生命周期括号）、执行器（步骤/任务/路由）、引擎客户端（智能体流量、协商）。
 
-| 事件                    | 层级           | 触发时机                                           | 关键数据                                              |
-|-------------------------|----------------|----------------------------------------------------|-------------------------------------------------------|
-| `start`                 | 运行器         | 工作流开始                                         | `workflow`、`steps`                                   |
-| `step_start`            | 执行器         | 步骤开始                                           | `step`                                                |
-| `task_request`          | 执行器         | 子任务下发到 `onTask`/`onSelfTask`                 | `step`、`agent`、`task`                               |
-| `task_response`         | 执行器         | 远端任务完成或 onSelfTask 返回 TaskResult          | `step`、`agent`、`task`、`outputs`                    |
-| `task_status_changed`   | 执行器         | 任务状态变更（pending → running → success/failed） | `step`、`agent`、`task`、`status`                     |
-| `route_decision`        | 执行器         | 分支选择                                           | `step`、`next`、`reason`                              |
-| `step_complete`         | 执行器         | 步骤完成                                           | `step`、`results`                                     |
-| `workflow_complete`     | 执行器         | 所有步骤完成                                       | `history`、`step_outputs`                             |
-| `agent_request`         | engine client  | 准备下发（不是 wire 日志）                         | `agent`, `content`                                    |
-| `agent_response`        | engine client  | 远端响应已组装                                     | `agent`, `response`, `receivedMessages`               |
-| `agent_status_update`   | 引擎客户端     | 智能体 SSE 状态更新                                | `agent`、`state`、`is_final`                          |
-| `agent_artifact_update` | 引擎客户端     | 智能体 SSE 产物更新                                | `agent`、`artifact_name`、`text`                      |
-| `negotiation_request`   | engine client  | 有效 Propose 进入业务接管                          | `agent`, `request`, `exchange`                        |
-| `negotiation_resolved`  | engine client  | 宿主 Send 通过关联检查；不等于任务成功             | `agent`, `reply`, `exchange`                          |
-| `negotiation_failed`    | engine client  | 本地协商交互失败                                   | `agent`, `exchange`, `errorType`                      |
-| `complete`              | 运行器         | 工作流成功                                         | `history`、`step_outputs`                             |
-| `error`                 | 运行器或执行器 | 工作流失败                                         | 运行器：`error`、`history`；执行器：`step`、`results` |
-| `close`                 | 运行器         | 清理完成                                           | （空）                                                |
+| 事件                    | 层级           | 触发时机                                           | 关键数据                                                        |
+|-------------------------|----------------|----------------------------------------------------|-----------------------------------------------------------------|
+| `start`                 | 运行器         | 工作流开始                                         | `workflow`、`steps`                                             |
+| `step_start`            | 执行器         | 步骤开始                                           | `step`                                                          |
+| `task_request`          | 执行器         | 子任务下发到 `onTask`/`onSelfTask`                 | `step`、`agent`、`task`                                         |
+| `task_response`         | 执行器         | 远端任务完成或 onSelfTask 返回 TaskResult          | `step`、`agent`、`task`、`outputs`                              |
+| `task_status_changed`   | 执行器         | 任务状态变更（pending → running → success/failed） | `step`、`agent`、`task`、`status`                               |
+| `route_decision`        | 执行器         | 路由阶段成功后记录一条出边的判断结果               | `step`、`next`、`condition`、`conditional`、`allowed`、`reason` |
+| `step_complete`         | 执行器         | 步骤完成                                           | `step`、`results`                                               |
+| `workflow_complete`     | 执行器         | 所有步骤完成                                       | `history`、`step_outputs`                                       |
+| `agent_request`         | engine client  | 准备下发（不是 wire 日志）                         | `agent`, `content`                                              |
+| `agent_response`        | engine client  | 远端响应已组装                                     | `agent`, `response`, `receivedMessages`                         |
+| `agent_status_update`   | 引擎客户端     | 智能体 SSE 状态更新                                | `agent`、`state`、`is_final`                                    |
+| `agent_artifact_update` | 引擎客户端     | 智能体 SSE 产物更新                                | `agent`、`artifact_name`、`text`                                |
+| `negotiation_request`   | engine client  | 有效 Propose 进入业务接管                          | `agent`, `request`, `exchange`                                  |
+| `negotiation_resolved`  | engine client  | 宿主 Send 通过关联检查；不等于任务成功             | `agent`, `reply`, `exchange`                                    |
+| `negotiation_failed`    | engine client  | 本地协商交互失败                                   | `agent`, `exchange`, `errorType`                                |
+| `complete`              | 运行器         | 工作流成功                                         | `history`、`step_outputs`                                       |
+| `error`                 | 运行器或执行器 | 工作流失败                                         | 运行器：`error`、`history`；执行器：`step`、`results`           |
+| `close`                 | 运行器         | 清理完成                                           | （空）                                                          |
 
 ## 6. 中间层（Layer 1: WorkflowExecutor）
 

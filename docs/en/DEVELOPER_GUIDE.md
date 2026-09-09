@@ -38,8 +38,9 @@ interface ControlPoint {
 ```
 
 onTask returns final parts/metadata/extensions; the engine sends them without generating or rewriting content.
-onSelfTask returns local TaskResult, onRoute selects an allowed candidate, and onNegotiation returns Send or Stop.
-Unimplemented callbacks fail explicitly. No echo-success, first-branch choice or automatic consent.
+onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
+returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
+echo-success, implicit route approval or automatic consent.
 See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
 
 ```java
@@ -49,8 +50,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+        .onRoute(request -> CompletableFuture.completedFuture(
+                RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();
@@ -85,26 +86,26 @@ and a sync `BiConsumer` overload.
 Events come from three layers: the runner (lifecycle bracket), the executor (step/task/routing), and the engine client
 (agent traffic, negotiation).
 
-| Event                   | Layer              | When                                                     | Key Data                                                |
-|-------------------------|--------------------|----------------------------------------------------------|---------------------------------------------------------|
-| `start`                 | runner             | Workflow begins                                          | `workflow`, `steps`                                     |
-| `step_start`            | executor           | Step begins                                              | `step`                                                  |
-| `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask`         | `step`, `agent`, `task`                                 |
-| `task_response`         | executor           | Remote task completed or onSelfTask returned TaskResult  | `step`, `agent`, `task`, `outputs`                      |
-| `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                       |
-| `route_decision`        | executor           | Branch chosen                                            | `step`, `next`, `reason`                                |
-| `step_complete`         | executor           | Step finished                                            | `step`, `results`                                       |
-| `workflow_complete`     | executor           | All steps finished                                       | `history`, `step_outputs`                               |
-| `agent_request`         | engine client      | Dispatch intent, not a wire observation                  | `agent`, `content`                                      |
-| `agent_response`        | engine client      | Remote response assembled                                | `agent`, `response`, `receivedMessages`                 |
-| `agent_status_update`   | engine client      | Agent SSE status update                                  | `agent`, `state`, `is_final`                            |
-| `agent_artifact_update` | engine client      | Agent SSE artifact update                                | `agent`, `artifact_name`, `text`                        |
-| `negotiation_request`   | engine client      | Valid Propose enters host callback                       | `agent`, `request`, `exchange`                          |
-| `negotiation_resolved`  | engine client      | Host Send passed association checks, not task success    | `agent`, `reply`, `exchange`                            |
-| `negotiation_failed`    | engine client      | Local negotiation interaction failed                     | `agent`, `exchange`, `errorType`                        |
-| `complete`              | runner             | Workflow succeeded                                       | `history`, `step_outputs`                               |
-| `error`                 | runner or executor | Workflow failed                                          | runner: `error`, `history`; executor: `step`, `results` |
-| `close`                 | runner             | Cleanup done                                             | (empty)                                                 |
+| Event                   | Layer              | When                                                     | Key Data                                                        |
+|-------------------------|--------------------|----------------------------------------------------------|-----------------------------------------------------------------|
+| `start`                 | runner             | Workflow begins                                          | `workflow`, `steps`                                             |
+| `step_start`            | executor           | Step begins                                              | `step`                                                          |
+| `task_request`          | executor           | A subtask is dispatched to `onTask`/`onSelfTask`         | `step`, `agent`, `task`                                         |
+| `task_response`         | executor           | Remote task completed or onSelfTask returned TaskResult  | `step`, `agent`, `task`, `outputs`                              |
+| `task_status_changed`   | executor           | Task status changed (pending → running → success/failed) | `step`, `agent`, `task`, `status`                               |
+| `route_decision`        | executor           | Successful routing recorded for one outgoing edge        | `step`, `next`, `condition`, `conditional`, `allowed`, `reason` |
+| `step_complete`         | executor           | Step finished                                            | `step`, `results`                                               |
+| `workflow_complete`     | executor           | All steps finished                                       | `history`, `step_outputs`                                       |
+| `agent_request`         | engine client      | Dispatch intent, not a wire observation                  | `agent`, `content`                                              |
+| `agent_response`        | engine client      | Remote response assembled                                | `agent`, `response`, `receivedMessages`                         |
+| `agent_status_update`   | engine client      | Agent SSE status update                                  | `agent`, `state`, `is_final`                                    |
+| `agent_artifact_update` | engine client      | Agent SSE artifact update                                | `agent`, `artifact_name`, `text`                                |
+| `negotiation_request`   | engine client      | Valid Propose enters host callback                       | `agent`, `request`, `exchange`                                  |
+| `negotiation_resolved`  | engine client      | Host Send passed association checks, not task success    | `agent`, `reply`, `exchange`                                    |
+| `negotiation_failed`    | engine client      | Local negotiation interaction failed                     | `agent`, `exchange`, `errorType`                                |
+| `complete`              | runner             | Workflow succeeded                                       | `history`, `step_outputs`                                       |
+| `error`                 | runner or executor | Workflow failed                                          | runner: `error`, `history`; executor: `step`, `results`         |
+| `close`                 | runner             | Cleanup done                                             | (empty)                                                         |
 
 ## 6. Mid-Level (Layer 1: WorkflowExecutor)
 

@@ -14,8 +14,9 @@ interface ControlPoint {
 }
 ```
 
-onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。 onSelfTask 返回本地 TaskResult；onRoute
-选择允许的候选；onNegotiation 返回 Send 或 Stop。 未实现的回调明确失败，不回显成功、不选首分支、不自动同意。
+onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
+对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
+不回显成功、不默认放行条件边、不自动同意。
 字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
 
 ```java
@@ -25,8 +26,8 @@ ControlPoint callbacks = ControlPoint.builder()
     .onSelfTask(request -> CompletableFuture.completedFuture(
         TaskResult.success(List.of(Map.of(
             "sourceResults", request.getWorkflowInput().upstreamResults())))))
-    .onRoute(request -> CompletableFuture.failedFuture(
-        new IllegalStateException("Supply a routing policy for " + request.stepName())))
+    .onRoute(request -> CompletableFuture.completedFuture(
+        RouteDecision.deny("Replace with host condition evaluation")))
     .onNegotiation(request -> CompletableFuture.completedFuture(
         new NegotiationReply.Stop("manual.required", "Manual confirmation required")))
     .build();
@@ -125,10 +126,13 @@ safeMessage, safeDetails)； 引擎不识别 SDK 专属内容异常类，也不�
 
 ## 6. 路由、并发与失败
 
-RouteRequest(executionId, stepName, workflowInput, currentResults, candidates)。 候选为 RouteOption(nextStep,
-condition)，返回 RouteDecision.builder().nextStep(允许目标).build()。 无条件边自动并行推进，条件分支只接受候选中的目标。
+RouteRequest (executionId, stepName, nextStep, condition, workflowInput, currentResults) 每次描述一条条件边。 返回
+RouteDecision.allow (reason) 激活该边，或返回 RouteDecision.deny (reason) 跳过该边。null、空字符串和纯空白条件都是无条件边，
+不进入 onRoute 并始终激活。每条非空条件边独立判断，因此最终可同时激活零条、一条或多条条件边，并与所有无条件边一起推进。
+引擎等待全部路由判断完成后才下发任何后继节点；回调缺失、返回 null、异常或超时都会使工作流失败，不会发生部分后继任务已下发。
+路由失败信息会标明源节点和目标节点，并保留原始异常原因。
 
-回调可能并发，不要共享可变的“当前任务”状态。每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
+不同条件边的回调可能并发，不要共享可变的“当前任务”状态。每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
 sendTimeoutSeconds=600； 路由单独限制回调等待时间，dispatch／协商另有总等待截止时间。取消／超时后晚到结果不发送，
 但不等于自动取消宿主正在运行的 LLM 或业务操作，宿主负责清理其资源。 同步回调入口应迅速返回，阻塞任务应交给异步执行器。
 回调缺失、返回 null 或异常均明确失败；不确定发送失败不自动重发。
