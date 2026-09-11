@@ -402,6 +402,7 @@ task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 NotificationSubscription openNotification(String agentName, MessageContent content,
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```

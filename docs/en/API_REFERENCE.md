@@ -97,9 +97,16 @@ task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 NotificationSubscription openNotification(String agentName, MessageContent content,
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
+
+`sendTask` dispatches a one-shot task without a workflow: the host supplies final content (structured
+Task-T prompt or plain text), the engine envelopes, authenticates and sends it, and returns the
+complete `SendMessageResult`. No `ControlPoint` is invoked and no negotiation is attempted -- if the
+agent responds with `INPUT_REQUIRED`, the result carries that state and the caller decides the next
+step. Each call uses a fresh context independent of any workflow session.
 
 Authorization and notification accept host-generated final content. Use separate transport/runtime/context instances;
 their outcomes do not gate the workflow. openNotification registers a handle before I/O, and passes it plus

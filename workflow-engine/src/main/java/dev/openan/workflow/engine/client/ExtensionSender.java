@@ -30,6 +30,18 @@ public interface ExtensionSender {
   /** Sends final authorization content on this sender's independent transport. */
   CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
 
+  /**
+   * Sends a one-shot task to an agent without a workflow context.
+   *
+   * <p>The host supplies final content (structured Task-T prompt or plain text); the engine
+   * envelopes it, authenticates, sends, and assembles the complete response. No {@code
+   * ControlPoint} is invoked and no negotiation is attempted: if the agent responds with
+   * {@code INPUT_REQUIRED}, the result carries that state and the caller decides the next step.
+   * The operation uses a fresh context independent of any workflow session, exactly like
+   * {@link #sendAuthorization(String, MessageContent)}.
+   */
+  CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
+
   /** Registers a handle before starting I/O; early callbacks may close it directly. */
   NotificationSubscription openNotification(
       String agentName,

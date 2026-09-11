@@ -50,6 +50,18 @@ public record DefaultExtensionSender(A2ATransport transport)
   }
 
   @Override
+  public CompletableFuture<SendMessageResult> sendTask(
+      String agentName, MessageContent content) {
+    Objects.requireNonNull(content, "content");
+    AgentCard card = transport.getCard(agentName);
+    if (card == null) throw new IllegalArgumentException("Agent not found: " + agentName);
+    String contextId = UUID.randomUUID().toString();
+    return transport
+        .send(card, agentName, content, contextId, null, null)
+        .whenComplete((result, error) -> transport.closeConversation(card, contextId));
+  }
+
+  @Override
   public NotificationSubscription openNotification(
       String agentName,
       MessageContent content,

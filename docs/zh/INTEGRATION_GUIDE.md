@@ -384,6 +384,7 @@ COMPLETED 确认，也不能判为任务成功。
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 NotificationSubscription openNotification(String agentName, MessageContent content,
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```

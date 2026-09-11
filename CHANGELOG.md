@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Add `ExtensionSender.sendTask(agentName, content)`: a one-shot task dispatch independent of any
+  workflow. The host supplies final content; the engine envelopes, authenticates, sends and returns
+  the complete `SendMessageResult`. No `ControlPoint` is invoked and no negotiation is attempted --
+  `INPUT_REQUIRED` is returned to the caller as-is. Each call uses a fresh context, matching
+  `sendAuthorization`.
 - Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
   setting as `a2a.notification-ack-timeout-seconds` /
   `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS`.
