@@ -54,7 +54,7 @@ SDK jar 的 SHA-1 与 Central 发布校验值一致。
 
 需要接收端校验时同样显式添加 `a2a-t-server:1.1.0`；samples 已声明二者。
 
-东信 `com.eastcom.apollo:order-shaded-client:1.1.18` 仍是独立的非 Central 依赖， 运行 dev 完整 samples
+东信 `com.eastcom.apollo:order-shaded-client:1.1.19` 仍是独立的非 Central 依赖， 运行 dev 完整 samples
 前仍需按《指令平台适配指南》配置企业制品库或安装供应商 jar。 main 直连不需要该依赖。
 
 ## 升级 A2A-T SDK

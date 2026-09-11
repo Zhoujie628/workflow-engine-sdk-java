@@ -59,7 +59,7 @@ jobs:
           cache: 'maven'
 
       - name: Verify vendor dependency is provisioned
-        run: mvn -B -o dependency:get "-Dartifact=com.eastcom.apollo:order-shaded-client:1.1.18" "-Dtransitive=false"
+        run: mvn -B -o dependency:get "-Dartifact=com.eastcom.apollo:order-shaded-client:1.1.19" "-Dtransitive=false"
 
       - name: Verify direct and Order scenarios
         run: mvn -B clean verify

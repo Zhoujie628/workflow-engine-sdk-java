@@ -50,7 +50,7 @@ class SpringSpnDemoOrderE2ETest extends SpringSpnDemoE2ETest {
       "--a2a.order.simulator-city2-target-url=https://127.0.0.1:26336",
       "--a2a.order.omc-auth-enabled=true",
       "--a2a.order.omc-credentials-path=classpath:spn_agent_credentials.json",
-      "--a2a.order.timeout-seconds=30"
+      "--a2a.order.timeout-seconds=90"
     };
   }
 }

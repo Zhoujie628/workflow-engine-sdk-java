@@ -42,13 +42,13 @@ import org.slf4j.LoggerFactory;
  * RSocket-RPC {@code OrderHttpSessionClient} and directly accessed the vendor's shaded {@code
  * HttpSessionService} field. Requests use the public API surface described in the Eastcom
  * instruction-platform interface specification v1.8 (2026-01-27). Client construction additionally
- * installs the isolated {@link EastcomOrder118ByteBufWorkaround} required by the pinned vendor
- * version:
+ * installs the isolated {@link EastcomOrderByteBufWorkaround} required by the vendor's bridged
+ * HTTP path:
  *
  * <ul>
  *   <li>{@code HttpClient.create(serverInfo, config)} - the HTTP flow documented by v1.8
  *   <li>{@code .post().uri(path).header(name, value).body(obj).send()} - synchronous HTTP
- *   <li>{@code .sendSse(listener)} - SSE streaming with onHeader/onBodyString
+ *   <li>{@code .sendSse(listener)} - SSE streaming through the 1.1.19 default long-lived path
  *   <li>{@code .secure(spec -> ...)} - HTTPS with InsecureTrustManagerFactory
  * </ul>
  *
@@ -75,7 +75,7 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
   OrderHttpClientAdapter(ServerInfo serverInfo, String ne, boolean https) {
     this.ne = ne;
     HttpRequestConfig config = HttpRequestConfig.builder().deviceName(ne).build();
-    this.httpClient = EastcomOrder118ByteBufWorkaround.createClient(serverInfo, config);
+    this.httpClient = EastcomOrderByteBufWorkaround.createClient(serverInfo, config);
     // HTTPS to the target device is handled by the platform internally.
     // HttpClient.secure() would configure TLS on the RSocket transport and corrupt
     // the connection. Do not call .secure() here.

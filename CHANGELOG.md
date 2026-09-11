@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Upgrade the dev Order adapter to `order-shaded-client:1.1.19` and use its default long-lived SSE implementation;
+  keep the request-buffer ownership workaround only for the still-bridged blocking HTTP path.
 - Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
   setting as `a2a.notification-ack-timeout-seconds` /
   `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS`.

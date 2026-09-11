@@ -35,7 +35,7 @@ import java.lang.reflect.Field;
 import java.util.function.BiConsumer;
 
 /**
- * Isolates a reference-count ownership defect in Eastcom {@code order-shaded-client:1.1.18}.
+ * Isolates a reference-count ownership defect in the Eastcom Order SDK's bridged HTTP path.
  *
  * <p>That version's {@link ReactorNettyBridgeHandler#write(ChannelHandlerContext, Object,
  * ChannelPromise)} converts an outbound {@code ByteBuf} to an {@code OrderHttpRequest} and consumes
@@ -45,18 +45,19 @@ import java.util.function.BiConsumer;
  *
  * <p>The handler installed here sits immediately after the vendor bridge in outbound traversal. It
  * delegates synchronously to the bridge and releases only after the bridge has copied the bytes. No
- * vendor class or jar is replaced. Remove this class after upgrading to a vendor release whose
- * bridge releases the consumed message itself.
+ * vendor class or jar is replaced. The 1.1.19 default SSE path does not use this bridge, but
+ * ordinary HTTP requests still do. Remove this class after upgrading to a vendor release whose
+ * bridged HTTP path releases the consumed message itself.
  */
-final class EastcomOrder118ByteBufWorkaround {
+final class EastcomOrderByteBufWorkaround {
   private static final String RELEASE_HANDLER_NAME =
-      EastcomOrder118ByteBufWorkaround.class.getName() + ".releaseAfterBridge";
+      EastcomOrderByteBufWorkaround.class.getName() + ".releaseAfterBridge";
   private static final Field HTTP_CLIENT_CONFIGURATION = configurationField();
   private static final ChannelHandler RELEASE_HANDLER = new ReleaseAfterVendorBridge();
 
-  private EastcomOrder118ByteBufWorkaround() {}
+  private EastcomOrderByteBufWorkaround() {}
 
-  /** Creates the public vendor client and installs the narrowly scoped 1.1.18 ownership fix. */
+  /** Creates the public vendor client and installs the narrowly scoped ownership fix. */
   static HttpClient createClient(ServerInfo serverInfo, HttpRequestConfig requestConfig) {
     HttpClient client = HttpClient.create(serverInfo, requestConfig);
     ReleasingHttpClientConfig configuration = new ReleasingHttpClientConfig();
@@ -65,8 +66,7 @@ final class EastcomOrder118ByteBufWorkaround {
     try {
       HTTP_CLIENT_CONFIGURATION.set(client, configuration);
     } catch (IllegalAccessException e) {
-      throw new IllegalStateException(
-          "Cannot install Eastcom 1.1.18 ByteBuf ownership workaround", e);
+      throw new IllegalStateException("Cannot install Eastcom ByteBuf ownership workaround", e);
     }
     return client;
   }
@@ -89,7 +89,7 @@ final class EastcomOrder118ByteBufWorkaround {
     ChannelHandlerContext bridge = pipeline.context(ReactorNettyBridgeHandler.class);
     if (bridge == null) {
       throw new IllegalStateException(
-          "Eastcom 1.1.18 ReactorNettyBridgeHandler is absent; review or remove its ByteBuf workaround");
+          "Eastcom ReactorNettyBridgeHandler is absent; review or remove its ByteBuf workaround");
     }
     pipeline.addAfter(bridge.name(), RELEASE_HANDLER_NAME, RELEASE_HANDLER);
   }

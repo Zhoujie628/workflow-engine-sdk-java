@@ -34,9 +34,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
-class EastcomOrder118ByteBufWorkaroundTest {
+class EastcomOrderByteBufWorkaroundTest {
   private static ChannelHandler releaseHandler() throws Exception {
-    Field field = EastcomOrder118ByteBufWorkaround.class.getDeclaredField("RELEASE_HANDLER");
+    Field field = EastcomOrderByteBufWorkaround.class.getDeclaredField("RELEASE_HANDLER");
     field.setAccessible(true);
     return (ChannelHandler) field.get(null);
   }
@@ -50,7 +50,7 @@ class EastcomOrder118ByteBufWorkaroundTest {
           public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
             copied.set(ByteBufUtil.getBytes((ByteBuf) msg));
             promise.setSuccess();
-            // Models order-shaded-client:1.1.18: consume without forwarding or releasing.
+            // Models the current bridged HTTP path: consume without forwarding or releasing.
           }
         };
     EmbeddedChannel channel = new EmbeddedChannel(consumingBridge, releaseHandler());

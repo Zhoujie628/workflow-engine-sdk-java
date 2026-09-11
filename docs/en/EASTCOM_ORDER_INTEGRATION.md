@@ -1,13 +1,13 @@
 # Eastcom Instruction-Platform Integration Guide
 
-> Applies to the `dev` branch with workflow engine `0.0.2`, A2A-T SDK `1.1.0`, A2A Java SDK
-> `1.2.0.Final`, and Eastcom `order-shaded-client:1.1.18`. This guide describes the current
+> Applies to the `dev` branch with workflow engine `0.0.6`, A2A-T SDK `1.1.0`, A2A Java SDK
+> `1.2.0.Final`, and Eastcom `order-shaded-client:1.1.19`. This guide describes the current
 > implementation only; it does not cover legacy A2A-T or Order APIs.
 
 ## Fastest integration path
 
 1. Use the Maven Central A2A-T artifacts described in the [Developer Guide](DEVELOPER_GUIDE.md), and obtain
-   `order-shaded-client:1.1.18` from the vendor or the enterprise artifact repository.
+   `order-shaded-client:1.1.19` from the vendor or the enterprise artifact repository.
 2. First run Task-T, conditional Negotiation-T, one-shot Authorization-T, and the independent long-lived
    Notification-T subscription in `A2A_TRANSPORT_MODE=direct`.
 3. Configure the actual platform endpoint, account, and Agent-to-NE routes; then switch to
@@ -48,15 +48,16 @@ such as `startNegotiation`.
 - `ConfiguredAgentGatewayRouteResolver` maps an Agent name to an NE and fails when no route exists.
 - `OrderGatewayClientRuntime` manages forwarding sessions, not workflow state.
 - `GatewayA2AResponseParser` is request-local and cannot share task or context state across concurrent calls.
-- `OrderHttpClientAdapter` isolates the vendor 1.1.18 API and uses public `HttpClient`/`sendSse` operations.
-- `EastcomOrder118ByteBufWorkaround` is limited to the confirmed 1.1.18 outbound request-buffer ownership defect.
+- `OrderHttpClientAdapter` isolates the vendor 1.1.19 API and uses public `HttpClient`/`sendSse` operations.
+- `EastcomOrderByteBufWorkaround` is limited to the confirmed bridged HTTP request-buffer ownership defect that
+  remains in 1.1.19 blocking requests; the default SSE path does not use that bridge.
 - Logical adapter sessions are isolated by `contextId + NE + channel` and serialized per key. `SESSION_OPEN`,
   `SESSION_REUSE`, and `SESSION_CLOSE` describe engine resources, not vendor login/logout sessions.
 - `WorkbenchExtensionLifecycle` owns independent operations. Authorization is one-shot; Notification keeps its own
   transport until the expected `recovery-result`, explicit cancellation, or workbench shutdown. Neither result gates
   the Task-T workflow.
 
-The 1.1.18 jar exposes static `HttpClient.login(serverInfo, config)`, but the HTTP integration section of the Eastcom
+The 1.1.19 jar exposes static `HttpClient.login(serverInfo, config)`, but the HTTP integration section of the Eastcom
 v1.8 document uses `HttpClient.create(serverInfo, config)` to obtain a device token and invoke device APIs. The adapter
 follows that documented HTTP path and does not introduce undocumented login/logout lifecycle assumptions.
 
@@ -179,9 +180,9 @@ affected forward on local connection closure and records `FORWARD_CANCEL_REQUEST
 closing another NE call or Notification-T subscription. Confirm live platform cancellation behavior in acceptance item
 L-09; `STREAM_EXIT` alone does not prove that an OMC task slot was released.
 
-### SDK 1.1.18 request-buffer workaround
+### SDK 1.1.19 bridged-request buffer workaround
 
-`order-shaded-client:1.1.18` allocates an outbound pooled `ByteBuf`; its bridge copies and consumes the message without
+The bridged HTTP path in `order-shaded-client:1.1.19` allocates an outbound pooled `ByteBuf`; its bridge copies and consumes the message without
 releasing the original buffer. This can produce:
 
 ```text
@@ -189,7 +190,7 @@ ResourceLeakDetector - LEAK: ByteBuf.release() was not called
 Created at: WrapperHttpClient.lambda$null$9(WrapperHttpClient.java:164)
 ```
 
-`EastcomOrder118ByteBufWorkaround` installs a sharable outbound handler immediately before the vendor bridge, lets the
+`EastcomOrderByteBufWorkaround` installs a sharable outbound handler immediately before the vendor bridge, lets the
 bridge copy the request, then releases the consumed original in `finally`. It does not replace the jar, disable leak
 detection, or release response buffers. If the expected bridge is absent, startup fails rather than risking a double
 release. Remove this workaround after upgrading to a vendor-fixed version and rerun Order E2E and long-running tests
@@ -210,9 +211,12 @@ The production adapter uses the public v1.8 HTTP API:
 2. `responseTimeout(Duration)` sets the request budget.
 3. `post().uri(path).header(name, value).body(body).send()` performs a blocking request and returns status, headers,
    and response content.
-4. `sendSse(SseListener)` exposes response status/headers and text chunks. The adapter incrementally assembles SSE
-   frames across arbitrary callback boundaries.
-5. Target HTTPS is an OMC routing attribute handled by the platform; it is not TLS for the client-to-platform RSocket
+4. `sendSse(SseListener)` uses the 1.1.19 default `sendSseNoPort` long-lived implementation and exposes response
+   status/headers and text chunks. The adapter incrementally assembles SSE frames across arbitrary callback boundaries.
+   Do not set `useOldSseMethod=true`, which restores the previous bridged SSE path.
+5. Before an SSE request, 1.1.19 resolves the target through `loadNeResource`; the platform response must provide
+   `neParams.ip`, `neParams.port`, `neParams.username`, and `neParams.password` (or `pwd`).
+6. Target HTTPS is an OMC routing attribute handled by the platform; it is not TLS for the client-to-platform RSocket
    connection.
 
 For each send, the runtime resolves AgentCard name to NE and URI/tenant, serializes `MessageSendParams` as A2A protobuf
@@ -290,7 +294,7 @@ to a one-request resource because safe round association is impossible.
 | L-13 | TLS/mTLS requirements                                            | Target HTTPS comes from AgentInterface; vendor SDK owns platform transport | Certificate validation and rotation are agreed                                                    |
 | L-14 | Idle/restart reconnect behavior                                  | Creates/sends only through public `HttpClient`                             | Next request succeeds after idle, sleep, or platform restart                                      |
 | L-15 | Negotiation follow-up routing                                    | Uses same context/task in a new self-contained call                        | Follow-up reaches the same A2A task exactly once                                                  |
-| L-16 | HttpClient reuse and connection-pool lifecycle                   | Serializes per key; installs 1.1.18 buffer workaround                      | Vendor confirms ownership; long-run resources stay bounded                                        |
+| L-16 | HttpClient reuse and connection-pool lifecycle                   | Serializes per key; installs the bridged-request buffer workaround          | Vendor confirms ownership; long-run resources stay bounded                                        |
 | L-17 | Notification reconnect/idempotency                               | Does not auto-resubscribe under unknown semantics                          | Vendor defines subscription ID, deduplication, and backoff                                        |
 | L-18 | `GET /tasks` pagination and `POST /tasks/{id}:cancel` forwarding | Uses short-lived authenticated sessions and preserves query/path encoding  | All visible active tasks are listed and canceled without affecting workflow or notification lanes |
 
@@ -316,9 +320,14 @@ same callbacks. The original platform-to-OMC bytes are not observable and must n
 logger.protocol.name=PROTOCOL
 logger.protocol.level=DEBUG
 logger.protocol.additivity=true
+logger.eastcomSse.name=com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.internal.SseListener
+logger.eastcomSse.level=WARN
 WORKFLOW_ENGINE_PROTOCOL_INCLUDE_BODY=true
 WORKFLOW_ENGINE_PROTOCOL_MAX_BODY_CHARS=100000
 ```
+
+The vendor `SseListener` repeats every SSE frame as single-line INFO output. Set that logger to WARN so protocol bodies
+are emitted only by `PROTOCOL` with correlation fields and pretty JSON; vendor WARN/ERROR events remain visible.
 
 Authentication headers, cookies, tokens, and recognized password fields are always redacted. Body observation is
 bounded and can be disabled. Oversized SSE frames are dropped until the next delimiter and marked `dropped-capacity`.
@@ -353,7 +362,7 @@ of live model, Eastcom platform, or OMC behavior.
 <dependency>
     <groupId>com.eastcom.apollo</groupId>
     <artifactId>order-shaded-client</artifactId>
-    <version>1.1.18</version>
+    <version>1.1.19</version>
 </dependency>
 ```
 
@@ -361,10 +370,10 @@ When the enterprise repository does not provide it:
 
 ```bash
 mvn install:install-file \
-  -Dfile=order-shaded-client-1.1.18.jar \
+  -Dfile=order-shaded-client-1.1.19.jar \
   -DgroupId=com.eastcom.apollo \
   -DartifactId=order-shaded-client \
-  -Dversion=1.1.18 \
+  -Dversion=1.1.19 \
   -Dpackaging=jar
 ```
 
@@ -391,7 +400,7 @@ manual runs must pass both direct and Order tests. See [Contributing](../../CONT
 | `samples/.../gateway/OrderHttpClientAdapter.java` | Public vendor `HttpClient`/`sendSse` adapter |
 | `samples/.../gateway/ConfiguredAgentGatewayRouteResolver.java` | Agent-to-NE routing |
 | `samples/.../gateway/GatewayA2AResponseParser.java` | Blocking and incremental SSE parsing |
-| `samples/.../gateway/EastcomOrderSimulatorServer.java` | Local 1.1.18 RSocket-RPC protocol simulator |
+| `samples/.../gateway/EastcomOrderSimulatorServer.java` | Local 1.1.19 RSocket-RPC protocol simulator |
 | `workflow-engine/.../client/A2ATransport.java` | Shared transport and subscription lifecycle |
 | `workflow-engine/.../core/WorkflowExecutor.java` | DAG traversal and workflow validation |
 

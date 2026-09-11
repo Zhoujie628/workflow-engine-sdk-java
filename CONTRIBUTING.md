@@ -147,7 +147,7 @@ Every Java file must start with the Apache 2.0 license header:
 ### Eastcom release gate (dev)
 
 The `eastcom-sdk` self-hosted runner must be provisioned with the licensed
-`com.eastcom.apollo:order-shaded-client:1.1.18` artifact and JDK/Maven.
+`com.eastcom.apollo:order-shaded-client:1.1.19` artifact and JDK/Maven.
 Restrict that runner to trusted repositories/branch pushes and manual runs; it must never execute untrusted fork PR code.
 The CI sample job runs the full reactor, including direct and Order simulator tests, without `continue-on-error`.
 A missing/offline runner is an unmet release prerequisite, not permission to skip the gate.

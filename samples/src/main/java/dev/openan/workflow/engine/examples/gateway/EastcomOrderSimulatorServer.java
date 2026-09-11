@@ -73,7 +73,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Local protocol simulator for Eastcom Order SDK 1.1.18.
+ * Local protocol simulator for Eastcom Order SDK 1.1.19.
  *
  * <p>Unlike the adapter-level HTTP mock, this server speaks the vendor's real RSocket RPC protocol.
  * The {@code HttpClient} API performs login, loadNeResource, execute and logout via the {@code
@@ -236,7 +236,8 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
           .decode(data.asReadOnlyByteBuffer())
           .toString();
     } catch (CharacterCodingException invalidUtf8) {
-      // Eastcom SDK 1.1.18 encodes String request bodies with the JVM default charset.
+      // The current SDK's bridged HTTP path encodes String request bodies with the JVM default
+      // charset.
       // On Windows/JDK 17 that is commonly GBK. The wire model carries no charset, so
       // the local simulator must recover this legacy encoding.
       if (legacyRequestEncodingLogged.compareAndSet(false, true)) {
@@ -609,9 +610,18 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       String targetUrl = neTargets.get(neName);
       NeCredentials credentials = neCredentials.get(neName);
       log.info("[EastcomSimulator] LOAD_NE_ACCEPTED ne={}, target={}", neName, targetUrl);
+      // order-shaded-client 1.1.19 sendSseNoPort resolves the device endpoint from these
+      // lowercase neParams keys and parses the port with Integer.parseInt.
+      java.net.URI target = java.net.URI.create(targetUrl);
+      int port =
+          target.getPort() > 0
+              ? target.getPort()
+              : ("https".equalsIgnoreCase(target.getScheme()) ? 443 : 80);
       return Mono.just(
           OrderResourceResponse.newBuilder()
               .setNeUrl(targetUrl)
+              .putNeParams("ip", target.getHost())
+              .putNeParams("port", String.valueOf(port))
               .putNeParams("grantType", "password")
               .putNeParams("username", credentials.username())
               .putNeParams("password", credentials.password())
@@ -683,7 +693,15 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                           String[] reqLine = headerLines[0].split(" ");
                           if (reqLine.length >= 2) {
                             parsedMethod[0] = reqLine[0];
-                            parsedPath[0] = reqLine[1];
+                            // order-shaded-client 1.1.19 sendSseNoPort writes an absolute-form
+                            // request target (http://ip:port/path, RFC 7230 5.3.2); normalize it
+                            // to the origin-form path before resolving the forward target.
+                            String requestTarget = reqLine[1];
+                            if (requestTarget.startsWith("http://")
+                                || requestTarget.startsWith("https://")) {
+                              requestTarget = java.net.URI.create(requestTarget).getRawPath();
+                            }
+                            parsedPath[0] = requestTarget;
                           }
                         }
                         for (int i = 1; i < headerLines.length; i++) {
@@ -713,7 +731,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                         forwarded.set(true);
                         String httpMethod = parsedMethod[0];
                         String httpPath = parsedPath[0];
-                        // SDK 1.1.18 carries deviceName in the first RPC packet. Resolve both
+                        // The bridged HTTP path carries deviceName in the first RPC packet. Resolve both
                         // target and credentials per request, even when two NEs share a URL.
                         String targetBase = neTargets.get(requestNe[0]);
                         if (targetBase == null) {
@@ -821,11 +839,11 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
               connection.setDoOutput(hasRequestBody);
               connection.setConnectTimeout(connectTimeoutMillis);
               // Cover connection establishment and the first response headers from a
-              // remote, LLM-backed OMC. Once a streaming response starts, switch to a
-              // short cancellation poll so idle Notification-T subscriptions can be
-              // released promptly during shutdown.
-              connection.setReadTimeout(
-                  streaming ? readTimeoutMillis : Math.max(readTimeoutMillis, 65_000));
+              // remote, LLM-backed OMC. Notification-T subscriptions are long-lived by
+              // design: the demo's cleanup (cancelNotificationStreams) closes them when
+              // the workflow exits, so the simulator must not idle-timeout the stream.
+              // A generous safety net (10 minutes) still releases abandoned connections.
+              connection.setReadTimeout(streaming ? 600_000 : Math.max(readTimeoutMillis, 65_000));
               copyHeaders(fHeaders, connection);
               if (hasRequestBody) {
                 try (OutputStream output = connection.getOutputStream()) {

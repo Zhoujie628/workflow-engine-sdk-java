@@ -124,7 +124,7 @@ final class EastcomTokenService implements EastcomAuthProvider.TokenService {
       String loginMethod = textOrDefault(scheme.get("method"), properties.getOmcLoginMethod());
       String contentType = textOrDefault(scheme.get("content_type"), "application/json");
       HttpRequestConfig requestConfig = HttpRequestConfig.builder().deviceName(ne).build();
-      HttpClient client = EastcomOrder118ByteBufWorkaround.createClient(serverInfo, requestConfig);
+      HttpClient client = EastcomOrderByteBufWorkaround.createClient(serverInfo, requestConfig);
       client.responseTimeout(timeout);
       HttpResponse response =
           request(client, loginMethod)

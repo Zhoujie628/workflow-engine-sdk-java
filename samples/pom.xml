@@ -53,7 +53,7 @@
         <dependency>
             <groupId>com.eastcom.apollo</groupId>
             <artifactId>order-shaded-client</artifactId>
-            <version>1.1.18</version>
+            <version>1.1.19</version>
         </dependency>
         <!-- Spring Boot starter: auto-assembles A2A server beans, partner only implements AgentExecutor -->
         <dependency>
