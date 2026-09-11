@@ -18,6 +18,7 @@
  */
 package dev.openan.workflow.engine.examples.config;
 
+import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -34,6 +35,8 @@ public class WorkbenchClientProperties {
   private boolean taskCleanupFailFast = true;
   private int taskCleanupPageSize = 100;
   private int taskCleanupMaxTasks = 1000;
+  private long notificationAckTimeoutSeconds =
+      WorkflowEngineClientConfig.DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS;
 
   /**
    * Internal sample-host setting; SpringSpnDemo supplies its local-only default per application
@@ -110,5 +113,13 @@ public class WorkbenchClientProperties {
 
   public void setTaskCleanupMaxTasks(int taskCleanupMaxTasks) {
     this.taskCleanupMaxTasks = taskCleanupMaxTasks;
+  }
+
+  public long getNotificationAckTimeoutSeconds() {
+    return notificationAckTimeoutSeconds;
+  }
+
+  public void setNotificationAckTimeoutSeconds(long notificationAckTimeoutSeconds) {
+    this.notificationAckTimeoutSeconds = notificationAckTimeoutSeconds;
   }
 }

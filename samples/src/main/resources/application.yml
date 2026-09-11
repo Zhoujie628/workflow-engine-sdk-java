@@ -25,3 +25,4 @@ a2a:
   task-cleanup-fail-fast: ${A2A_TASK_CLEANUP_FAIL_FAST:true}
   task-cleanup-page-size: ${A2A_TASK_CLEANUP_PAGE_SIZE:100}
   task-cleanup-max-tasks: ${A2A_TASK_CLEANUP_MAX_TASKS:1000}
+  notification-ack-timeout-seconds: ${A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS:300}

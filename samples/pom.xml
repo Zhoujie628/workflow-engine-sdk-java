@@ -52,7 +52,7 @@
         <!-- Spring Boot starter: auto-assembles A2A server beans, partner only implements AgentExecutor -->
         <dependency>
             <groupId>net.openan.workflow.sdk</groupId>
-            <artifactId>spring-boot-starter</artifactId>
+            <artifactId>spring-boot-a2a-starter</artifactId>
             <version>${revision}</version>
         </dependency>
         <!-- Logging: Log4j2 (SLF4J 2.x binding) with console + rolling file appender -->

@@ -64,7 +64,8 @@ public final class SpringWorkbenchExtensionLifecycle {
             properties.isTaskCleanupFailFast(),
             properties.getTaskCleanupPageSize(),
             properties.getTaskCleanupMaxTasks(),
-            localAgentName);
+            localAgentName,
+            properties.getNotificationAckTimeoutSeconds());
     try {
       candidate.start();
       lifecycle = candidate;
