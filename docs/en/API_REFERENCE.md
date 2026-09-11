@@ -119,7 +119,7 @@ Builder-based configuration for the workflow engine client.
 | `clientKeyPassword`             | `String`       | null    | Password for an encrypted PKCS#8 private key                                                                                                            |
 | `crlPath`                       | `String`       | null    | X.509 CRL for HTTP/JSON-RPC; the default gRPC runtime rejects this unsupported combination                                                              |
 | `sendTimeoutSeconds`            | `long`         | `600`   | SSE stream timeout (10 min default)                                                                                                                     |
-| `notificationAckTimeoutSeconds` | `long`         | `5`     | Wait for the first Notification-T ACK/event                                                                                                             |
+| `notificationAckTimeoutSeconds` | `long`         | `300`   | Wait for the first Notification-T ACK/event (five minutes by default)                                                                                   |
 | `sendExecutorCoreSize`          | `int`          | `4`     | Send executor core threads                                                                                                                              |
 | `sendExecutorMaxSize`           | `int`          | `16`    | Send executor maximum threads                                                                                                                           |
 | `sendExecutorQueueCapacity`     | `int`          | `256`   | Bounded send executor queue capacity                                                                                                                    |
@@ -136,6 +136,7 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .clientCertPath("client-cert.pem")
         .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
+        .notificationAckTimeoutSeconds(300)
         .credentialsConfigPath("creds.json")
         .maxNegotiationExchanges(5)
         .authProvider(myProvider)
@@ -621,9 +622,9 @@ not add private negotiation-state keys to the wire message.
 
 ---
 
-## spring-boot-starter Module
+## spring-boot-a2a-starter Module
 
-The `spring-boot-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the
+The `spring-boot-a2a-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the
 client/workflow side). In a Spring Boot web application, set `a2at.server.enabled=true` to register the A2A SDK server
 components as Spring beans.
 

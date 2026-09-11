@@ -52,6 +52,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
   private final int taskCleanupPageSize;
   private final int taskCleanupMaxTasks;
   private final String localAgentName;
+  private final long notificationAckTimeoutSeconds;
   private final java.util.function.BiConsumer<
           NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
       notificationCallback;
@@ -79,7 +80,8 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         true,
         100,
         1000,
-        null);
+        null,
+        WorkflowEngineClientConfig.DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS);
   }
 
   public WorkbenchExtensionLifecycle(
@@ -102,7 +104,8 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
         true,
         100,
         1000,
-        null);
+        null,
+        WorkflowEngineClientConfig.DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS);
   }
 
   public WorkbenchExtensionLifecycle(
@@ -119,6 +122,36 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       int taskCleanupPageSize,
       int taskCleanupMaxTasks,
       String localAgentName) {
+    this(
+        credentialsPath,
+        sslVerify,
+        a2atEnvPath,
+        runtimeSupplier,
+        notificationCallback,
+        authProvider,
+        taskCleanupEnabled,
+        taskCleanupFailFast,
+        taskCleanupPageSize,
+        taskCleanupMaxTasks,
+        localAgentName,
+        WorkflowEngineClientConfig.DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS);
+  }
+
+  public WorkbenchExtensionLifecycle(
+      String credentialsPath,
+      boolean sslVerify,
+      String a2atEnvPath,
+      Supplier<A2AJavaClientRuntime> runtimeSupplier,
+      java.util.function.BiConsumer<
+              NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
+          notificationCallback,
+      AuthProvider authProvider,
+      boolean taskCleanupEnabled,
+      boolean taskCleanupFailFast,
+      int taskCleanupPageSize,
+      int taskCleanupMaxTasks,
+      String localAgentName,
+      long notificationAckTimeoutSeconds) {
     this.credentialsPath = credentialsPath;
     this.sslVerify = sslVerify;
     this.a2atEnvPath = a2atEnvPath;
@@ -130,6 +163,10 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
     this.taskCleanupPageSize = taskCleanupPageSize;
     this.taskCleanupMaxTasks = taskCleanupMaxTasks;
     this.localAgentName = localAgentName;
+    if (notificationAckTimeoutSeconds <= 0) {
+      throw new IllegalArgumentException("notificationAckTimeoutSeconds must be positive");
+    }
+    this.notificationAckTimeoutSeconds = notificationAckTimeoutSeconds;
   }
 
   private static long elapsedMillis(long startedNanos) {
@@ -162,6 +199,7 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
               .sslVerify(sslVerify)
               .credentialsConfigPath(credentialsPath)
               .authProvider(authProvider)
+              .notificationAckTimeoutSeconds(notificationAckTimeoutSeconds)
               .build();
       authorizationTransport = new A2ATransport(agentCards, authorizationRuntime, config);
       notificationCandidate = new A2ATransport(agentCards, notificationRuntime, config);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
+  setting as `a2a.notification-ack-timeout-seconds` /
+  `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS`.
+
 ## [0.0.5] — 2026-09-09
 
 ### Breaking: per-edge conditional routing

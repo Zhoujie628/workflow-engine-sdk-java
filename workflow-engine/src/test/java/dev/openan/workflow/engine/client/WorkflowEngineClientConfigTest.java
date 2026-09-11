@@ -26,6 +26,18 @@ import org.junit.jupiter.api.Test;
 
 class WorkflowEngineClientConfigTest {
   @Test
+  void notificationAcknowledgementDefaultsToFiveMinutesAndRemainsConfigurable() {
+    assertEquals(
+        300, WorkflowEngineClientConfig.builder().build().getNotificationAckTimeoutSeconds());
+    assertEquals(
+        45,
+        WorkflowEngineClientConfig.builder()
+            .notificationAckTimeoutSeconds(45)
+            .build()
+            .getNotificationAckTimeoutSeconds());
+  }
+
+  @Test
   void rejectsInvalidResourceLimits() {
     assertThrows(
         IllegalArgumentException.class,
@@ -33,6 +45,9 @@ class WorkflowEngineClientConfigTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> WorkflowEngineClientConfig.builder().sendTimeoutSeconds(0).build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkflowEngineClientConfig.builder().notificationAckTimeoutSeconds(0).build());
   }
 
   @Test

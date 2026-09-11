@@ -35,6 +35,9 @@ import lombok.Getter;
 @Getter
 public class WorkflowEngineClientConfig {
 
+  /** Default wait for the first Notification-T acknowledgement: five minutes. */
+  public static final long DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS = 300;
+
   private final boolean sslVerify;
   private final String caCertsPath;
   private final String clientCertPath;
@@ -123,7 +126,7 @@ public class WorkflowEngineClientConfig {
     private String clientKeyPassword = null;
     private String crlPath = null;
     private long sendTimeoutSeconds = 600;
-    private long notificationAckTimeoutSeconds = 5;
+    private long notificationAckTimeoutSeconds = DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS;
     private int sendExecutorCoreSize = 4;
     private int sendExecutorMaxSize = 16;
     private int sendExecutorQueueCapacity = 256;
