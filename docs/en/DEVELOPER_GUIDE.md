@@ -11,7 +11,7 @@ Add to your `pom.xml`:
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.6</version>
 </dependency>
 ```
 

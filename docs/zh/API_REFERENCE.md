@@ -113,7 +113,7 @@ handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。
 | `clientKeyPassword`             | `String`       | null   | 加密 PKCS#8 私钥密码                                                                                      |
 | `crlPath`                       | `String`       | null   | HTTP/JSON-RPC 的 X.509 CRL 路径；默认 gRPC runtime 暂不支持并会拒绝启动                                   |
 | `sendTimeoutSeconds`            | `long`         | `600`  | SSE 流超时（默认 10 分钟）                                                                                |
-| `notificationAckTimeoutSeconds` | `long`         | `5`    | Notification-T 首个 ACK/事件等待时间                                                                      |
+| `notificationAckTimeoutSeconds` | `long`         | `300`  | Notification-T 首个 ACK/事件等待时间（默认 5 分钟）                                                       |
 | `sendExecutorCoreSize`          | `int`          | `4`    | 发送线程池核心线程数                                                                                      |
 | `sendExecutorMaxSize`           | `int`          | `16`   | 发送线程池最大线程数                                                                                      |
 | `sendExecutorQueueCapacity`     | `int`          | `256`  | 发送线程池有界队列容量                                                                                    |
@@ -130,6 +130,7 @@ WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
         .clientCertPath("client-cert.pem")
         .clientKeyPath("client-key.pem")
         .sendTimeoutSeconds(900)
+        .notificationAckTimeoutSeconds(300)
         .credentialsConfigPath("creds.json")
         .maxNegotiationExchanges(5)
         .authProvider(myProvider)
@@ -588,9 +589,9 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 
 ---
 
-## spring-boot-starter 模块
+## spring-boot-a2a-starter 模块
 
-`spring-boot-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。在 Spring Boot Web 应用中配置
+`spring-boot-a2a-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。在 Spring Boot Web 应用中配置
 `a2at.server.enabled=true` 后，才会将 A2A SDK 服务端组件注册为 Spring Bean。
 
 ### A2AProperties
