@@ -214,7 +214,7 @@ A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 
 **加密密码**
 
-先执行 `mvn -pl workflow-engine -am package`，以下命令在仓库根目录运行，仅需 SDK jar 和 JDK。
+先执行 `mvn -pl workflow-engine -am -Drevision=0.0.7 package`，以下命令在仓库根目录运行，仅需 SDK jar 和 JDK。
 `set` 是 Windows cmd 语法，PowerShell 应使用 `$env:A2AT_CRED_KEY='...'`。
 以下参数仅用于演示；命令行口令/密钥可能进入终端历史和进程参数。生产应由集成方安全读取密钥并调用 Java 加密 API。
 

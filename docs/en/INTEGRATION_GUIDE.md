@@ -223,7 +223,7 @@ configuration without modifying system properties. Never log plaintext or the ke
 
 **Encrypt a password**
 
-Build the jar with `mvn -pl workflow-engine -am package`; commands below run from the repository root.
+Build the jar with `mvn -pl workflow-engine -am -Drevision=0.0.7 package`; commands below run from the repository root.
 `set` is Windows cmd syntax (PowerShell: `$env:A2AT_CRED_KEY='...'`). This CLI needs only the SDK jar and JDK.
 Use disposable example values here: command-line passwords/keys can appear in shell history and process listings.
 For production, obtain secrets securely in the host and use the Java encryption API.
