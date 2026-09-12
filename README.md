@@ -40,7 +40,9 @@ subscription until the recovery result, cancellation, or shutdown.
 
 ### 1. Add Maven dependency
 
-The current engine release is `0.0.6` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
+Maven Central currently contains `0.0.6`; it was published from the same source commit as `0.0.5` and adds no APIs.
+The current source tree builds as `0.0.7-SNAPSHOT`. APIs listed under `Unreleased` in the changelog, including `sendTask` and
+HTTP runtime customization, require this source build (or an internal snapshot repository) until the next release.
 
 A2A-T SDK `1.1.0` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
@@ -53,7 +55,7 @@ upgrade guidance.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.0.6</version>
+    <version>0.0.7-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -62,8 +64,8 @@ For Spring Boot server-side integration:
 ```xml
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
-    <artifactId>spring-boot-a2a-starter</artifactId>
-    <version>0.0.6</version>
+    <artifactId>spring-boot-starter</artifactId>
+    <version>0.0.7-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -168,7 +170,7 @@ graph TD
 | Module                | Description                                                   |
 |-----------------------|---------------------------------------------------------------|
 | `workflow-engine`     | Core SDK: workflow execution, A2A transport, extensions, auth |
-| `spring-boot-a2a-starter` | Spring Boot auto-configuration for A2A server side            |
+| `spring-boot-starter` | Spring Boot auto-configuration for A2A server side            |
 | `samples`             | Demo applications (embedded + Spring Boot variants)           |
 
 ## License

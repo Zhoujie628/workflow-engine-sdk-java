@@ -1,6 +1,6 @@
 # Eastcom Instruction-Platform Integration Guide
 
-> Applies to the `dev` branch with workflow engine `0.0.6`, A2A-T SDK `1.1.0`, A2A Java SDK
+> Applies to the `dev` branch with workflow engine `0.0.7-SNAPSHOT`, A2A-T SDK `1.1.0`, A2A Java SDK
 > `1.2.0.Final`, and Eastcom `order-shaded-client:1.1.19`. This guide describes the current
 > implementation only; it does not cover legacy A2A-T or Order APIs.
 
