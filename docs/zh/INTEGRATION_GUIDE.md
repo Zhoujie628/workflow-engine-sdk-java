@@ -376,11 +376,24 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
-Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
+
+对于 DAG 外的独立任务，直接调用任务客户端。每次调用使用新的 context，但等待和协商续发始终保持同一个远端 taskId。
+可选的单次调用策略不会修改客户端级 ControlPoint。普通 A2A 内容可以直接发送；激活 Task-T 时必须携带 Task-T metadata，
+且目标 AgentCard 必须声明该扩展。
+
+```java
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy);
+```
+
+本地交互无法继续且已知远端任务仍为非终态时，客户端先尽力取消远端任务，再以异常完成。标准 A2A 请求错误仍按异常传递，
+不会伪装成业务任务失败。
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -388,7 +401,9 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-宿主智能体生成最终 Authorization-T/Notification-T 内容后调用上述接口；使用三类独立 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
+宿主智能体生成最终 Authorization-T/Notification-T 内容。授权与通知分别使用独立于任务客户端且彼此隔离的
+transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。
+handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
 
 `WorkflowEngineClientConfig.notificationAckTimeoutSeconds` 控制首次订阅 ACK 的等待时间，默认 300 秒；Spring 示例可通过
 `a2a.notification-ack-timeout-seconds` 或环境变量 `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS` 覆盖。该参数不控制 ACK 后的 SSE
@@ -591,7 +606,7 @@ contextId 与 executionId，供跨层定位。已识别的 A2A 错误使用 WARN
 |--------------------------------------------------------|---------------------------------------------------------------|
 | `ExecutePsop.Builder`                                  | 工作流执行入口                                                |
 | `ControlPoint` / `DefaultControlPoint`                 | 业务决策实现（onTask、onSelfTask、onRoute、onNegotiation 等） |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流发送（sendMessage、认证、扩展）                         |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流与独立任务交互                                        |
 | `ExtensionSender` / `DefaultExtensionSender`           | 独立 Authorization-T 操作与 Notification-T 长连接订阅         |
 | `A2ATransport`                                         | 共享通信层（A2A Java 客户端 runtime、认证、SSE 消费）         |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |

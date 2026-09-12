@@ -241,7 +241,7 @@ public class SpringSpnDemo {
           SpnCasePrompts.TASK_TEXT.length());
       SendMessageResult result =
           client
-              .sendMessage(
+              .sendTask(
                   WB_AGENT_NAME,
                   dev.openan.workflow.engine.client.A2atMessages.from(
                       dev.openan.workflow.engine.examples.util.A2ATInitialization.create(

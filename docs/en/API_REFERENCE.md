@@ -58,8 +58,9 @@ ExecutionResult result = ExecutePsop.builder()
 ### WorkflowEngineClient
 
 ```java
-CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
-CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
@@ -75,7 +76,18 @@ AgentCard, authentication and custom runtime as message dispatch. A list result 
 it contains only tasks visible to the authenticated identity. Callers must paginate with
 `nextPageToken`; cancellation is not implied by closing a local client or notification stream.
 
-The executor calls dispatch; onTask does not send. Content is final parts/metadata/extensions. The engine manages
+`sendTask` executes final host-provided content outside a DAG. Every call has a fresh context and
+uses the same send, wait, task-query and Negotiation-T loop as workflow execution. The overload takes
+a per-call strategy without changing the client-wide ControlPoint. If a known remote task remains
+non-final after a timeout, missing handler or other local interaction failure, the client attempts
+to cancel it before completing exceptionally. `sendTask` is the only public task-submission name;
+protocol-runtime implementations may still use the A2A operation name `sendMessage` internally.
+
+Plain A2A content does not require Task-T. When Task-T is activated, its metadata must be present and
+the target AgentCard must declare Task-T support.
+
+After `onTask` returns, the executor calls `sendTask` internally; `onTask` does not send. Content is final
+parts/metadata/extensions. The engine manages
 envelopes and interactions, never instantiates A2ATClient or generates content from AgentCard declarations. Template
 queries and generation belong to the host SDK.
 
@@ -86,7 +98,8 @@ obtain the received context; reply with the same id, round and maxRounds. The la
 Do not call nextRound for an ending reply or return a new Propose.
 
 Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
-to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+to stop without generating Abort content; the engine then cancels the known non-final A2A task as lifecycle cleanup.
+Repeated task/session/round events do not repeat the callback or submission.
 Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in

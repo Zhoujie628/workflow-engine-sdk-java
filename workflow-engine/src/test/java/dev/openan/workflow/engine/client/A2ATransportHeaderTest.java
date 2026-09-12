@@ -370,7 +370,7 @@ class A2ATransportHeaderTest {
               List.of(new org.a2aproject.sdk.spec.DataPart(Map.of("any", List.of(1, 2)))),
               Map.of("contextId", "business-only"),
               java.util.Set.of("urn:optional:custom"));
-      new DefaultWorkflowEngineClient(transport).sendMessage("Test Agent", content).join();
+      new DefaultWorkflowEngineClient(transport).sendTask("Test Agent", content).join();
       assertEquals(content.parts(), captured.get().message().parts());
       assertEquals(content.metadata(), captured.get().message().metadata());
       assertFalse("business-only".equals(captured.get().message().contextId()));

@@ -21,9 +21,9 @@ package dev.openan.workflow.engine.client;
 
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
+import dev.openan.workflow.engine.control.NegotiationStrategy;
 import dev.openan.workflow.engine.model.MessageContent;
 import dev.openan.workflow.engine.model.SendMessageResult;
-import dev.openan.workflow.engine.model.TaskRequest;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -32,12 +32,18 @@ import org.a2aproject.sdk.spec.ListTasksParams;
 
 /** Sends final content and coordinates task interaction. Content generation belongs to the host. */
 public interface WorkflowEngineClient {
-  /** Dispatches a prepared workflow activation; target and protocol association remain internal. */
-  CompletableFuture<SendMessageResult> dispatch(
-      TaskRequest request, MessageContent content, ControlPoint callbacks);
+  /**
+   * Sends final task content outside the DAG using the configured negotiation callback. The same
+   * task/context association is retained until the remote task reaches a final state.
+   */
+  CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 
-  /** Sends final content outside the DAG using explicitly configured interaction callbacks. */
-  CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+  /**
+   * Sends final task content outside the DAG with a per-call negotiation strategy. This overload
+   * does not mutate the client's configured {@link ControlPoint}.
+   */
+  CompletableFuture<SendMessageResult> sendTask(
+      String agentName, MessageContent content, NegotiationStrategy negotiationStrategy);
 
   /**
    * Maximum wait for one task interaction, from initial content preparation through remote task

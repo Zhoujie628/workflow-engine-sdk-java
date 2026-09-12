@@ -22,11 +22,15 @@ package dev.openan.workflow.engine.client;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
+import dev.openan.workflow.engine.control.NegotiationStrategy;
 import dev.openan.workflow.engine.model.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.openan.a2at.sdk.core.model.NegotiationContext;
 import net.openan.a2at.sdk.core.model.NegotiationPerformative;
@@ -133,7 +137,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   }
 
   @Override
-  public CompletableFuture<SendMessageResult> sendMessage(
+  public CompletableFuture<SendMessageResult> sendTask(
       String agentName, MessageContent content) {
     TaskRequest request =
         TaskRequest.builder()
@@ -141,14 +145,35 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             .executionId(UUID.randomUUID().toString())
             .taskId(UUID.randomUUID().toString())
             .build();
-    return dispatch(request, content, controlPoint);
+    return dispatchTask(request, content, controlPoint);
   }
 
   @Override
-  public CompletableFuture<SendMessageResult> dispatch(
+  public CompletableFuture<SendMessageResult> sendTask(
+      String agentName, MessageContent content, NegotiationStrategy negotiationStrategy) {
+    if (negotiationStrategy == null) {
+      return CompletableFuture.failedFuture(new NullPointerException("negotiationStrategy"));
+    }
+    TaskRequest request =
+        TaskRequest.builder()
+            .agentName(agentName)
+            .executionId(UUID.randomUUID().toString())
+            .taskId(UUID.randomUUID().toString())
+            .build();
+    ControlPoint callbacks =
+        ControlPoint.builder().onNegotiation(negotiationStrategy::resolve).build();
+    return dispatchTask(request, content, callbacks);
+  }
+
+  private CompletableFuture<SendMessageResult> dispatchTask(
       TaskRequest request, MessageContent content, ControlPoint callbacks) {
-    Objects.requireNonNull(request, "request");
-    Objects.requireNonNull(content, "onTask returned null content");
+    if (request == null) {
+      return CompletableFuture.failedFuture(new NullPointerException("request"));
+    }
+    if (content == null) {
+      return CompletableFuture.failedFuture(
+          new NullPointerException("onTask returned null content"));
+    }
     AgentCard card = transport.getCard(request.getAgentName());
     if (closed.get() || card == null)
       return CompletableFuture.failedFuture(
@@ -156,13 +181,37 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
               closed.get()
                   ? "Workflow client closed"
                   : "Agent not found: " + request.getAgentName()));
+    try {
+      validateTaskExtension(card, content);
+    } catch (RuntimeException error) {
+      return CompletableFuture.failedFuture(error);
+    }
     Invocation invocation = new Invocation(request, content, callbacks);
     invocations.add(invocation);
-    invocation.completion.orTimeout(callbackTimeoutSeconds(), TimeUnit.SECONDS);
+    CompletableFuture.delayedExecutor(callbackTimeoutSeconds(), TimeUnit.SECONDS)
+        .execute(
+            () -> {
+              if (!invocation.completion.isDone()) {
+                completeExceptionallyAfterCleanup(
+                    card,
+                    invocation,
+                    new TimeoutException(
+                        "Task interaction timed out after "
+                            + callbackTimeoutSeconds()
+                            + " seconds"));
+              }
+            });
     invocation.completion.whenComplete(
         (result, error) -> {
           invocations.remove(invocation);
-          transport.closeConversation(card, invocation.contextId);
+          if (invocation.completion.isCancelled()) {
+            cancelRemoteTask(card, invocation, null)
+                .whenComplete(
+                    (ignored, cleanupError) ->
+                        transport.closeConversation(card, invocation.contextId));
+          } else {
+            transport.closeConversation(card, invocation.contextId);
+          }
           if (error != null && invocation.exchanges > 0)
             emit(
                 EventType.NEGOTIATION_FAILED,
@@ -179,10 +228,82 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         .thenCompose(result -> advance(card, invocation, result))
         .whenComplete(
             (result, error) -> {
-              if (error != null) invocation.completion.completeExceptionally(error);
-              else invocation.completion.complete(result);
+              if (error != null) completeExceptionallyAfterCleanup(card, invocation, error);
+              else if (invocation.finishing.compareAndSet(false, true))
+                invocation.completion.complete(result);
             });
     return invocation.completion;
+  }
+
+  private static void validateTaskExtension(AgentCard card, MessageContent content) {
+    String taskExtension = A2ATExtension.TASK_T.uri();
+    boolean activated = content.extensions().contains(taskExtension);
+    boolean supplied = content.metadata().containsKey(taskExtension);
+    if (!activated && !supplied) return;
+    if (!activated || !supplied) {
+      throw new IllegalArgumentException(
+          "Task-T content must contain matching extension activation and metadata");
+    }
+    if (!A2ATransport.extractExtensionUris(card).contains(taskExtension)) {
+      throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
+    }
+  }
+
+  private void completeExceptionallyAfterCleanup(
+      AgentCard card, Invocation invocation, Throwable error) {
+    if (!invocation.finishing.compareAndSet(false, true)) {
+      // A timeout may win before the first send exposes its remote task id. If that result arrives
+      // later, advance() records the id and reaches this path again so the orphan can still be
+      // cancelled. cancelRemoteTask() deduplicates an already-started cleanup.
+      cancelRemoteTask(card, invocation, null);
+      return;
+    }
+    Throwable primary = unwrap(error);
+    cancelRemoteTask(card, invocation, primary)
+        .whenComplete((ignored, cleanupError) -> invocation.completion.completeExceptionally(primary));
+  }
+
+  private CompletableFuture<Void> cancelRemoteTask(
+      AgentCard card, Invocation invocation, Throwable primary) {
+    String remoteTaskId = invocation.remoteTaskId;
+    if (remoteTaskId == null || invocation.remoteTaskTerminal) {
+      return CompletableFuture.completedFuture(null);
+    }
+    synchronized (invocation) {
+      if (invocation.cleanup != null) return invocation.cleanup;
+      log.info(
+          "[EngineClient] Canceling non-final remote task after local interaction ended: agent={}, taskId={}",
+          invocation.task.getAgentName(),
+          remoteTaskId);
+      invocation.cleanup =
+          transport
+              .cancelTask(card, invocation.task.getAgentName(), remoteTaskId)
+              .handle(
+                  (result, cleanupError) -> {
+                    if (cleanupError == null) {
+                      invocation.remoteTaskTerminal = true;
+                    } else {
+                      Throwable failure = unwrap(cleanupError);
+                      if (primary != null && failure != primary) primary.addSuppressed(failure);
+                      log.warn(
+                          "[EngineClient] Failed to cancel non-final remote task: agent={}, taskId={}",
+                          invocation.task.getAgentName(),
+                          remoteTaskId,
+                          failure);
+                    }
+                    return null;
+                  });
+      return invocation.cleanup;
+    }
+  }
+
+  private static Throwable unwrap(Throwable error) {
+    Throwable current = error;
+    while ((current instanceof CompletionException || current instanceof ExecutionException)
+        && current.getCause() != null) {
+      current = current.getCause();
+    }
+    return current;
   }
 
   private CompletableFuture<SendMessageResult> send(
@@ -208,11 +329,11 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   }
 
   private Map<String, String> invocationTrace(Invocation invocation) {
-    Map<String, String> trace = new HashMap<>();
+    Map<String, String> trace = new HashMap<>(invocation.parentTrace);
     if (invocation.task.getExecutionId() != null)
-      trace.put("executionId", invocation.task.getExecutionId());
+      trace.putIfAbsent("executionId", invocation.task.getExecutionId());
     if (invocation.task.getTaskId() != null)
-      trace.put("logicalTaskId", invocation.task.getTaskId());
+      trace.putIfAbsent("logicalTaskId", invocation.task.getTaskId());
     trace.put("attempt", invocation.attempt);
     trace.put("contextId", invocation.contextId);
     return trace;
@@ -220,9 +341,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
   private CompletableFuture<SendMessageResult> advance(
       AgentCard card, Invocation invocation, SendMessageResult result) {
-    if (!invocation.active())
-      return CompletableFuture.failedFuture(
-          new java.util.concurrent.CancellationException("Task interaction is no longer active"));
     if (result.getTask() != null) {
       if (result.getTask().id() == null
           || result.getTask().id().isBlank()
@@ -233,10 +351,24 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             new IllegalArgumentException("Remote task/context identity changed"));
       }
       invocation.remoteTaskId = result.getTask().id();
+      invocation.remoteTaskTerminal =
+          result.getTask().status() != null
+              && result.getTask().status().state() != null
+              && result.getTask().status().state().isFinal();
     }
+    if (!invocation.active())
+      return CompletableFuture.failedFuture(
+          new java.util.concurrent.CancellationException("Task interaction is no longer active"));
     if ("TASK_STATE_SUBMITTED".equals(result.getTaskState())
         || "TASK_STATE_WORKING".equals(result.getTaskState())) {
       return observeTask(card, invocation).thenCompose(next -> advance(card, invocation, next));
+    }
+    if (!"TASK_STATE_INPUT_REQUIRED".equals(result.getTaskState())
+        && result.getTask() != null
+        && !invocation.remoteTaskTerminal) {
+      return CompletableFuture.failedFuture(
+          new IllegalStateException(
+              "Unsupported non-final remote task state: " + result.getTaskState()));
     }
     if (!"TASK_STATE_INPUT_REQUIRED".equals(result.getTaskState())) {
       emitAgentResponse(invocation.task.getAgentName(), result);
@@ -482,12 +614,16 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     final ControlPoint callbacks;
     final String contextId = UUID.randomUUID().toString();
     final String attempt = UUID.randomUUID().toString();
+    final Map<String, String> parentTrace = Map.copyOf(WireLog.context());
     final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(callbackTimeoutSeconds());
     final CompletableFuture<SendMessageResult> completion = new CompletableFuture<>();
     final Map<String, List<NegotiationRequest.Exchange>> history = new HashMap<>();
     final Set<String> answered = new HashSet<>();
     final Map<String, NegotiationContext> contexts = new HashMap<>();
-    String remoteTaskId;
+    final AtomicBoolean finishing = new AtomicBoolean();
+    volatile String remoteTaskId;
+    volatile boolean remoteTaskTerminal;
+    CompletableFuture<Void> cleanup;
     int exchanges;
 
     Invocation(TaskRequest task, MessageContent content, ControlPoint callbacks) {
@@ -501,7 +637,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     boolean active() {
-      return !closed.get() && !completion.isDone() && !remaining().isZero();
+      return !closed.get()
+          && !finishing.get()
+          && !completion.isDone()
+          && !remaining().isZero();
     }
   }
 }

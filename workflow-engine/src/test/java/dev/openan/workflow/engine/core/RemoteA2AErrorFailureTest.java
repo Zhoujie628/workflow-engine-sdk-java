@@ -53,10 +53,12 @@ class RemoteA2AErrorFailureTest {
     var agent2 = new CompletableFuture<SendMessageResult>();
     var observed = new java.util.concurrent.CopyOnWriteArrayList<Map<String, Object>>();
     var client = new StubWorkflowEngineClient() {
-      @Override public CompletableFuture<SendMessageResult> dispatch(
-          TaskRequest request, MessageContent content, ControlPoint callbacks) {
+      @Override public CompletableFuture<SendMessageResult> sendTask(
+          String agentName,
+          MessageContent content,
+          dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
         started.countDown();
-        return request.getAgentName().equals("agent1") ? agent1 : agent2;
+        return agentName.equals("agent1") ? agent1 : agent2;
       }
     };
     var merges = new AtomicInteger();
@@ -129,8 +131,10 @@ class RemoteA2AErrorFailureTest {
     var negotiations = new AtomicInteger();
     var client = new StubWorkflowEngineClient("remote-agent") {
       @Override
-      public CompletableFuture<SendMessageResult> dispatch(
-          TaskRequest request, MessageContent content, ControlPoint callbacks) {
+      public CompletableFuture<SendMessageResult> sendTask(
+          String agentName,
+          MessageContent content,
+          dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
         calls.incrementAndGet();
         return CompletableFuture.failedFuture(new CompletionException(remoteError));
       }

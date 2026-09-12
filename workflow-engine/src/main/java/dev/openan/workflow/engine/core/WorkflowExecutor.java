@@ -20,11 +20,13 @@
 package dev.openan.workflow.engine.core;
 
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
+import dev.openan.workflow.engine.client.WireLog;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.control.EventType;
 import dev.openan.workflow.engine.model.ExecutionResult;
 import dev.openan.workflow.engine.model.JumpCondition;
+import dev.openan.workflow.engine.model.NegotiationRequest;
 import dev.openan.workflow.engine.model.RouteDecision;
 import dev.openan.workflow.engine.model.RouteRequest;
 import dev.openan.workflow.engine.model.StepType;
@@ -382,12 +384,26 @@ public class WorkflowExecutor {
                     return;
                   }
                   try {
+                    Map<String, String> trace =
+                        Map.of(
+                            "executionId", request.getExecutionId(),
+                            "logicalTaskId", request.getTaskId());
                     var sent =
-                        engineClient.dispatch(
-                            request,
-                            java.util.Objects.requireNonNull(
-                                content, "onTask returned null content"),
-                            controlPoint);
+                        WireLog.call(
+                            trace,
+                            () ->
+                                engineClient.sendTask(
+                                    request.getAgentName(),
+                                    java.util.Objects.requireNonNull(
+                                        content, "onTask returned null content"),
+                                    negotiation ->
+                                        controlPoint.onNegotiation(
+                                            new NegotiationRequest(
+                                                request,
+                                                negotiation.originalSubmission(),
+                                                negotiation.received(),
+                                                negotiation.previousExchanges(),
+                                                negotiation.remainingWait()))));
                     result.whenComplete(
                         (value, failure) -> {
                           if (!sent.isDone()) sent.cancel(true);
