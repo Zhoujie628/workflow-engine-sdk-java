@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
+## [0.0.7] — 2026-09-13
+
 - Set the source-build version to `0.0.7-SNAPSHOT`. Maven Central version `0.0.6` was published from the same source
-  commit as `0.0.5`; it does not contain the APIs listed in this Unreleased section.
+  commit as `0.0.5`; it does not contain the APIs listed in this `0.0.7` section.
 - Preserve the published `spring-boot-starter` artifact coordinate. The temporary, unpublished
   `spring-boot-a2a-starter` name is not a consumable Maven Central coordinate.
 
