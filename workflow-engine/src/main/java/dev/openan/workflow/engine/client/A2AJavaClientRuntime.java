@@ -37,8 +37,8 @@ import org.a2aproject.sdk.spec.Task;
  * when one is provided (or auto-created). This avoids hand-written HTTP code and reuses the SDK's
  * transport, SSE parsing, and error handling.
  *
- * <p>Mirrors {@code A2AJavaClientRuntime} from the a2a-t-sdk-java sample module, but lives in the
- * engine package so the engine can depend on it directly.
+ * <p>Custom implementations can replace the wire channel while keeping the engine's task state
+ * machine and authentication contract unchanged.
  */
 public interface A2AJavaClientRuntime {
   String CHANNEL_STATE_KEY = "dev.openan.workflow.engine.channel";
@@ -47,7 +47,7 @@ public interface A2AJavaClientRuntime {
   /**
    * Send a message to an agent and collect the streaming events.
    *
-   * @param agentCard the target agent's card as a map (from config or registry)
+   * @param agentCard the target agent's card (from configuration or a registry)
    * @param params the message send parameters (message, context, metadata)
    * @param callContext client call context with auth/extension headers
    * @param eventSink optional callback invoked for each intermediate event (status updates,

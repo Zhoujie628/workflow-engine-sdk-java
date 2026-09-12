@@ -70,15 +70,7 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
   }
 
   @Override
-  public CompletableFuture<SendMessageResult> dispatch(
-      dev.openan.workflow.engine.model.TaskRequest request,
-      dev.openan.workflow.engine.model.MessageContent content,
-      ControlPoint callbacks) {
-    return sendMessage(request.getAgentName(), content);
-  }
-
-  @Override
-  public CompletableFuture<SendMessageResult> sendMessage(
+  public CompletableFuture<SendMessageResult> sendTask(
       String agentName, dev.openan.workflow.engine.model.MessageContent content) {
     String message =
         content.parts().stream()
@@ -125,6 +117,14 @@ public class StubWorkflowEngineClient implements WorkflowEngineClient {
       eventCallback.onEvent("agent_response", Map.of("agent", agentName, "response", text));
     }
     return CompletableFuture.completedFuture(result);
+  }
+
+  @Override
+  public CompletableFuture<SendMessageResult> sendTask(
+      String agentName,
+      dev.openan.workflow.engine.model.MessageContent content,
+      dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
+    return sendTask(agentName, content);
   }
 
   @Override

@@ -33,7 +33,7 @@ class HostQuickStartTest {
     var client = (WorkflowEngineClient) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
         new Class<?>[] {WorkflowEngineClient.class}, (proxy, method, args) -> {
           if (method.getName().equals("callbackTimeoutSeconds")) return 10L;
-          if (method.getName().equals("dispatch")) {
+          if (method.getName().equals("sendTask") && method.getParameterCount() == 3) {
             sent.incrementAndGet();
             return CompletableFuture.completedFuture(SendMessageResult.builder().taskState("TASK_STATE_COMPLETED")
                 .receivedMessages(List.of(new ReceivedMessage(MessageContent.text("diagnosis"), Map.of(), List.of())))

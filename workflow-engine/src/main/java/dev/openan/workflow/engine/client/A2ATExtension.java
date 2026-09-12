@@ -30,7 +30,7 @@ import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
  * <p>The engine handles these extensions automatically:
  *
  * <ul>
- *   <li>{@link #TASK_T} - host-generated task content (in-workflow)
+ *   <li>{@link #TASK_T} - host-generated task content (workflow or standalone task)
  *   <li>{@link #NEGOTIATION_T} - negotiation auto-loop (in-workflow)
  *   <li>{@link #AUTHORIZATION_T} - independent whitelist authorization operation
  *   <li>{@link #NOTIFICATION_T} - independent result subscription
