@@ -30,7 +30,7 @@ WAIMO 不应手写 A2A JSON 信封，也不应直接调用执行引擎内部的 
 
 ```xml
 <properties>
-    <workflow-engine.version>1.0.0</workflow-engine.version>
+    <workflow-engine.version>0.0.7-SNAPSHOT</workflow-engine.version>
     <a2a-t.version>1.1.0</a2a-t.version>
 </properties>
 
@@ -48,7 +48,10 @@ WAIMO 不应手写 A2A JSON 信封，也不应直接调用执行引擎内部的 
 </dependencies>
 ```
 
-实际工程应统一管理版本，不要同时引入不同版本的 A2A Java SDK。`workflow-engine` 已经声明其运行所需的 A2A Java SDK 依赖。
+`0.0.7-SNAPSHOT` 需要先从当前源码执行 `mvn install`，或由内部快照仓库提供。Maven Central 上的 `0.0.5`
+及同源码重复发布的 `0.0.6` 均不包含本文使用的 `sendTask(...)` 与 HTTP Runtime 定制扩展点，不能按本文直接集成；
+待 `0.0.7` 正式发布后再把版本替换为 `0.0.7`。实际工程应统一管理版本，不要同时引入不同版本的 A2A Java SDK。
+`workflow-engine` 已经声明其运行所需的 A2A Java SDK 依赖。
 
 ## 3. AgentCard 与 MSB 地址
 
@@ -275,14 +278,16 @@ NegotiationStrategy strategy = request -> {
     // 3. 根据 WAIMO 的业务数据决定 Accept、Reject 或 Abort。
     // 4. 使用 A2ATClient 的对应生成接口构造回复。
     // 5. 使用 A2atMessages.from(...) 返回 MessageContent。
-    return CompletableFuture.completedFuture(replyContent);
+    return CompletableFuture.completedFuture(new NegotiationReply.Send(replyContent));
 };
 
 SendMessageResult result =
     client.sendTask(workbenchCard.name(), taskContent, strategy).join();
 ```
 
-协商实现必须保留收到的 `NegotiationContext` 和当前 round。回复已有 Propose 时不能自行创建新的上下文或调用 `nextRound()`。可参考：
+协商实现必须保留收到的 `NegotiationContext` 和当前 round。回复已有 Propose 时不能自行创建新的上下文或调用 `nextRound()`。
+`NegotiationReply.Stop` 只表示本地停止交互，不会发送 Negotiation-T Abort；需要通知对端终止协商时，应使用 A2A-T SDK
+生成 Abort 内容，再通过 `new NegotiationReply.Send(abortContent)` 发回。可参考：
 
 - [`NegotiationStrategy`](../../../samples/src/main/java/dev/openan/workflow/engine/examples/negotiation/NegotiationStrategy.java)
 
@@ -380,7 +385,34 @@ SendMessageResult result =
 2. **任务创建后失败**：返回 A2A Task 终态 `FAILED`，失败原因位于状态消息或结果内容中。
 3. **请求未创建任务即失败**：Future 以异常完成，底层标准 A2A error envelope 会映射为可识别的远端错误异常。
 
+调用方可按下面的稳定接口区分远端 A2A 错误与本地传输异常：
+
+```java
+try {
+    SendMessageResult result =
+        client.sendTask(workbenchCard.name(), taskContent, strategy).join();
+    if ("TASK_STATE_FAILED".equals(result.getTaskState())) {
+        handleTaskFailure(result);
+    } else {
+        handleTaskResult(result);
+    }
+} catch (CompletionException failure) {
+    RemoteA2AErrorException remote = RemoteA2AErrorException.findIn(failure);
+    if (remote == null) {
+        throw failure; // TLS、超时、断流等本地/传输问题
+    }
+    handleRequestError(
+        remote.getHttpStatus(),
+        remote.getStatus(),
+        remote.getReason(),
+        remote.getMessage(),
+        remote.getRetryAfter());
+}
+```
+
 WAIMO 应记录远端状态码、A2A error code/status/message 和本地 `requestId`，但不能把 Token、密码或完整凭证写入业务日志。超时或主动取消时，如果已取得远端 `taskId`，执行引擎会尝试取消远端任务；取消任务不等同于 Negotiation-T Abort。
+对于 429，应按 `Retry-After`（若有）退避，并避免在同一任务上无界重试；其他 4xx 默认视为请求不可重试，5xx
+是否重试由 WAIMO 的幂等策略决定。
 
 ## 12. 联调验收清单
 
