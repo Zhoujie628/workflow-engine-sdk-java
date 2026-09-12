@@ -46,6 +46,10 @@ public final class SlashActionA2AJavaClientRuntime extends DefaultA2AJavaClientR
 
   @Override
   protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+    return slashActionClient(httpClient);
+  }
+
+  static A2AHttpClient slashActionClient(A2AHttpClient httpClient) {
     return new SlashActionHttpClient(httpClient);
   }
 

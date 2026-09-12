@@ -194,11 +194,40 @@ class SpringSpnDemoE2ETest {
             evidence.contains("Target: POST https://127.0.0.1:26337/a2a/json/message/stream"));
         org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("caller: WAIMO"));
         org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("flow: waimo-to-workbench"));
+        assertNorthboundWireEvidence(evidence);
       }
     } finally {
       if (previous == null) System.clearProperty("a2at.samples.negotiation");
       else System.setProperty("a2at.samples.negotiation", previous);
     }
+  }
+
+  private void assertNorthboundWireEvidence(String evidence) {
+    String uri = dev.openan.workflow.engine.client.A2ATExtension.TASK_T.uri();
+    var records = java.util.Arrays.asList(evidence.split("(?m)^.*? PROTOCOL - "));
+    String headers =
+        records.stream()
+            .filter(record -> record.startsWith("[DIRECT_HTTP] REQUEST_HEADERS"))
+            .filter(record -> record.contains("/a2a/json/message/stream"))
+            .filter(record -> record.contains("caller: WAIMO"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No observed WAIMO request headers"));
+    var id = java.util.regex.Pattern.compile("requestId=([^\\r\\n]+)").matcher(headers);
+    org.junit.jupiter.api.Assertions.assertTrue(id.find());
+    String requestId = id.group(1);
+    org.junit.jupiter.api.Assertions.assertTrue(headers.contains("A2A-Version: 1.0"));
+    org.junit.jupiter.api.Assertions.assertTrue(headers.contains("A2A-Extensions: " + uri));
+    org.junit.jupiter.api.Assertions.assertTrue(headers.contains("Accept: text/event-stream"));
+    org.junit.jupiter.api.Assertions.assertTrue(headers.contains("Content-Type: application/json"));
+    String body =
+        records.stream()
+            .filter(record -> record.startsWith("[DIRECT_HTTP] REQUEST_BODY"))
+            .filter(record -> record.contains("requestId=" + requestId))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No observed WAIMO request body"));
+    org.junit.jupiter.api.Assertions.assertTrue(body.contains("\"templateUri\""));
+    org.junit.jupiter.api.Assertions.assertTrue(body.contains("\"" + uri + "\""));
+    org.junit.jupiter.api.Assertions.assertTrue(body.contains("\"extensions\""));
   }
 
   private void runDemo() throws Exception {
