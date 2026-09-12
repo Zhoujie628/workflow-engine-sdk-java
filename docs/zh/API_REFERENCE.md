@@ -170,7 +170,7 @@ String,Object>) 读取并检查规范协商上下文。只有 a2a-t-core 依赖�
 
 ### A2AJavaClientRuntime
 
-A2A SDK 消息传输运行时接口。实现此类可自定义 HTTP 传输行为。
+A2A SDK 消息传输运行时接口。完全替换传输实现（包括厂商 SDK 或非 HTTP 通道）时实现此接口。
 
 ```java
 public interface A2AJavaClientRuntime {
@@ -184,7 +184,21 @@ public interface A2AJavaClientRuntime {
 }
 ```
 
-引擎提供默认实现。仅在需要自定义 HTTP 传输时实现此接口。
+引擎提供默认实现 `DefaultA2AJavaClientRuntime`。如果只需改写 URI 或补充网关 Header，应继承默认实现并装饰已配置好的
+`A2AHttpClient`，不需要重写消息发送、SSE 和标准 A2A 错误处理：
+
+```java
+public final class GatewayRuntime extends DefaultA2AJavaClientRuntime {
+    @Override
+    protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+        return new GatewayHttpClientDecorator(httpClient);
+    }
+}
+```
+
+传入钩子的客户端已经带有引擎配置的 TLS、协议日志与错误处理。装饰器必须原样保留请求 Header、JSON Body、SSE
+事件/异常/完成回调，并返回非 null 客户端。该钩子只作用于 REST/JSON-RPC HTTP 通道；gRPC 或完全不同的传输应实现
+`A2AJavaClientRuntime`。
 
 ### ConversationScopedA2AJavaClientRuntime
 
@@ -599,9 +613,9 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 
 ---
 
-## spring-boot-a2a-starter 模块
+## spring-boot-starter 模块
 
-`spring-boot-a2a-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。在 Spring Boot Web 应用中配置
+`spring-boot-starter` 模块为 A2A **服务端**（非客户端/工作流侧）提供 Spring Boot 自动配置。在 Spring Boot Web 应用中配置
 `a2at.server.enabled=true` 后，才会将 A2A SDK 服务端组件注册为 Spring Bean。
 
 ### A2AProperties

@@ -30,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.a2aproject.sdk.client.http.A2AHttpClient;
 import org.a2aproject.sdk.client.http.JdkA2AHttpClient;
 import org.a2aproject.sdk.spec.*;
 import org.junit.jupiter.api.Test;
@@ -189,6 +190,53 @@ class RemoteA2AErrorResponseTest {
       assertEquals("INVALID_PARAMS", error.getReason());
     } finally {
       server.stop(0);
+    }
+  }
+
+  @Test
+  void runtimeUsesTheHttpClientCustomizationHookWithoutBypassingErrorDetection() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext("/", exchange -> {
+      exchange.getRequestBody().readAllBytes();
+      byte[] body = ("data: " + error(400) + "\n\n").getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+      exchange.sendResponseHeaders(200, 0);
+      exchange.getResponseBody().write(body);
+      exchange.close();
+    });
+    server.start();
+    var runtime = new CustomizingRuntime();
+    try {
+      AgentCard card = AgentCard.builder().name("customized-runtime").description("test").version("1")
+          .capabilities(AgentCapabilities.builder().streaming(true).build())
+          .defaultInputModes(List.of("text/plain")).defaultOutputModes(List.of("text/plain"))
+          .skills(List.of()).supportedInterfaces(List.of(new AgentInterface("HTTP+JSON",
+              "http://127.0.0.1:" + server.getAddress().getPort() + "/a2a/json"))).build();
+      MessageSendParams params = MessageSendParams.builder().message(Message.builder()
+          .role(Message.Role.ROLE_USER).messageId("test").parts(new TextPart("diagnose")).build()).build();
+
+      var thrown = assertThrows(RuntimeException.class,
+          () -> runtime.sendMessage(card, params, null, ignored -> {}, null));
+
+      assertNotNull(RemoteA2AErrorException.findIn(thrown));
+      assertEquals(1, runtime.customizations.get());
+    } finally {
+      runtime.close();
+      server.stop(0);
+    }
+  }
+
+  private static final class CustomizingRuntime extends DefaultA2AJavaClientRuntime {
+    private final AtomicInteger customizations = new AtomicInteger();
+
+    private CustomizingRuntime() {
+      super(true, null, 5, "HTTP+JSON");
+    }
+
+    @Override
+    protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+      customizations.incrementAndGet();
+      return super.customizeHttpClient(httpClient);
     }
   }
 }

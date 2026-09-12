@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -714,7 +715,7 @@ public class DefaultA2AJavaClientRuntime
    * @return the client to supply to the A2A Java SDK transport
    */
   protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
-    return httpClient;
+    return Objects.requireNonNull(httpClient, "httpClient");
   }
 
   private record StreamClientKey(String agentName, String contextId) {}
