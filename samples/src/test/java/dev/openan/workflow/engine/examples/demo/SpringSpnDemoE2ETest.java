@@ -190,6 +190,10 @@ class SpringSpnDemoE2ETest {
             evidence.contains("NEGOTIATION_DEMO enabled=false"));
         org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("DEMO_NEGOTIATION agent="));
         org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("NEGOTIATION_APPLIED"));
+        org.junit.jupiter.api.Assertions.assertTrue(
+            evidence.contains("Target: POST https://127.0.0.1:26337/a2a/json/message/stream"));
+        org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("caller: WAIMO"));
+        org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("flow: waimo-to-workbench"));
       }
     } finally {
       if (previous == null) System.clearProperty("a2at.samples.negotiation");

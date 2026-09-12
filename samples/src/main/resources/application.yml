@@ -12,11 +12,18 @@ spring:
   main:
     banner-mode: off
 
+logging:
+  level:
+    # SpringSpnDemo prints the real serialized A2A request URI, headers and body at this boundary.
+    PROTOCOL: DEBUG
+
 a2at:
   server:
     enabled: true
     agent-card: classpath:agentcard/transport_workbench_agent.json
     path-prefix: /a2a/json
+    # SpringSpnDemo's northbound caller simulates a gateway that rejects ':' in action paths.
+    slash-action-aliases-enabled: true
 
 a2a:
   orch-url: https://127.0.0.1:5001

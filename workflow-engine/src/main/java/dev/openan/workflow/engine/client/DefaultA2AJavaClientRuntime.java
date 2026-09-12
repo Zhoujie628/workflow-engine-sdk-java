@@ -698,8 +698,23 @@ public class DefaultA2AJavaClientRuntime
             crlPath,
             Duration.ofSeconds(60),
             httpClientExecutor);
-    return new A2AErrorDetectingHttpClient(
-        new JdkA2AHttpClient(new ObservedHttpClient(httpClient)));
+    return customizeHttpClient(
+        new A2AErrorDetectingHttpClient(new JdkA2AHttpClient(new ObservedHttpClient(httpClient))));
+  }
+
+  /**
+   * Decorates the HTTP client used by REST and JSON-RPC transports.
+   *
+   * <p>The default implementation preserves the standard A2A request paths. A custom runtime may
+   * override this hook for gateway-specific transport concerns such as rewriting action path
+   * separators, while continuing to reuse this runtime's TLS, SSE, protocol-error, and lifecycle
+   * handling.
+   *
+   * @param httpClient fully configured engine HTTP client
+   * @return the client to supply to the A2A Java SDK transport
+   */
+  protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+    return httpClient;
   }
 
   private record StreamClientKey(String agentName, String contextId) {}

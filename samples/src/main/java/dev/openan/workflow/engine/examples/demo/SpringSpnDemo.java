@@ -20,20 +20,24 @@
 package dev.openan.workflow.engine.examples.demo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.A2ATransport;
 import dev.openan.workflow.engine.client.AgentCardJacksonModule;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
+import dev.openan.workflow.engine.client.WireLog;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.examples.SpringWorkbenchApplication;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity1Executor;
 import dev.openan.workflow.engine.examples.agents.SpnDomainAgentCity2Executor;
 import dev.openan.workflow.engine.examples.gateway.MockGatewayServer;
+import dev.openan.workflow.engine.examples.gateway.SlashActionA2AJavaClientRuntime;
 import dev.openan.workflow.engine.examples.server.OmcAgentLauncher;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
 import dev.openan.workflow.engine.examples.workbench.SpringWorkbenchExtensionLifecycle;
 import dev.openan.workflow.engine.model.SendMessageResult;
 import dev.openan.workflow.engine.spring.A2AController;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.a2aproject.sdk.spec.AgentCard;
@@ -305,6 +309,9 @@ public class SpringSpnDemo {
    * <p>Structured-data track: the demo hands over the raw complaint data + schema and the A2A-T SDK
    * renders the Task-T prompt through its schema-aware fromData pipeline (no hand-written prompt
    * and no scenario-recognition call; slot extraction may use the SDK LLM).
+   *
+   * <p>The injected caller runtime rewrites only A2A action paths to their slash aliases, modeling
+   * a gateway that cannot publish ':' while retaining the standard A2A Java SDK protocol stack.
    */
   private SendMessageResult sendTaskToWorkbench() throws Exception {
     long started = System.nanoTime();
@@ -313,22 +320,33 @@ public class SpringSpnDemo {
     String credPath = OmcAgentLauncher.resourcePath("spn_agent_credentials.json");
     String envPath = EnvResolver.resolveEnvPath();
 
-    A2ATransport transport =
-        new A2ATransport(
-            List.of(wbCard),
-            null,
-            WorkflowEngineClientConfig.builder()
-                .sslVerify(false)
-                .credentialsConfigPath(credPath)
-                .build());
+    WorkflowEngineClientConfig config =
+        WorkflowEngineClientConfig.builder()
+            .sslVerify(false)
+            .credentialsConfigPath(credPath)
+            .build();
+    A2AJavaClientRuntime waimoRuntime =
+        new SlashActionA2AJavaClientRuntime(
+            config.isSslVerify(),
+            config.getCaCertsPath(),
+            config.getSendTimeoutSeconds(),
+            config.getPreferredProtocol());
+    A2ATransport transport = new A2ATransport(List.of(wbCard), waimoRuntime, config);
     DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport);
     try {
+      String endpoint =
+          wbCard.supportedInterfaces().isEmpty() ? "?" : wbCard.supportedInterfaces().get(0).url();
+      String requestUri =
+          "?".equals(endpoint)
+              ? endpoint
+              : (endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint)
+                  + "/message/stream";
       log.info(
-          "[Demo] NORTHBOUND_SEND target={}, contextId={}, endpoint={}, inputChars={},"
-              + " track=fromData",
+          "[Demo] WAIMO_REQUEST method=POST, uri={}, target={}, contextId={}, inputChars={},"
+              + " track=fromData, actionPathStyle=slash",
+          requestUri,
           WB_AGENT_NAME,
           transport.getContextId(),
-          wbCard.supportedInterfaces().isEmpty() ? "?" : wbCard.supportedInterfaces().get(0).url(),
           SpnCasePrompts.TASK_TEXT.length());
       var contentClient =
           dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
@@ -338,13 +356,16 @@ public class SpringSpnDemo {
               SpnCasePrompts.privateLineComplaintData(),
               SpnCasePrompts.privateLineComplaintSchema(),
               net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+      var content =
+          dev.openan.workflow.engine.client.A2atMessages.from(
+              generated, List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT)));
       SendMessageResult result =
-          client
-              .sendTask(
-                  WB_AGENT_NAME,
-                  dev.openan.workflow.engine.client.A2atMessages.from(
-                      generated,
-                      List.of(new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT))))
+          WireLog.call(
+                  Map.of(
+                      "caller", "WAIMO",
+                      "flow", "waimo-to-workbench",
+                      "actionPathStyle", "slash"),
+                  () -> client.sendTask(WB_AGENT_NAME, content))
               .join();
       log.info(
           "[Demo] NORTHBOUND_DONE target={}, contextId={}, state={}, responseChars={},"
