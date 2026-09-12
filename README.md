@@ -38,9 +38,7 @@ subscription remains open until the host-defined terminal event, explicit cancel
 
 ### 1. Add Maven dependency
 
-Maven Central currently contains `0.0.6`; it was published from the same source commit as `0.0.5` and adds no APIs.
-The current source tree builds as `0.0.7-SNAPSHOT`. APIs listed under `Unreleased` in the changelog, including `sendTask` and
-HTTP runtime customization, require this source build (or an internal snapshot repository) until the next release.
+The current engine release is `0.0.7` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
 
 A2A-T SDK `1.1.0` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
@@ -53,7 +51,7 @@ upgrade guidance.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.0.7-SNAPSHOT</version>
+    <version>0.0.7</version>
 </dependency>
 ```
 
@@ -63,7 +61,7 @@ For Spring Boot server-side integration:
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>spring-boot-starter</artifactId>
-    <version>0.0.7-SNAPSHOT</version>
+    <version>0.0.7</version>
 </dependency>
 ```
 
