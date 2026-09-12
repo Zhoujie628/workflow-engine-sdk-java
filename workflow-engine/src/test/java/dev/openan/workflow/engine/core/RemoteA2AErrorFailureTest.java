@@ -52,13 +52,17 @@ class RemoteA2AErrorFailureTest {
     var agent1 = new CompletableFuture<SendMessageResult>();
     var agent2 = new CompletableFuture<SendMessageResult>();
     var observed = new java.util.concurrent.CopyOnWriteArrayList<Map<String, Object>>();
-    var client = new StubWorkflowEngineClient() {
-      @Override public CompletableFuture<SendMessageResult> dispatch(
-          TaskRequest request, MessageContent content, ControlPoint callbacks) {
-        started.countDown();
-        return request.getAgentName().equals("agent1") ? agent1 : agent2;
-      }
-    };
+    var client =
+        new StubWorkflowEngineClient() {
+          @Override
+          public CompletableFuture<SendMessageResult> sendTask(
+              String agentName,
+              MessageContent content,
+              dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
+            started.countDown();
+            return agentName.equals("agent1") ? agent1 : agent2;
+          }
+        };
     var merges = new AtomicInteger();
     var callbacks = ControlPoint.builder()
         .onTask(request -> CompletableFuture.completedFuture(MessageContent.text("run task")))
@@ -127,14 +131,17 @@ class RemoteA2AErrorFailureTest {
     var remoteError = RemoteA2AErrorException.fromPayload(error(status));
     var calls = new AtomicInteger();
     var negotiations = new AtomicInteger();
-    var client = new StubWorkflowEngineClient("remote-agent") {
-      @Override
-      public CompletableFuture<SendMessageResult> dispatch(
-          TaskRequest request, MessageContent content, ControlPoint callbacks) {
-        calls.incrementAndGet();
-        return CompletableFuture.failedFuture(new CompletionException(remoteError));
-      }
-    };
+    var client =
+        new StubWorkflowEngineClient("remote-agent") {
+          @Override
+          public CompletableFuture<SendMessageResult> sendTask(
+              String agentName,
+              MessageContent content,
+              dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
+            calls.incrementAndGet();
+            return CompletableFuture.failedFuture(new CompletionException(remoteError));
+          }
+        };
     var step = WorkflowStep.builder().name("remote").stepType(StepType.ALL_SUCCESS)
         .subtasks(List.of(Task.builder().agent("remote-agent").description("execute").build()))
         .next(List.of()).build();

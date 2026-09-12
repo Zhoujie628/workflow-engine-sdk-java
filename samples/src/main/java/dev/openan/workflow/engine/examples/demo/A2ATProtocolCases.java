@@ -250,11 +250,20 @@ public class A2ATProtocolCases {
                 dev.openan.workflow.engine.model.BusinessInput.data(
                     SpnCasePrompts.privateLineComplaintData()))
             .build();
-    var callbacks =
-        new dev.openan.workflow.engine.control.DefaultControlPoint(
-            new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(
-                EnvResolver.resolveEnvPath()));
-    return client.dispatch(request, content, callbacks);
+    var strategy =
+        new dev.openan.workflow.engine.examples.negotiation.NegotiationStrategy(
+            EnvResolver.resolveEnvPath());
+    return client.sendTask(
+        AGENT_NAME,
+        content,
+        negotiation ->
+            strategy.resolve(
+                new dev.openan.workflow.engine.model.NegotiationRequest(
+                    request,
+                    negotiation.originalSubmission(),
+                    negotiation.received(),
+                    negotiation.previousExchanges(),
+                    negotiation.remainingWait())));
   }
 
   private void case_7_2() throws Exception {

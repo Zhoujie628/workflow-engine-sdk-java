@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1363,5 +1364,72 @@ class WorkflowExecutorTest {
       prepared.complete(MessageContent.text("too late"));
       assertEquals(0, stub.getSentCount());
     }
+  }
+
+  @Test
+  void workflowNegotiationKeepsTheOriginalTaskRequestBehindThePublicTaskApi() {
+    java.util.concurrent.atomic.AtomicReference<TaskRequest> prepared =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    java.util.concurrent.atomic.AtomicReference<TaskRequest> negotiated =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    StubWorkflowEngineClient client =
+        new StubWorkflowEngineClient("A") {
+          @Override
+          public CompletableFuture<dev.openan.workflow.engine.model.SendMessageResult> sendTask(
+              String agentName,
+              MessageContent content,
+              dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
+            TaskRequest synthetic =
+                TaskRequest.builder()
+                    .agentName(agentName)
+                    .executionId("standalone")
+                    .taskId("standalone")
+                    .build();
+            var negotiation =
+                new dev.openan.workflow.engine.model.NegotiationRequest(
+                    synthetic,
+                    content,
+                    new dev.openan.workflow.engine.model.ReceivedMessage(
+                        MessageContent.text("need input"), Map.of(), List.of()),
+                    List.of(),
+                    java.time.Duration.ofSeconds(1));
+            return negotiationStrategy
+                .resolve(negotiation)
+                .thenCompose(ignored -> sendTask(agentName, content));
+          }
+        };
+    ControlPoint callbacks =
+        ControlPoint.builder()
+            .onTask(
+                request -> {
+                  prepared.set(request);
+                  return CompletableFuture.completedFuture(MessageContent.text("execute"));
+                })
+            .onNegotiation(
+                request -> {
+                  negotiated.set(request.task());
+                  return CompletableFuture.completedFuture(
+                      new dev.openan.workflow.engine.model.NegotiationReply.Stop(
+                          "test-stop", "test completed"));
+                })
+            .build();
+    Workflow workflow =
+        Workflow.builder()
+            .name("negotiation-context")
+            .steps(
+                List.of(
+                    WorkflowStep.builder()
+                        .name("remote")
+                        .subtasks(List.of(task("A", "work")))
+                        .build()))
+            .build();
+
+    ExecutionResult result =
+        new WorkflowExecutor(workflow, callbacks, client, null, "intent", "zh").run().join();
+
+    assertTrue(result.isSuccess());
+    assertSame(prepared.get(), negotiated.get());
+    assertEquals("remote", negotiated.get().getStepName());
+    assertEquals("work", negotiated.get().getInstruction());
   }
 }

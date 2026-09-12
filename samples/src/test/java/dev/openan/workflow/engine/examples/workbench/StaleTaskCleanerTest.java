@@ -25,7 +25,6 @@ import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.control.EventCallback;
 import dev.openan.workflow.engine.model.MessageContent;
 import dev.openan.workflow.engine.model.SendMessageResult;
-import dev.openan.workflow.engine.model.TaskRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -111,14 +110,15 @@ class StaleTaskCleanerTest {
     }
 
     @Override
-    public CompletableFuture<SendMessageResult> dispatch(
-        TaskRequest request, MessageContent content, ControlPoint callbacks) {
+    public CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content) {
       throw new UnsupportedOperationException();
     }
 
     @Override
-    public CompletableFuture<SendMessageResult> sendMessage(
-        String agentName, MessageContent content) {
+    public CompletableFuture<SendMessageResult> sendTask(
+        String agentName,
+        MessageContent content,
+        dev.openan.workflow.engine.control.NegotiationStrategy negotiationStrategy) {
       throw new UnsupportedOperationException();
     }
 

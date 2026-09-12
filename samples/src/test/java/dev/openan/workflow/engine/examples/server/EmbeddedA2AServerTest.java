@@ -132,6 +132,13 @@ class EmbeddedA2AServerTest {
                     List.of(
                         Map.of(
                             "uri",
+                            A2ATExtension.TASK_T.uri(),
+                            "description",
+                            "Task-T test extension",
+                            "required",
+                            false),
+                        Map.of(
+                            "uri",
                             "https://projects.tmforum.org/a2aproject"
                                 + "/telecommunication/extensions"
                                 + "/Negotiation-T/v1",
@@ -297,12 +304,21 @@ class EmbeddedA2AServerTest {
 
   @Test
   void testSendMessage() throws Exception {
+    var request = request();
+    var callbacks = new WorkbenchControlPoint(sdkEnvPath);
     SendMessageResult result =
         client
-            .dispatch(
-                request(),
-                new WorkbenchControlPoint(sdkEnvPath).onTask(request()).join(),
-                new WorkbenchControlPoint(sdkEnvPath))
+            .sendTask(
+                request.getAgentName(),
+                callbacks.onTask(request).join(),
+                negotiation ->
+                    callbacks.onNegotiation(
+                        new dev.openan.workflow.engine.model.NegotiationRequest(
+                            request,
+                            negotiation.originalSubmission(),
+                            negotiation.received(),
+                            negotiation.previousExchanges(),
+                            negotiation.remainingWait())))
             .join();
     assertNotNull(result);
     assertFalse(
@@ -334,15 +350,24 @@ class EmbeddedA2AServerTest {
         taskPrompt);
     metadata.put(
         MetadataContent.TEMPLATE_URI_METADATA_KEY, StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
+    var request = request();
+    var callbacks = new WorkbenchControlPoint(sdkEnvPath);
     SendMessageResult result =
         client
-            .dispatch(
-                request(),
+            .sendTask(
+                request.getAgentName(),
                 new dev.openan.workflow.engine.model.MessageContent(
                     List.of(new org.a2aproject.sdk.spec.TextPart("diagnose SPN fault")),
                     metadata,
                     java.util.Set.of(A2ATExtension.TASK_T.uri())),
-                new WorkbenchControlPoint(sdkEnvPath))
+                negotiation ->
+                    callbacks.onNegotiation(
+                        new dev.openan.workflow.engine.model.NegotiationRequest(
+                            request,
+                            negotiation.originalSubmission(),
+                            negotiation.received(),
+                            negotiation.previousExchanges(),
+                            negotiation.remainingWait())))
             .orTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .join();
     assertNotNull(result);

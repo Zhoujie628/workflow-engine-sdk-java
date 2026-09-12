@@ -340,7 +340,7 @@ public class SpringSpnDemo {
               net.openan.a2at.sdk.core.model.StandardTemplates.PRIVATE_LINE_COMPLAINT.uri());
       SendMessageResult result =
           client
-              .sendMessage(
+              .sendTask(
                   WB_AGENT_NAME,
                   dev.openan.workflow.engine.client.A2atMessages.from(
                       generated,
