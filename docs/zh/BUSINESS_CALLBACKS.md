@@ -114,8 +114,8 @@ TaskRequest，originalSubmission 是首次最终提交， received 是当前完�
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
-Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
@@ -179,9 +179,14 @@ onRoute 每次收到一条条件边，从 `currentResults()` 读取本步骤刚�
 `currentResults()` 输出的真实解析（结构化输出用 outputs 里的 JSON，自然语言输出用文本包含或宿主自己的判定逻辑）。
 
 不同条件边的回调可能并发，不要共享可变的“当前任务”状态。每个工作流任务从内容准备到传输完成受客户端 timeout 总体限制，默认
-sendTimeoutSeconds=600； 路由单独限制回调等待时间，dispatch／协商另有总等待截止时间。取消／超时后晚到结果不发送，
+sendTimeoutSeconds=600；路由单独限制回调等待时间，任务交互／协商另有总等待截止时间。取消／超时后晚到结果不发送，
 但不等于自动取消宿主正在运行的 LLM 或业务操作，宿主负责清理其资源。 同步回调入口应迅速返回，阻塞任务应交给异步执行器。
 回调缺失、返回 null 或异常均明确失败；不确定发送失败不自动重发。
+
+### 6.1 独立任务
+
+DAG 外任务使用 `WorkflowEngineClient.sendTask(agentName, finalContent)`。带 `NegotiationStrategy` 的重载只提供本次调用的
+协商决策。内容生成和语义校验仍由宿主负责；引擎保持远端 task/context、等待终态，并在本地交互无法继续时清理已知的非终态任务。
 
 ## 7. 独立授权与订阅
 

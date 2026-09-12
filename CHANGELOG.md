@@ -2,11 +2,11 @@
 
 ## [Unreleased]
 
-- Add `ExtensionSender.sendTask(agentName, content)`: a one-shot task dispatch independent of any
-  workflow. The host supplies final content; the engine envelopes, authenticates, sends and returns
-  the complete `SendMessageResult`. No `ControlPoint` is invoked and no negotiation is attempted --
-  `INPUT_REQUIRED` is returned to the caller as-is. Each call uses a fresh context, matching
-  `sendAuthorization`.
+- Add `WorkflowEngineClient.sendTask(...)` for task execution outside a DAG. It reuses the normal
+  task state machine, keeps one task/context through Negotiation-T, and supports a per-call
+  `NegotiationStrategy`. Local interaction failures cancel a known non-final remote task before
+  releasing the conversation. The internal workflow dispatch operation and the former
+  `sendMessage(...)` alias are no longer part of the public `WorkflowEngineClient` contract.
 - Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
   setting as `a2a.notification-ack-timeout-seconds` /
   `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS`.

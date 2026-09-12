@@ -136,7 +136,8 @@ obtain the received context; reply with the same id, round and maxRounds. The la
 Do not call nextRound for an ending reply or return a new Propose.
 
 Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
-to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+to stop without generating Abort content; the engine then cancels the known non-final A2A task as lifecycle cleanup.
+Repeated task/session/round events do not repeat the callback or submission.
 Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
