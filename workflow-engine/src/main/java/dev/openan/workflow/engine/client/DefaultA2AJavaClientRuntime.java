@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -698,8 +699,24 @@ public class DefaultA2AJavaClientRuntime
             crlPath,
             Duration.ofSeconds(60),
             httpClientExecutor);
-    return new A2AErrorDetectingHttpClient(
-        new JdkA2AHttpClient(new ObservedHttpClient(httpClient)));
+    return customizeHttpClient(
+        new A2AErrorDetectingHttpClient(
+            new JdkA2AHttpClient(new ObservedHttpClient(httpClient))));
+  }
+
+  /**
+   * Customizes the fully configured HTTP client used by REST and JSON-RPC transports.
+   *
+   * <p>The supplied client already applies TLS, protocol observation, and A2A error-envelope
+   * handling. Subclasses may decorate it to integrate an HTTP gateway (for example, URI rewriting
+   * or gateway-specific headers) while preserving those behaviors. The default implementation
+   * returns the client unchanged.
+   *
+   * @param httpClient fully configured transport client
+   * @return the client to use; never {@code null}
+   */
+  protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+    return Objects.requireNonNull(httpClient, "httpClient");
   }
 
   private record StreamClientKey(String agentName, String contextId) {}
