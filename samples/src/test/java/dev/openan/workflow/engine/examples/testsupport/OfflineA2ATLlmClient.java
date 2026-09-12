@@ -206,6 +206,7 @@ public final class OfflineA2ATLlmClient implements LLMClient {
 
   /** Only actual inputs, never explanatory examples or template guidance. */
   private static String validationInput(String prompt) {
+    prompt = prompt.replace("\r\n", "\n").replace('\r', '\n');
     int start = prompt.indexOf("[input]\n");
     if (start >= 0) {
       start += "[input]\n".length();
