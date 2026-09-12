@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Set the source-build version to `0.0.7-SNAPSHOT`. Maven Central version `0.0.6` was published from the same source
+  commit as `0.0.5`; it does not contain the APIs listed in this Unreleased section.
+- Preserve the published `spring-boot-starter` artifact coordinate. The temporary, unpublished
+  `spring-boot-a2a-starter` name is not a consumable Maven Central coordinate.
+
 - Add `WorkflowEngineClient.sendTask(...)` for task execution outside a DAG. It reuses the normal
   task state machine, keeps one task/context through Negotiation-T, and supports a per-call
   `NegotiationStrategy`. Local interaction failures cancel a known non-final remote task before
@@ -10,6 +15,10 @@
 - Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
   setting as `a2a.notification-ack-timeout-seconds` /
   `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS`.
+
+## [0.0.6] — 2026-09-09
+
+- Published from the same source commit as `0.0.5`; no APIs or behavior changed.
 
 ## [0.0.5] — 2026-09-09
 
@@ -73,4 +82,4 @@
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
 Published Maven artifacts use the version selected by the release tag. The default source-build
-`revision=1.0.0` is a development version, not the version to use when consuming Maven Central artifacts.
+`revision=0.0.7-SNAPSHOT` is not a Maven Central release version.

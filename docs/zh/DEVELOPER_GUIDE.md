@@ -10,9 +10,12 @@
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.0.6</version>
+    <version>0.0.7-SNAPSHOT</version>
 </dependency>
 ```
+
+`0.0.7-SNAPSHOT` 是当前源码构建版本，使用前需要先安装到本地 Maven 仓库，或由内部快照仓库提供。Maven Central
+中的 `0.0.6` 与 `0.0.5` 来自同一份源码，不包含 Unreleased 章节中的新接口。
 
 引擎会传递性引入 A2A 协议 SDK（`a2a-java-sdk-client`，含 REST、JSON-RPC、gRPC 传输） 和最小 A2A-T 核心（`a2a-t-core`）。生成 A2A-T 内容的宿主智能体显式依赖 a2a-t-client，校验接收内容的被调度智能体服务另引入 a2a-t-server。
 

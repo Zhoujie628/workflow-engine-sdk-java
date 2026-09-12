@@ -12,10 +12,10 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>spring-boot-a2a-starter</artifactId>
+    <artifactId>spring-boot-starter</artifactId>
     <packaging>jar</packaging>
 
-    <name>spring-boot-a2a-starter</name>
+    <name>spring-boot-starter</name>
     <description>Spring Boot auto-configuration for the A2A-T server side.
         Integration partners add this dependency and implement AgentExecutor --
         all server-side beans (RestHandler, DefaultRequestHandler, event bus)

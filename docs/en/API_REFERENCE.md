@@ -181,7 +181,8 @@ a2a-t-core only, never content generation or semantic validation.
 
 ### A2AJavaClientRuntime
 
-Runtime seam for A2A SDK message transport. Implement to customize HTTP transport behavior.
+Runtime seam for A2A SDK message transport. Implement this interface to replace the transport completely, including a
+vendor SDK or a non-HTTP channel.
 
 ```java
 public interface A2AJavaClientRuntime {
@@ -195,7 +196,23 @@ public interface A2AJavaClientRuntime {
 }
 ```
 
-A default implementation is provided. Implement this interface only if you need custom HTTP transport.
+The engine provides `DefaultA2AJavaClientRuntime`. If an integration only needs to rewrite URIs or add gateway headers,
+subclass the default runtime and decorate its configured `A2AHttpClient`; do not reimplement message dispatch, SSE, or
+standard A2A error handling:
+
+```java
+public final class GatewayRuntime extends DefaultA2AJavaClientRuntime {
+    @Override
+    protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
+        return new GatewayHttpClientDecorator(httpClient);
+    }
+}
+```
+
+The client passed to the hook already contains the engine's TLS, protocol logging, and error handling. A decorator must
+preserve request headers, the JSON body, and SSE message/error/completion callbacks, and must return a non-null client.
+The hook applies only to REST/JSON-RPC HTTP transports; implement `A2AJavaClientRuntime` for gRPC or a completely
+different transport.
 
 ### ConversationScopedA2AJavaClientRuntime
 
@@ -635,9 +652,9 @@ not add private negotiation-state keys to the wire message.
 
 ---
 
-## spring-boot-a2a-starter Module
+## spring-boot-starter Module
 
-The `spring-boot-a2a-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the
+The `spring-boot-starter` module provides Spring Boot auto-configuration for the A2A **server** side (not the
 client/workflow side). In a Spring Boot web application, set `a2at.server.enabled=true` to register the A2A SDK server
 components as Spring beans.
 
