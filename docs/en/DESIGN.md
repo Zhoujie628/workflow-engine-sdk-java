@@ -119,7 +119,7 @@ entry point.
 graph TD
     L2["Layer 2 - Orchestration<br/>execute_psop / ExecutePsop<br/>lifecycle, event stream, cancellation, onFinish persistence"]
     L1["Layer 1 - Traversal<br/>WorkflowExecutor<br/>DAG walk, parallel dispatch, context assembly, routing"]
-    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow send) | ExtensionSender (independent operations)"]
+    L0["Layer 0 - Communication<br/>A2ATransport + two facades<br/>WorkflowEngineClient (workflow / standalone tasks) | ExtensionSender (independent operations)"]
     F["Foundation - Decision<br/>ControlPoint<br/>user-implemented business decisions"]
 
     L2 --> L1 --> L0
@@ -204,7 +204,8 @@ callback budget expires or the run is cancelled is ignored and never sent to the
 ### 3.1 Layer 0 - Communication
 
 A2ATransport uses A2A SDK REST, JSON-RPC and gRPC bindings for authentication, delivery and complete response assembly.
-WorkflowEngineClient accepts MessageContent and manages task association and negotiation continuation. ExtensionSender
+WorkflowEngineClient accepts MessageContent for workflow or standalone tasks and manages task association, waiting,
+negotiation continuation and non-final task cleanup. ExtensionSender
 provides independent sendAuthorization and openNotification operations. The implementations are reusable; task,
 authorization and notification do not share transport/runtime/context instances. ProtocolResponses assembles artifact
 deltas by identity and ReceivedMessage preserves metadata at each level.
@@ -267,7 +268,8 @@ obtain the received context; reply with the same id, round and maxRounds. The la
 Do not call nextRound for an ending reply or return a new Propose.
 
 Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
-to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+to stop without generating Abort content; the engine then cancels the known non-final A2A task as lifecycle cleanup.
+Repeated task/session/round events do not repeat the callback or submission.
 Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in

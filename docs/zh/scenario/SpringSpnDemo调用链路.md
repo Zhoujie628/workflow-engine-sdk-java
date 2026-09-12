@@ -44,7 +44,7 @@ transport 保留到订阅完成、取消或 Spring 容器关闭。
 ## 3. 北向 WAIMO 请求
 
 `SpringSpnDemo.sendTaskToWorkbench()` 创建专用北向 transport，调用 宿主 A2ATClient.generateTaskPromptFromDataWithSchema 和
-A2atMessages.from，再调用 sendMessage (agent, finalContent)：
+A2atMessages.from，再调用 sendTask (agent, finalContent)：
 
 1. SDK schema-aware 管线将原始投诉数据渲染为 Task-T prompt。
 2. A2A Java SDK 通过 `https://127.0.0.1:26337/a2a/json/message:stream` 发送。

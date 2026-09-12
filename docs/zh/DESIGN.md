@@ -108,7 +108,7 @@ SDK 分为四层，每层构建在下一层之上，单一职责，入口清晰�
 graph TD
     L2["Layer 2 - 编排层<br/>ExecutePsop<br/>生命周期、事件流、取消、onFinish 持久化"]
     L1["Layer 1 - 遍历层<br/>WorkflowExecutor<br/>DAG 遍历、并行下发、上下文组装、路由"]
-    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流发送）| ExtensionSender（独立协议操作）"]
+    L0["Layer 0 - 通信层<br/>A2ATransport + 两个门面<br/>WorkflowEngineClient（工作流／独立任务）| ExtensionSender（独立协议操作）"]
     F["基础层 - 决策<br/>ControlPoint<br/>用户实现的业务决策"]
 
     L2 --> L1 --> L0
@@ -188,7 +188,8 @@ A2A 错误信封拒绝的调用，由传输层识别并投影为稳定错误码�
 ### 3.1 Layer 0 - 通信层
 
 A2ATransport 使用 A2A SDK 的 REST、JSON-RPC、gRPC 绑定，负责认证头、实际传输和完整响应组装。 WorkflowEngineClient 接收
-MessageContent 并管理远端任务和必要的协商续发。 ExtensionSender 负责流程外 sendAuthorization 与 openNotification。
+工作流或独立任务的 MessageContent，并管理远端任务、等待、必要的协商续发与非终态清理。 ExtensionSender 负责流程外
+sendAuthorization 与 openNotification。
 三种协议操作复用实现而不共用 transport/runtime/context 实例。 ProtocolResponses 按 artifact 身份合并流式增量，ReceivedMessage
 保留各层 metadata。
 
@@ -240,8 +241,9 @@ Negotiation-T：
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
-Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。

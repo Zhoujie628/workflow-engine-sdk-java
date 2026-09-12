@@ -393,12 +393,28 @@ obtain the received context; reply with the same id, round and maxRounds. The la
 Do not call nextRound for an ending reply or return a new Propose.
 
 Return `new NegotiationReply.Send(content)` to send that exact content. Return `new NegotiationReply.Stop(code, reason)`
-to stop locally without a generated Abort. Repeated task/session/round events do not repeat the callback or submission.
+to stop without generating Abort content; the engine then cancels the known non-final A2A task as lifecycle cleanup.
+Repeated task/session/round events do not repeat the callback or submission.
 Unchanged waiting state is observed with getTask.
 `maxNegotiationExchanges` (default 3) bounds local interactions, independently of the SDK context's maxRounds. Timeout,
 exhausted budget or a missing handler fails locally; no implicit Accept or synthesized Abort. Accept/Reject ACKs in
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
 task success, even if the dispatched agent acknowledges it with COMPLETED.
+
+For a task outside a workflow DAG, call the task client directly. It uses a fresh context but keeps the same remote task
+identity through waiting and negotiation. The optional per-call strategy does not change the client-wide ControlPoint.
+Plain A2A content is allowed; activated Task-T content must include Task-T metadata and the target AgentCard must
+declare the extension.
+
+```java
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy);
+```
+
+If a known remote task is still non-final when local interaction cannot continue, the client makes a best-effort
+cancellation before completing exceptionally. Standard A2A request errors remain exceptional results and are not
+converted into business task failures.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -406,10 +422,10 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
     BiConsumer<NotificationSubscription, ReceivedMessage> listener);
 ```
 
-The host agent generates final Authorization-T/Notification-T content and calls these methods on separate
-transport/runtime/context instances. The listener receives the handle and complete ReceivedMessage, and closes on the
-host-defined terminal event. acknowledgement() and completion() separately represent ACK and actual stream exit;
-neither is a workflow prerequisite.
+The host agent generates final Authorization-T/Notification-T content. Authorization and notification each use a
+transport/runtime/context independent of the task client and of one another. The listener receives the handle and
+complete ReceivedMessage, and closes on the host-defined terminal event. acknowledgement() and completion() separately
+represent ACK and actual stream exit; neither is a workflow prerequisite.
 
 `WorkflowEngineClientConfig.notificationAckTimeoutSeconds` controls the initial subscription ACK wait and defaults to
 300 seconds. The Spring sample exposes it as `a2a.notification-ack-timeout-seconds` and
@@ -631,17 +647,17 @@ Logging configuration, pretty display and observer callbacks do not determine ta
 
 ## 15. Interface Reference
 
-| Interface/Class                                        | Purpose                                                                 |
-|--------------------------------------------------------|-------------------------------------------------------------------------|
-| `ExecutePsop.Builder`                                  | Workflow execution entry point                                          |
-| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)   |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow send (sendMessage, auth, extensions)                           |
-| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
-| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)         |
-| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget)   |
-| `AuthProvider`                                         | Custom authentication                                                   |
-| `EventCallback` / `EventType`                          | Event callback                                                          |
-| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                   |
-| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                     |
-| `ExecutionResult`                                      | Execution result                                                        |
-| `SendMessageResult` / `TaskResult`                     | Message/task response                                                   |
+| Interface/Class                                        | Purpose                                                                            |
+|--------------------------------------------------------|------------------------------------------------------------------------------------|
+| `ExecutePsop.Builder`                                  | Workflow execution entry point                                                     |
+| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)              |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow and standalone task interaction                                           |
+| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions            |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)                    |
+| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget) |
+| `AuthProvider`                                         | Custom authentication                                                              |
+| `EventCallback` / `EventType`                          | Event callback                                                                     |
+| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                              |
+| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                                |
+| `ExecutionResult`                                      | Execution result                                                                   |
+| `SendMessageResult` / `TaskResult`                     | Message/task response                                                              |

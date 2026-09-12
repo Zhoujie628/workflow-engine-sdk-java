@@ -58,8 +58,9 @@ ExecutionResult result = ExecutePsop.builder()
 ### WorkflowEngineClient
 
 ```java
-CompletableFuture<SendMessageResult> dispatch(TaskRequest request, MessageContent content, ControlPoint callbacks);
-CompletableFuture<SendMessageResult> sendMessage(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
@@ -74,7 +75,15 @@ void close();
 任务管理操作。查询结果受认证身份权限约束，只包含当前身份可见的任务；调用方必须使用
 `nextPageToken` 完成分页。关闭本地客户端或通知流不等同于取消远端任务。
 
-执行器内部调用 dispatch；onTask 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建 A2ATClient，不按
+`sendTask` 在 DAG 外执行宿主提供的最终任务内容。每次调用使用新的 context，并复用工作流任务的发送、等待、查询和 Negotiation-T
+闭环。重载方法接受本次调用独有的协商策略，不修改客户端级 ControlPoint。超时、缺少处理器或其他本地交互失败后，
+如果已知远端任务仍处于非终态，客户端会先尝试取消，再以异常完成。`sendTask` 是公开任务提交的唯一名称；传输运行时内部仍可使用
+A2A 标准动作名称 `sendMessage`。
+
+普通 A2A 内容不要求 Task-T；一旦激活 Task-T，就必须同时携带对应 metadata，且目标 AgentCard 必须声明支持 Task-T。
+
+`onTask` 返回后由执行器内部调用 `sendTask`；`onTask` 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建
+A2ATClient，不按
 AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 SDK。
 
 只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
@@ -82,8 +91,9 @@ AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
-返回 `new NegotiationReply.Send(content)` 发送最终内容； 返回 `new NegotiationReply.Stop(code, reason)` 只在本地停止，不生成
-Abort。 同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
