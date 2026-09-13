@@ -46,6 +46,19 @@ public interface WorkflowEngineClient {
       String agentName, MessageContent content, NegotiationStrategy negotiationStrategy);
 
   /**
+   * Sends final task content with callbacks scoped to this invocation. Implementations that emit
+   * protocol lifecycle events should override this method so concurrent workflow executions do not
+   * share mutable callback state.
+   */
+  default CompletableFuture<SendMessageResult> sendTask(
+      String agentName,
+      MessageContent content,
+      NegotiationStrategy negotiationStrategy,
+      EventCallback eventCallback) {
+    return sendTask(agentName, content, negotiationStrategy);
+  }
+
+  /**
    * Maximum wait for one task interaction, from initial content preparation through remote task
    * completion and any negotiation exchanges. The same budget applies independently to a route
    * callback.

@@ -412,6 +412,7 @@ public class ExecutePsop {
     private String caCertsPath;
     private A2AJavaClientRuntime a2aClientRuntime;
     private EventCallback eventCallback;
+    private boolean clientConstructionConfigured;
     private BiFunction<ExecutionResult, List<Map<String, Object>>, CompletableFuture<Void>>
         onFinish;
     private Function<Map<String, Object>, Object> onEvent;
@@ -423,6 +424,7 @@ public class ExecutePsop {
 
     public Builder agentCards(List<AgentCard> v) {
       this.agentCards = v;
+      this.clientConstructionConfigured = true;
       return this;
     }
 
@@ -448,21 +450,25 @@ public class ExecutePsop {
 
     public Builder credentialsConfigPath(String v) {
       this.credentialsConfigPath = v;
+      this.clientConstructionConfigured = true;
       return this;
     }
 
     public Builder sslVerify(boolean v) {
       this.sslVerify = v;
+      this.clientConstructionConfigured = true;
       return this;
     }
 
     public Builder caCertsPath(String v) {
       this.caCertsPath = v;
+      this.clientConstructionConfigured = true;
       return this;
     }
 
     public Builder a2aClientRuntime(A2AJavaClientRuntime v) {
       this.a2aClientRuntime = v;
+      this.clientConstructionConfigured = true;
       return this;
     }
 
@@ -496,6 +502,10 @@ public class ExecutePsop {
     public CompletableFuture<ExecutionResult> execute() {
       if (psop == null) throw new IllegalArgumentException("psop is required");
       if (controlPoint == null) throw new IllegalArgumentException("controlPoint is required");
+      if (engineClient != null && clientConstructionConfigured) {
+        throw new IllegalArgumentException(
+            "engineClient cannot be combined with agentCards, a2aClientRuntime, TLS, or credentials settings");
+      }
       return ExecutePsop.execute(
           psop,
           agentCards,

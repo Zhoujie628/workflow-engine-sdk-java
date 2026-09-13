@@ -29,8 +29,8 @@ import lombok.Getter;
 /**
  * Configuration for DefaultWorkflowEngineClient.
  *
- * <p>Mirrors the Python SDK's {@code WorkflowEngineClient.__init__} parameters. Use the builder to
- * create an instance.
+ * <p>Use the builder to create immutable transport, authentication, timeout, and protocol-selection
+ * settings for one engine client.
  */
 @Getter
 public class WorkflowEngineClientConfig {
@@ -234,6 +234,10 @@ public class WorkflowEngineClientConfig {
       }
       if (maxNegotiationExchanges <= 0) {
         throw new IllegalArgumentException("maxNegotiationExchanges must be positive");
+      }
+      if (credentialsConfigPath != null && credentialsConfig != null) {
+        throw new IllegalArgumentException(
+            "credentialsConfigPath and credentialsConfig are mutually exclusive");
       }
       return new WorkflowEngineClientConfig(this);
     }

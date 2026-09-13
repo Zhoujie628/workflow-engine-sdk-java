@@ -38,7 +38,8 @@ class HostQuickStartTest {
                 new Class<?>[] {WorkflowEngineClient.class},
                 (proxy, method, args) -> {
                   if (method.getName().equals("callbackTimeoutSeconds")) return 10L;
-                  if (method.getName().equals("sendTask") && method.getParameterCount() == 3) {
+                  if (method.getName().equals("sendTask")
+                      && (method.getParameterCount() == 3 || method.getParameterCount() == 4)) {
                     sent.incrementAndGet();
                     return CompletableFuture.completedFuture(
                         SendMessageResult.builder()

@@ -132,4 +132,56 @@ class ExtensionSenderTest {
       release.countDown();
     }
   }
+
+  @Test
+  void closeHonorsExplicitTransportOwnership() throws Exception {
+    AtomicInteger owningCloses = new AtomicInteger();
+    A2AJavaClientRuntime owningRuntime =
+        new A2AJavaClientRuntime() {
+          public Iterable<ClientEvent> sendMessage(
+              AgentCard card,
+              MessageSendParams params,
+              ClientCallContext context,
+              Consumer<ClientEvent> sink,
+              Consumer<String> logs) {
+            return List.of();
+          }
+
+          public void close() {
+            owningCloses.incrementAndGet();
+          }
+        };
+    A2ATransport ownedTransport =
+        new A2ATransport(
+            List.of(card()), owningRuntime, WorkflowEngineClientConfig.builder().build());
+    DefaultExtensionSender owning = new DefaultExtensionSender(ownedTransport);
+    owning.close();
+    owning.close();
+    assertEquals(1, owningCloses.get());
+
+    AtomicInteger sharedCloses = new AtomicInteger();
+    A2AJavaClientRuntime sharedRuntime =
+        new A2AJavaClientRuntime() {
+          public Iterable<ClientEvent> sendMessage(
+              AgentCard card,
+              MessageSendParams params,
+              ClientCallContext context,
+              Consumer<ClientEvent> sink,
+              Consumer<String> logs) {
+            return List.of();
+          }
+
+          public void close() {
+            sharedCloses.incrementAndGet();
+          }
+        };
+    A2ATransport sharedTransport =
+        new A2ATransport(
+            List.of(card()), sharedRuntime, WorkflowEngineClientConfig.builder().build());
+    DefaultExtensionSender nonOwning = DefaultExtensionSender.nonOwning(sharedTransport);
+    nonOwning.close();
+    assertEquals(0, sharedCloses.get());
+    sharedTransport.close();
+    assertEquals(1, sharedCloses.get());
+  }
 }

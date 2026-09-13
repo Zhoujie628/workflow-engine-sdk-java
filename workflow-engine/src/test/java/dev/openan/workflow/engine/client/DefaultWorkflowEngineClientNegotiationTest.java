@@ -673,4 +673,66 @@ class DefaultWorkflowEngineClientNegotiationTest {
               .getTaskState());
     }
   }
+
+  @Test
+  void concurrentTasksKeepInvocationEventCallbacksIsolated() throws Exception {
+    CountDownLatch bothStarted = new CountDownLatch(2);
+    A2AJavaClientRuntime concurrentRuntime =
+        runtime(
+            params -> {
+              bothStarted.countDown();
+              try {
+                assertTrue(bothStarted.await(2, TimeUnit.SECONDS));
+              } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new CompletionException(error);
+              }
+              return List.of(
+                  response(params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
+            });
+    try (var transport =
+        new A2ATransport(
+            List.of(card()), concurrentRuntime, WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      List<String> firstEvents = new CopyOnWriteArrayList<>();
+      List<String> secondEvents = new CopyOnWriteArrayList<>();
+      List<MessageContent> firstRequests = new CopyOnWriteArrayList<>();
+      List<MessageContent> secondRequests = new CopyOnWriteArrayList<>();
+
+      CompletableFuture<SendMessageResult> first =
+          client.sendTask(
+              "test",
+              MessageContent.text("first"),
+              request -> CompletableFuture.failedFuture(new AssertionError("not negotiated")),
+              new dev.openan.workflow.engine.control.EventCallback() {
+                @Override
+                public void onEvent(String type, Map<String, Object> data) {
+                  firstEvents.add(type);
+                  if ("agent_request".equals(type)) {
+                    firstRequests.add((MessageContent) data.get("content"));
+                  }
+                }
+              });
+      CompletableFuture<SendMessageResult> second =
+          client.sendTask(
+              "test",
+              MessageContent.text("second"),
+              request -> CompletableFuture.failedFuture(new AssertionError("not negotiated")),
+              new dev.openan.workflow.engine.control.EventCallback() {
+                @Override
+                public void onEvent(String type, Map<String, Object> data) {
+                  secondEvents.add(type);
+                  if ("agent_request".equals(type)) {
+                    secondRequests.add((MessageContent) data.get("content"));
+                  }
+                }
+              });
+
+      CompletableFuture.allOf(first, second).join();
+      assertEquals(List.of("agent_request", "agent_response"), firstEvents);
+      assertEquals(List.of("agent_request", "agent_response"), secondEvents);
+      assertEquals(List.of(MessageContent.text("first")), firstRequests);
+      assertEquals(List.of(MessageContent.text("second")), secondRequests);
+    }
+  }
 }

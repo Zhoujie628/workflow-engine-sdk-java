@@ -328,13 +328,10 @@ public class WorkbenchOrchestrator {
       CompletableFuture<ExecutionResult> execution =
           ExecutePsop.builder()
               .psop(workflow)
-              .agentCards(agentCards)
               .controlPoint(controlPoint)
               .engineClient(engineClient)
               .runtimeIntent(messageText)
               .lang("zh")
-              .sslVerify(sslVerify)
-              .credentialsConfigPath(credentialsPath)
               .eventCallback(createLogCallback(transport.getContextId()))
               .onFinish(
                   (r, events) -> {

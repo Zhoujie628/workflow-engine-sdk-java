@@ -100,8 +100,6 @@ public class WorkflowExecutor {
     this.eventCallback = eventCallback != null ? eventCallback : new EventCallback();
     this.contextBuilder = new ContextBuilder(this.workflow, runtimeIntent);
     this.lang = lang != null ? lang : "zh";
-    this.engineClient.setControlPoint(this.controlPoint);
-    this.engineClient.setEventCallback(this.eventCallback);
     log.info(
         "[Executor] Workflow: {}, steps={}, intent={}, lang={}",
         workflow.getName(),
@@ -403,7 +401,8 @@ public class WorkflowExecutor {
                                                 negotiation.originalSubmission(),
                                                 negotiation.received(),
                                                 negotiation.previousExchanges(),
-                                                negotiation.remainingWait()))));
+                                                negotiation.remainingWait())),
+                                    eventCallback));
                     result.whenComplete(
                         (value, failure) -> {
                           if (!sent.isDone()) sent.cancel(true);

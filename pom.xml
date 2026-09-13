@@ -60,6 +60,7 @@
         <jackson.version>2.22.0</jackson.version>
         <slf4j.version>2.0.18</slf4j.version>
         <junit.version>5.10.2</junit.version>
+        <grpc.version>1.81.0</grpc.version>
         <log4j2.version>2.24.3</log4j2.version>
         <spring-boot.version>3.3.10</spring-boot.version>
         <central.plugin.version>0.11.0</central.plugin.version>
@@ -71,6 +72,14 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Declare test-library management first so protocol SDK BOMs cannot override it. -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.a2aproject.sdk</groupId>
                 <artifactId>a2a-java-sdk-bom</artifactId>

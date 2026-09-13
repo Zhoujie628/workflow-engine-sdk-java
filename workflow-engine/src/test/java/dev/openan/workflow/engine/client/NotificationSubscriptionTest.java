@@ -40,11 +40,17 @@ class NotificationSubscriptionTest {
     assertEquals(0, subscription.heartbeat().eventCount());
     assertFalse(subscription.isHealthy(Duration.ofSeconds(1)));
 
+    subscription.recordActivity();
+    assertEquals(0, subscription.heartbeat().eventCount());
+    assertTrue(subscription.isHealthy(Duration.ofSeconds(1)));
+    assertEquals(null, subscription.lastBusinessEventAt());
+
     subscription.recordEvent();
     subscription.acknowledge(
         SendMessageResult.builder().text("ack").taskState("TASK_STATE_WORKING").build());
 
     assertEquals(1, subscription.heartbeat().eventCount());
+    assertTrue(subscription.lastBusinessEventAt() != null);
     assertTrue(subscription.isHealthy(Duration.ofSeconds(1)));
     subscription.close();
     subscription.close();

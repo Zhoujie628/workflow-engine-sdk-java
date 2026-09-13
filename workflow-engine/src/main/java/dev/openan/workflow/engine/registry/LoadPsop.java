@@ -30,6 +30,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import javax.net.ssl.HttpsURLConnection;
@@ -51,8 +52,17 @@ import org.slf4j.LoggerFactory;
 public class LoadPsop {
   private static final Logger log = LoggerFactory.getLogger(LoadPsop.class);
   private static final ObjectMapper mapper = new ObjectMapper();
+  private static final Timeouts DEFAULT_TIMEOUTS =
+      new Timeouts(Duration.ofSeconds(30), Duration.ofSeconds(30));
 
   public static Workflow load(String baseUrl, String psopId, String accessToken, boolean sslVerify)
+      throws Exception {
+    return load(baseUrl, psopId, accessToken, sslVerify, DEFAULT_TIMEOUTS);
+  }
+
+  /** Loads one workflow with explicit connection and response-read deadlines. */
+  public static Workflow load(
+      String baseUrl, String psopId, String accessToken, boolean sslVerify, Timeouts timeouts)
       throws Exception {
     StringBuilder urlBuilder =
         new StringBuilder(baseUrl).append("/api/v1/orchestrate/psop/").append(psopId);
@@ -63,7 +73,7 @@ public class LoadPsop {
     }
     String url = urlBuilder.toString();
     log.info("[Registry] Loading PSOP from {} (ssl_verify={})", anonymousUrl(url, accessToken), sslVerify);
-    HttpResult resp = execute("GET", url, null, sslVerify);
+    HttpResult resp = execute("GET", url, null, sslVerify, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
@@ -83,6 +93,18 @@ public class LoadPsop {
   public static List<WorkflowSearchResult> search(
       String baseUrl, String intent, int topN, String accessToken, boolean sslVerify)
       throws Exception {
+    return search(baseUrl, intent, topN, accessToken, sslVerify, DEFAULT_TIMEOUTS);
+  }
+
+  /** Searches workflows with explicit connection and response-read deadlines. */
+  public static List<WorkflowSearchResult> search(
+      String baseUrl,
+      String intent,
+      int topN,
+      String accessToken,
+      boolean sslVerify,
+      Timeouts timeouts)
+      throws Exception {
     StringBuilder urlBuilder = new StringBuilder(baseUrl).append("/api/v1/orchestrate/search");
     if (accessToken != null && !accessToken.isEmpty()) {
       urlBuilder
@@ -92,7 +114,7 @@ public class LoadPsop {
     String url = urlBuilder.toString();
     log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", anonymousUrl(url, accessToken), intent, topN);
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
-    HttpResult resp = execute("POST", url, jsonBody, sslVerify);
+    HttpResult resp = execute("POST", url, jsonBody, sslVerify, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
@@ -137,8 +159,10 @@ public class LoadPsop {
             + (detail.isBlank() ? "" : ": " + detail));
   }
 
-  private static HttpResult execute(String method, String url, String jsonBody, boolean sslVerify)
+  private static HttpResult execute(
+      String method, String url, String jsonBody, boolean sslVerify, Timeouts timeouts)
       throws Exception {
+    java.util.Objects.requireNonNull(timeouts, "timeouts");
     HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
     if (!sslVerify && connection instanceof HttpsURLConnection https) {
       // Development opt-out is connection-local: never replace JVM-wide TLS defaults.
@@ -152,8 +176,8 @@ public class LoadPsop {
     }
     try {
       connection.setInstanceFollowRedirects(false);
-      connection.setConnectTimeout(30_000);
-      connection.setReadTimeout(30_000);
+      connection.setConnectTimeout(timeouts.connectTimeoutMillis());
+      connection.setReadTimeout(timeouts.readTimeoutMillis());
       connection.setRequestMethod(method);
       if (jsonBody != null) {
         connection.setDoOutput(true);
@@ -177,6 +201,40 @@ public class LoadPsop {
   /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
   public static List<WorkflowSearchResult> search(String baseUrl, String intent) throws Exception {
     return search(baseUrl, intent, 5, null, true);
+  }
+
+  /** Connection and response-read deadlines for orchestration-center calls. */
+  public record Timeouts(Duration connectTimeout, Duration readTimeout) {
+    public Timeouts {
+      requirePositiveAndSupported(connectTimeout, "connectTimeout");
+      requirePositiveAndSupported(readTimeout, "readTimeout");
+    }
+
+    private static void requirePositiveAndSupported(Duration value, String name) {
+      if (value == null || value.isZero() || value.isNegative()) {
+        throw new IllegalArgumentException(name + " must be positive");
+      }
+      long milliseconds;
+      try {
+        milliseconds = value.toMillis();
+      } catch (ArithmeticException error) {
+        throw new IllegalArgumentException(name + " exceeds HttpURLConnection limit", error);
+      }
+      if (milliseconds < 1) {
+        throw new IllegalArgumentException(name + " must be at least 1 millisecond");
+      }
+      if (milliseconds > Integer.MAX_VALUE) {
+        throw new IllegalArgumentException(name + " exceeds HttpURLConnection limit");
+      }
+    }
+
+    int connectTimeoutMillis() {
+      return Math.toIntExact(connectTimeout.toMillis());
+    }
+
+    int readTimeoutMillis() {
+      return Math.toIntExact(readTimeout.toMillis());
+    }
   }
 
   private record HttpResult(int statusCode, String body) {}

@@ -25,6 +25,24 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 
 class WorkflowEngineClientConfigTest {
+
+  @Test
+  void rejectsFileAndInlineCredentialsTogether() {
+    Map<String, Map<String, Map<String, Object>>> inline =
+        Map.of("agent", Map.of("scheme", Map.of("token", "value")));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                WorkflowEngineClientConfig.builder()
+                    .credentialsConfigPath("credentials.json")
+                    .credentialsConfig(inline)
+                    .build());
+
+    assertTrue(error.getMessage().contains("mutually exclusive"));
+  }
+
   @Test
   void notificationAcknowledgementDefaultsToFiveMinutesAndRemainsConfigurable() {
     assertEquals(

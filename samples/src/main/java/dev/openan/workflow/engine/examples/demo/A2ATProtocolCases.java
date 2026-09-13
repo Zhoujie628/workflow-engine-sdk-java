@@ -174,8 +174,8 @@ public class A2ATProtocolCases {
           }
         });
     notificationControlClient = new DefaultWorkflowEngineClient(notificationTransport);
-    authorizationSender = new DefaultExtensionSender(authorizationTransport);
-    notificationSender = new DefaultExtensionSender(notificationTransport);
+    authorizationSender = DefaultExtensionSender.nonOwning(authorizationTransport);
+    notificationSender = DefaultExtensionSender.nonOwning(notificationTransport);
   }
 
   private void teardown() {

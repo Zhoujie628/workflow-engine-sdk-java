@@ -212,8 +212,8 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
       List<NotificationSubscription> opened =
           new ExtensionPrePositioner(a2atEnvPath)
               .prePosition(
-                  new DefaultExtensionSender(authorizationTransport),
-                  new DefaultExtensionSender(notificationCandidate),
+                  DefaultExtensionSender.nonOwning(authorizationTransport),
+                  DefaultExtensionSender.nonOwning(notificationCandidate),
                   agentCards,
                   this::handleNotification,
                   subscription -> subscriptions.put(subscription.agentName(), subscription));

@@ -19,13 +19,13 @@
 
 package dev.openan.workflow.engine.core;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.openan.workflow.engine.StubWorkflowEngineClient;
@@ -107,7 +107,7 @@ class WorkflowExecutorTest {
   }
 
   @Test
-  void constructorFailsFastWhenClientCallbackWiringFails() {
+  void constructorDoesNotMutateClientCallbacks() {
     Workflow workflow =
         Workflow.builder()
             .name("wiring")
@@ -121,13 +121,17 @@ class WorkflowExecutorTest {
           public void setControlPoint(ControlPoint controlPoint) {
             throw new IllegalStateException("wiring failed");
           }
+
+          @Override
+          public void setEventCallback(EventCallback callback) {
+            throw new IllegalStateException("wiring failed");
+          }
         };
 
-    IllegalStateException error =
-        assertThrows(
-            IllegalStateException.class,
+    WorkflowExecutor executor =
+        assertDoesNotThrow(
             () -> new WorkflowExecutor(workflow, autoCp(), client, recordingCallback(), "", "zh"));
-    assertEquals("wiring failed", error.getMessage());
+    assertTrue(executor.run().join().isSuccess());
   }
 
   @Test

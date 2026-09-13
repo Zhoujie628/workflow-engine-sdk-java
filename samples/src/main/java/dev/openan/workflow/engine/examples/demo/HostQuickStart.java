@@ -80,8 +80,13 @@ public final class HostQuickStart {
         .onNegotiation(request -> CompletableFuture.completedFuture(
             new NegotiationReply.Stop("manual.required", "Host review required")))
         .build();
-    CompletableFuture<ExecutionResult> execution = ExecutePsop.builder().psop(workflow).agentCards(cards)
-        .engineClient(client).controlPoint(callbacks).runtimeIntent("Diagnose the supplied issue").execute();
+    CompletableFuture<ExecutionResult> execution =
+        ExecutePsop.builder()
+            .psop(workflow)
+            .engineClient(client)
+            .controlPoint(callbacks)
+            .runtimeIntent("Diagnose the supplied issue")
+            .execute();
     try {
       return execution.get(10, TimeUnit.MINUTES);
     } finally {
