@@ -30,7 +30,7 @@ WAIMO 不应手写 A2A JSON 信封，也不应直接调用执行引擎内部的 
 
 ```xml
 <properties>
-    <workflow-engine.version>0.0.7</workflow-engine.version>
+    <workflow-engine.version>0.0.8</workflow-engine.version>
     <a2a-t.version>1.1.0</a2a-t.version>
 </properties>
 
@@ -48,7 +48,7 @@ WAIMO 不应手写 A2A JSON 信封，也不应直接调用执行引擎内部的 
 </dependencies>
 ```
 
-`0.0.7` 已发布到 Maven Central，包含本文使用的 `sendTask(...)` 与 HTTP Runtime 定制扩展点。`0.0.5`
+`0.0.8` 已发布到 Maven Central，包含本文使用的 `sendTask(...)` 与 HTTP Runtime 定制扩展点。`0.0.5`
 及同源码重复发布的 `0.0.6` 均不包含这些接口，不能按本文直接集成。实际工程应统一管理版本，不要同时引入不同版本的
 A2A Java SDK；`workflow-engine` 已经声明其运行所需的 A2A Java SDK 依赖。
 
