@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-09-13
+
+- Scope task lifecycle callbacks to each `sendTask` invocation so concurrent workflow executions
+  cannot overwrite or receive one another's protocol events.
+- Cancel pending task polls and acknowledgement timers when an invocation, subscription, client or
+  transport finishes; this prevents delayed callbacks from surviving resource shutdown.
+- Track raw transport activity separately from decoded Notification-T business events. Standard SSE
+  comment heartbeats refresh `heartbeat().lastEventAt()` without increasing `eventCount`; use the
+  new `lastBusinessEventAt()` accessor for business-event liveness.
+- Add configurable connection/read deadlines to `LoadPsop`, and reject ambiguous simultaneous
+  `credentialsConfigPath` and inline `credentialsConfig` configuration.
+- Clarify `DefaultExtensionSender` ownership: its public constructor owns the supplied transport;
+  callers that share a transport must use `DefaultExtensionSender.nonOwning(...)`.
+
 ## [0.0.7] — 2026-09-13
 
 - Set the source-build version to `0.0.7-SNAPSHOT`. Maven Central version `0.0.6` was published from the same source
@@ -84,4 +98,4 @@
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
 Published Maven artifacts use the version selected by the release tag. The default source-build
-`revision=0.0.7-SNAPSHOT` is not a Maven Central release version.
+`revision=0.0.8-SNAPSHOT` is not a Maven Central release version.
