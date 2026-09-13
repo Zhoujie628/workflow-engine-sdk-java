@@ -379,6 +379,23 @@ public final class OrderGatewayClientRuntime
     return false;
   }
 
+  private static Runnable transportActivity(ClientCallContext callContext) {
+    Object configured =
+        callContext == null
+            ? null
+            : callContext.getState().get(A2AJavaClientRuntime.TRANSPORT_ACTIVITY_STATE_KEY);
+    return configured instanceof Runnable runnable ? runnable : null;
+  }
+
+  private static void notifyTransportActivity(Runnable activityListener) {
+    if (activityListener == null) return;
+    try {
+      activityListener.run();
+    } catch (RuntimeException error) {
+      log.warn("[OrderGateway] Transport activity callback failed", error);
+    }
+  }
+
   @Override
   public Iterable<ClientEvent> sendMessage(
       AgentCard agentCard,
@@ -436,7 +453,13 @@ public final class OrderGatewayClientRuntime
       logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
       var events =
           streaming
-              ? executeStreaming(session, request, eventSink, requestId, agentCard.name())
+              ? executeStreaming(
+                  session,
+                  request,
+                  eventSink,
+                  requestId,
+                  agentCard.name(),
+                  transportActivity(callContext))
               : executeBlocking(session, request, eventSink, requestId, agentCard.name());
       sessionHandle.release();
       sessionHandle = null;
@@ -683,7 +706,7 @@ public final class OrderGatewayClientRuntime
               .build();
       logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
       List<ClientEvent> events =
-          executeStreaming(handle.session(), request, eventSink, requestId, agentCard.name());
+          executeStreaming(handle.session(), request, eventSink, requestId, agentCard.name(), null);
       // A task subscription ends at the terminal event; do not retain its authenticated
       // vendor session. Notification-T has its own explicitly managed long-lived lane.
       handle.invalidate();
@@ -730,7 +753,8 @@ public final class OrderGatewayClientRuntime
       OrderHttpSessionStrRequest request,
       Consumer<ClientEvent> eventSink,
       String requestId,
-      String agentName) {
+      String agentName,
+      Runnable activityListener) {
     AtomicInteger sseFrameCount = new AtomicInteger();
     GatewayA2AResponseParser.StreamingSession parserSession =
         responseParser.newStreamingSession(
@@ -745,6 +769,7 @@ public final class OrderGatewayClientRuntime
         request,
         config.timeoutMillis,
         response -> {
+          notifyTransportActivity(activityListener);
           if (chunkCount.incrementAndGet() == 1) {
             logProtocolResponseHead(requestId, agentName, response);
           }

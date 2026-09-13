@@ -25,7 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.commons.metadata.httpsession.OrderHttpSessionStrRequest;
 import com.google.protobuf.util.JsonFormat;
+import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import org.a2aproject.sdk.client.ClientEvent;
+import org.a2aproject.sdk.client.transport.spi.interceptors.ClientCallContext;
 import org.a2aproject.sdk.grpc.utils.ProtoUtils;
 import org.a2aproject.sdk.spec.AgentCapabilities;
 import org.a2aproject.sdk.spec.AgentCard;
@@ -393,6 +396,50 @@ class OrderGatewayClientRuntimeTest {
     assertEquals(2, emitted.size());
     assertEquals(2, count(result));
     assertEquals(1, closeCount.get());
+  }
+
+  @Test
+  void sseCommentRefreshesTransportActivityWithoutCreatingBusinessEvent() throws Exception {
+    var emitted = new CopyOnWriteArrayList<ClientEvent>();
+    var activityCount = new AtomicInteger();
+    String completed =
+        GatewayA2AResponseParserTest.taskJson(
+            "task-heartbeat", "ctx-heartbeat", TaskState.TASK_STATE_COMPLETED);
+    OrderGatewayClientRuntime.OrderSessionFactory sessions =
+        route ->
+            new OrderGatewayClientRuntime.OrderSession() {
+              @Override
+              public OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis) {
+                throw new AssertionError("Streaming AgentCard must not use execute");
+              }
+
+              @Override
+              public void executeStreaming(
+                  OrderHttpSessionStrRequest request,
+                  int timeoutMillis,
+                  Predicate<OrderResponse> responseSink) {
+                assertFalse(responseSink.test(streamResponse(": heartbeat\n\n")));
+                assertEquals(1, activityCount.get());
+                assertTrue(emitted.isEmpty());
+                assertTrue(responseSink.test(streamResponse("data: " + completed + "\n\n")));
+              }
+
+              @Override
+              public void close() {}
+            };
+    var callContext = new ClientCallContext(new HashMap<>(), new HashMap<>());
+    callContext
+        .getState()
+        .put(
+            A2AJavaClientRuntime.TRANSPORT_ACTIVITY_STATE_KEY,
+            (Runnable) () -> activityCount.incrementAndGet());
+    Iterable<ClientEvent> result =
+        runtime(sessions)
+            .sendMessage(card("city1", 26335, true), params(), callContext, emitted::add, null);
+
+    assertEquals(2, activityCount.get());
+    assertEquals(1, emitted.size());
+    assertEquals(1, count(result));
   }
 
   @Test
