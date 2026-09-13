@@ -22,21 +22,21 @@ Entry point for executing a PSOP workflow. Uses the Builder pattern.
 
 #### ExecutePsop.Builder
 
-| Method                                   | Type     | Default     | Description                                  |
-|------------------------------------------|----------|-------------|----------------------------------------------|
-| `psop(Workflow)`                         | required | -           | PSOP workflow definition                     |
-| `agentCards(List<AgentCard>)`            | optional | `List.of()` | Cards for dispatched agents; required for remote steps unless a configured `engineClient` supplies transport |
-| `controlPoint(ControlPoint)`             | required | -           | User decision implementation                 |
-| `engineClient(WorkflowEngineClient)`     | optional | null        | Pre-configured client (null = auto-create)   |
-| `runtimeIntent(String)`                  | optional | `""`        | Natural-language intent for context assembly |
-| `lang(String)`                           | optional | `"zh"`      | Language hint (`"zh"` or `"en"`)             |
-| `credentialsConfigPath(String)`          | optional | null        | Path to credentials JSON file                |
-| `sslVerify(boolean)`                     | optional | `true`      | Whether to verify TLS certificates           |
-| `caCertsPath(String)`                    | optional | null        | Path to CA certificates PEM file             |
-| `a2aClientRuntime(A2AJavaClientRuntime)` | optional | null        | Custom runtime (null = auto-create)          |
-| `eventCallback(EventCallback)`           | optional | null        | Real-time event callback                     |
-| `onFinish(BiConsumer)`                   | optional | null        | Called when execution completes              |
-| `onEvent(Function)`                      | optional | null        | Per-event transformation hook                |
+| Method                                   | Type     | Default     | Description                                                                                                                       |
+|------------------------------------------|----------|-------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `psop(Workflow)`                         | required | -           | PSOP workflow definition                                                                                                          |
+| `agentCards(List<AgentCard>)`            | optional | `List.of()` | Cards for dispatched agents; required for remote steps unless a configured `engineClient` supplies transport                      |
+| `controlPoint(ControlPoint)`             | required | -           | User decision implementation                                                                                                      |
+| `engineClient(WorkflowEngineClient)`     | optional | null        | Pre-configured client (null = auto-create); cannot be combined with AgentCard, runtime, TLS, or credentials construction settings |
+| `runtimeIntent(String)`                  | optional | `""`        | Natural-language intent for context assembly                                                                                      |
+| `lang(String)`                           | optional | `"zh"`      | Language hint (`"zh"` or `"en"`)                                                                                                  |
+| `credentialsConfigPath(String)`          | optional | null        | Path to credentials JSON file                                                                                                     |
+| `sslVerify(boolean)`                     | optional | `true`      | Whether to verify TLS certificates                                                                                                |
+| `caCertsPath(String)`                    | optional | null        | Path to CA certificates PEM file                                                                                                  |
+| `a2aClientRuntime(A2AJavaClientRuntime)` | optional | null        | Custom runtime (null = auto-create)                                                                                               |
+| `eventCallback(EventCallback)`           | optional | null        | Real-time event callback                                                                                                          |
+| `onFinish(BiConsumer)`                   | optional | null        | Called when execution completes                                                                                                   |
+| `onEvent(Function)`                      | optional | null        | Per-event transformation hook                                                                                                     |
 
 ```java
 ExecutionResult result = ExecutePsop.builder()
@@ -61,6 +61,8 @@ ExecutionResult result = ExecutePsop.builder()
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
     NegotiationStrategy negotiationStrategy);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy, EventCallback invocationEvents);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
@@ -74,7 +76,9 @@ void close();
 `listTasks` and `cancelTask` expose the standard A2A task-management operations through the same
 AgentCard, authentication and custom runtime as message dispatch. A list result is authorization-scoped:
 it contains only tasks visible to the authenticated identity. Callers must paginate with
-`nextPageToken`; cancellation is not implied by closing a local client or notification stream.
+`nextPageToken`; cancellation is not implied by closing a local client or notification stream. The Future returned by
+`subscribeToTask` represents the subscription result, not an independently closeable SSE handle. Cancelling it does not
+guarantee transport termination; close the owning Client/Runtime to release a non-terminal subscription.
 
 `sendTask` executes final host-provided content outside a DAG. Every call has a fresh context and uses the same send,
 wait, task-query and Negotiation-T loop as workflow execution. The overload takes a per-call strategy without changing
@@ -116,7 +120,14 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 Authorization and notification accept host-generated final content. Use separate transport/runtime/context instances;
 their outcomes do not gate the workflow. openNotification registers a handle before I/O, and passes it plus
 ReceivedMessage directly to the listener. acknowledgement() is the real ACK; timeout fails. close() requests closure;
-completion() observes actual stream termination.
+completion() observes actual stream termination. For compatibility, `heartbeat().lastEventAt()` keeps its old name but
+represents the last transport activity. A standard SSE `: heartbeat` refreshes it without increasing `eventCount`, which
+counts decoded A2A business events only.
+`lastBusinessEventAt()` returns the most recent business-event time.
+
+`new DefaultExtensionSender(transport)` owns and closes the transport. Use
+`DefaultExtensionSender.nonOwning(transport)` only when another component owns the transport, and then close
+subscriptions and the transport explicitly.
 
 ### WorkflowEngineClientConfig
 
@@ -140,6 +151,9 @@ Builder-based configuration for the workflow engine client.
 | `credentialEncryptionKey`       | `String`       | null    | Host-supplied decryption key; never loaded from LLM .env                                                                                                |
 | `credentialsConfig`             | `Map`          | null    | Inline credentials config; must match AgentCard security requirements                                                                                   |
 | `maxNegotiationExchanges`       | `int`          | `3`     | Local interaction budget, independent of SDK maxRounds                                                                                                  |
+
+`credentialsConfigPath` and `credentialsConfig` are mutually exclusive built-in credential sources; configuring both
+fails when the configuration is built.
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -273,19 +287,19 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 The following public types support advanced integrations. Prefer the higher-level interfaces above unless a custom
 runtime, diagnostic adapter, or explicit lifecycle requires them.
 
-| Type                          | Purpose |
-|-------------------------------|---------|
-| `A2ATExtension`               | Canonical extension names and URIs |
-| `A2ATransport`                | Low-level transport, authentication, response assembly, and subscription lifecycle |
-| `DefaultWorkflowEngineClient` | Default `WorkflowEngineClient` implementation |
-| `DefaultExtensionSender`      | Default `ExtensionSender` implementation backed by an `A2ATransport` |
-| `DefaultA2AJavaClientRuntime`  | Default A2A Java SDK runtime for HTTP/JSON-RPC/gRPC |
-| `CredentialCrypto`            | AES-GCM credential encryption utility and command-line entry point |
-| `EnvFileLoader`               | Explicit `.env` parser for host-owned configuration |
-| `SslContextFactory`           | TLS context construction used by transport and discovery helpers |
-| `ProtocolResponses`           | A2A event/result assembly helpers |
-| `ClientEventMapper`           | Stable event projection for callbacks and diagnostics |
-| `WireLog`                     | Correlation context and protocol-observation facade |
+| Type                          | Purpose                                                                                          |
+|-------------------------------|--------------------------------------------------------------------------------------------------|
+| `A2ATExtension`               | Canonical extension names and URIs                                                               |
+| `A2ATransport`                | Low-level transport, authentication, response assembly, and subscription lifecycle               |
+| `DefaultWorkflowEngineClient` | Default `WorkflowEngineClient` implementation                                                    |
+| `DefaultExtensionSender`      | Default `ExtensionSender`; its public constructor owns the transport, while `nonOwning` does not |
+| `DefaultA2AJavaClientRuntime` | Default A2A Java SDK runtime for HTTP/JSON-RPC/gRPC                                              |
+| `CredentialCrypto`            | AES-GCM credential encryption utility and command-line entry point                               |
+| `EnvFileLoader`               | Explicit `.env` parser for host-owned configuration                                              |
+| `SslContextFactory`           | TLS context construction used by transport and discovery helpers                                 |
+| `ProtocolResponses`           | A2A event/result assembly helpers                                                                |
+| `ClientEventMapper`           | Stable event projection for callbacks and diagnostics                                            |
+| `WireLog`                     | Correlation context and protocol-observation facade                                              |
 | `RemoteA2AErrorException`     | Standard A2A HTTP error projection (`code`, `status`, `message`, typed details and safe headers) |
 
 ---
@@ -364,6 +378,8 @@ Load and search PSOP workflows from the orchestration center.
 ```java
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
+static Workflow load(String baseUrl, String psopId,
+                     String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -376,6 +392,9 @@ GET `/api/v1/orchestrate/psop/{psop_id}`. Returns the full workflow with steps, 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN,
+        String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -387,7 +406,9 @@ LoadPsop convenience overloads default to `sslVerify=true`, using JVM trust and 
 Explicit `false` skips certificate-chain and hostname verification on that orchestration HTTPS connection only,
 allowing development without a local CA file. The server still needs a TLS certificate; this does not bypass
 mTLS, modify JVM-wide defaults, or change other clients' TLS policies. Production must verify trust and matching SANs.
-This is distinct from the engine's southbound HTTP/JSON-RPC verification policy.
+This is distinct from the engine's southbound HTTP/JSON-RPC verification policy. Connection and read timeouts both
+default to 30 seconds. Supply
+`new LoadPsop.Timeouts(connectTimeout, readTimeout)` to set positive per-call values.
 
 ### RegistryClient
 
@@ -628,7 +649,8 @@ not add private negotiation-state keys to the wire message.
 
 ## Thread Safety
 
-- The engine client is thread-safe. Concurrent collections are used internally.
+- The default engine client supports concurrent tasks. Each workflow invocation binds its own negotiation strategy and
+  event callback without mutating client defaults.
 - `ControlPoint` implementations must be thread-safe if used from multiple workflow executions concurrently.
 - `EventCallback.onEvent` is called from multiple threads (main + SSE worker threads). Use synchronization if needed.
 
