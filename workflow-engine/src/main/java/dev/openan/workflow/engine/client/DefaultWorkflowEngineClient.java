@@ -29,9 +29,13 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.openan.a2at.sdk.core.model.NegotiationContext;
 import net.openan.a2at.sdk.core.model.NegotiationPerformative;
 import org.a2aproject.sdk.client.ClientEvent;
@@ -55,6 +59,13 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   private final boolean closeTransportOnClose;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final Set<Invocation> invocations = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final ScheduledExecutorService timeoutScheduler =
+      Executors.newSingleThreadScheduledExecutor(
+          runnable -> {
+            Thread thread = new Thread(runnable, "workflow-client-timeouts");
+            thread.setDaemon(true);
+            return thread;
+          });
   private volatile EventCallback eventCallback = new EventCallback();
   private volatile ControlPoint controlPoint;
 
@@ -145,12 +156,21 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             .executionId(UUID.randomUUID().toString())
             .taskId(UUID.randomUUID().toString())
             .build();
-    return dispatchTask(request, content, controlPoint);
+    return dispatchTask(request, content, controlPoint, eventCallback);
   }
 
   @Override
   public CompletableFuture<SendMessageResult> sendTask(
       String agentName, MessageContent content, NegotiationStrategy negotiationStrategy) {
+    return sendTask(agentName, content, negotiationStrategy, eventCallback);
+  }
+
+  @Override
+  public CompletableFuture<SendMessageResult> sendTask(
+      String agentName,
+      MessageContent content,
+      NegotiationStrategy negotiationStrategy,
+      EventCallback invocationEvents) {
     if (negotiationStrategy == null) {
       return CompletableFuture.failedFuture(new NullPointerException("negotiationStrategy"));
     }
@@ -162,11 +182,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             .build();
     ControlPoint callbacks =
         ControlPoint.builder().onNegotiation(negotiationStrategy::resolve).build();
-    return dispatchTask(request, content, callbacks);
+    return dispatchTask(
+        request,
+        content,
+        callbacks,
+        invocationEvents == null ? new EventCallback() : invocationEvents);
   }
 
   private CompletableFuture<SendMessageResult> dispatchTask(
-      TaskRequest request, MessageContent content, ControlPoint callbacks) {
+      TaskRequest request,
+      MessageContent content,
+      ControlPoint callbacks,
+      EventCallback invocationEvents) {
     if (request == null) {
       return CompletableFuture.failedFuture(new NullPointerException("request"));
     }
@@ -186,10 +213,10 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     } catch (RuntimeException error) {
       return CompletableFuture.failedFuture(error);
     }
-    Invocation invocation = new Invocation(request, content, callbacks);
+    Invocation invocation = new Invocation(request, content, callbacks, invocationEvents);
     invocations.add(invocation);
-    CompletableFuture.delayedExecutor(callbackTimeoutSeconds(), TimeUnit.SECONDS)
-        .execute(
+    ScheduledFuture<?> timeout =
+        timeoutScheduler.schedule(
             () -> {
               if (!invocation.completion.isDone()) {
                 completeExceptionallyAfterCleanup(
@@ -200,9 +227,13 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                             + callbackTimeoutSeconds()
                             + " seconds"));
               }
-            });
+            },
+            callbackTimeoutSeconds(),
+            TimeUnit.SECONDS);
     invocation.completion.whenComplete(
         (result, error) -> {
+          timeout.cancel(false);
+          invocation.cancelPendingPoll();
           invocations.remove(invocation);
           if (invocation.completion.isCancelled()) {
             cancelRemoteTask(card, invocation, null)
@@ -214,6 +245,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
           }
           if (error != null && invocation.exchanges > 0)
             emit(
+                invocation,
                 EventType.NEGOTIATION_FAILED,
                 Map.of(
                     "agent",
@@ -312,6 +344,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(
           new java.util.concurrent.CancellationException("Task interaction is no longer active"));
     emit(
+        invocation,
         EventType.AGENT_REQUEST,
         Map.of("agent", invocation.task.getAgentName(), "content", content));
     Map<String, String> trace = invocationTrace(invocation);
@@ -324,7 +357,9 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 content,
                 invocation.contextId,
                 taskId,
-                event -> forwardIntermediateEvent(event, invocation.task.getAgentName()),
+                event ->
+                    forwardIntermediateEvent(
+                        event, invocation.task.getAgentName(), invocation.events),
                 invocation::active));
   }
 
@@ -371,7 +406,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
               "Unsupported non-final remote task state: " + result.getTaskState()));
     }
     if (!"TASK_STATE_INPUT_REQUIRED".equals(result.getTaskState())) {
-      emitAgentResponse(invocation.task.getAgentName(), result);
+      emitAgentResponse(invocation, result);
       return CompletableFuture.completedFuture(result);
     }
     if (result.getTask() == null || result.getTask().id() == null) {
@@ -405,6 +440,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         new NegotiationRequest(
             invocation.task, invocation.original, received, history, invocation.remaining());
     emit(
+        invocation,
         EventType.NEGOTIATION_REQUEST,
         Map.of(
             "agent",
@@ -437,6 +473,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
           MessageContent content = ((NegotiationReply.Send) reply).content();
           NegotiationContext ending = validateReply(context, content);
           emit(
+              invocation,
               EventType.NEGOTIATION_RESOLVED,
               Map.of(
                   "agent",
@@ -453,7 +490,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                       next.setFailureCode("negotiation.aborted");
                       next.setFailureMessage(
                           "Business sent Abort; diagnosis was not completed successfully");
-                      emitAgentResponse(invocation.task.getAgentName(), next);
+                      emitAgentResponse(invocation, next);
                       return CompletableFuture.completedFuture(next);
                     }
                     return advance(card, invocation, next);
@@ -466,13 +503,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     if (invocation.remoteTaskId == null)
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("Non-terminal response has no remote task identity"));
-    return CompletableFuture.supplyAsync(
-            () -> {
-              if (!invocation.active())
-                throw new java.util.concurrent.CancellationException("Task wait ended");
-              return Boolean.TRUE;
-            },
-            CompletableFuture.delayedExecutor(250, TimeUnit.MILLISECONDS))
+    return delayBeforeTaskPoll(invocation)
         .thenCompose(
             ignored -> {
               if (!invocation.active())
@@ -486,23 +517,41 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             });
   }
 
-  private void emit(String type, Map<String, Object> data) {
+  private CompletableFuture<Void> delayBeforeTaskPoll(Invocation invocation) {
+    PendingPoll pending = new PendingPoll();
+    PendingPoll previous = invocation.pendingPoll.getAndSet(pending);
+    if (previous != null) previous.cancel();
+    pending.scheduled =
+        timeoutScheduler.schedule(
+            () -> {
+              if (invocation.pendingPoll.compareAndSet(pending, null)) {
+                pending.completion.complete(null);
+              }
+            },
+            250,
+            TimeUnit.MILLISECONDS);
+    if (pending.completion.isDone()) pending.scheduled.cancel(false);
+    return pending.completion;
+  }
+
+  private void emit(Invocation invocation, String type, Map<String, Object> data) {
     try {
-      eventCallback.onEvent(type, data);
+      invocation.events.onEvent(type, data);
     } catch (RuntimeException error) {
       log.warn("Event callback failed for {}", type, error);
     }
   }
 
-  private void emitAgentResponse(String agentName, SendMessageResult result) {
+  private void emitAgentResponse(Invocation invocation, SendMessageResult result) {
     Map<String, Object> data = new HashMap<>();
-    data.put("agent", agentName);
+    data.put("agent", invocation.task.getAgentName());
     data.put("response", result.getText());
     data.put("receivedMessages", result.getReceivedMessages());
-    emit(EventType.AGENT_RESPONSE, data);
+    emit(invocation, EventType.AGENT_RESPONSE, data);
   }
 
-  private void forwardIntermediateEvent(ClientEvent event, String agentName) {
+  private void forwardIntermediateEvent(
+      ClientEvent event, String agentName, EventCallback invocationEvents) {
     Map<String, Object> data = ClientEventMapper.toMap(event, agentName);
     if (event instanceof TaskUpdateEvent tue) {
       if (tue.getUpdateEvent() instanceof TaskStatusUpdateEvent sue) {
@@ -512,7 +561,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             agentName,
             state,
             sue.isFinal());
-        emit(EventType.AGENT_STATUS_UPDATE, data);
+        emit(invocationEvents, EventType.AGENT_STATUS_UPDATE, data);
       } else if (tue.getUpdateEvent()
           instanceof org.a2aproject.sdk.spec.TaskArtifactUpdateEvent ae) {
         log.info(
@@ -520,12 +569,20 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
             agentName,
             ae.artifact().name(),
             ae.artifact().artifactId());
-        emit(EventType.AGENT_ARTIFACT_UPDATE, data);
+        emit(invocationEvents, EventType.AGENT_ARTIFACT_UPDATE, data);
       }
     } else if (event instanceof MessageEvent) {
       String text = (String) data.getOrDefault("text", "");
       log.info("[EngineClient] Agent {} message event: {} chars", agentName, text.length());
-      emit(EventType.AGENT_MESSAGE_EVENT, data);
+      emit(invocationEvents, EventType.AGENT_MESSAGE_EVENT, data);
+    }
+  }
+
+  private void emit(EventCallback callback, String type, Map<String, Object> data) {
+    try {
+      callback.onEvent(type, data);
+    } catch (RuntimeException error) {
+      log.warn("Event callback failed for {}", type, error);
     }
   }
 
@@ -594,7 +651,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
         agentName,
         taskId,
         event -> {
-          forwardIntermediateEvent(event, agentName);
+          forwardIntermediateEvent(event, agentName, this.eventCallback);
           if (eventCallback != null) {
             eventCallback.accept(ClientEventMapper.toMap(event, agentName));
           }
@@ -605,6 +662,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   public void close() {
     if (!closed.compareAndSet(false, true)) return;
     invocations.forEach(invocation -> invocation.completion.cancel(true));
+    timeoutScheduler.shutdownNow();
     if (closeTransportOnClose) transport.close();
   }
 
@@ -612,6 +670,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     final TaskRequest task;
     final MessageContent original;
     final ControlPoint callbacks;
+    final EventCallback events;
     final String contextId = UUID.randomUUID().toString();
     final String attempt = UUID.randomUUID().toString();
     final Map<String, String> parentTrace = Map.copyOf(WireLog.context());
@@ -621,15 +680,21 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     final Set<String> answered = new HashSet<>();
     final Map<String, NegotiationContext> contexts = new HashMap<>();
     final AtomicBoolean finishing = new AtomicBoolean();
+    final AtomicReference<PendingPoll> pendingPoll = new AtomicReference<>();
     volatile String remoteTaskId;
     volatile boolean remoteTaskTerminal;
     CompletableFuture<Void> cleanup;
     int exchanges;
 
-    Invocation(TaskRequest task, MessageContent content, ControlPoint callbacks) {
+    Invocation(
+        TaskRequest task,
+        MessageContent content,
+        ControlPoint callbacks,
+        EventCallback events) {
       this.task = task;
       this.original = content;
       this.callbacks = callbacks;
+      this.events = events;
     }
 
     Duration remaining() {
@@ -641,6 +706,23 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
           && !finishing.get()
           && !completion.isDone()
           && !remaining().isZero();
+    }
+
+    void cancelPendingPoll() {
+      PendingPoll pending = pendingPoll.getAndSet(null);
+      if (pending != null) pending.cancel();
+    }
+  }
+
+  private static final class PendingPoll {
+    final CompletableFuture<Void> completion = new CompletableFuture<>();
+    volatile ScheduledFuture<?> scheduled;
+
+    void cancel() {
+      ScheduledFuture<?> current = scheduled;
+      if (current != null) current.cancel(false);
+      completion.completeExceptionally(
+          new java.util.concurrent.CancellationException("Task wait ended"));
     }
   }
 }

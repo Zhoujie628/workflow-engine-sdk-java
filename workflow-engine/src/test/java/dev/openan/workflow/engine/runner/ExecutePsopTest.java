@@ -356,12 +356,10 @@ class ExecutePsopTest {
     ExecutionResult r2 =
         ExecutePsop.builder()
             .psop(linearWorkflow())
-            .agentCards(List.of())
             .controlPoint(autoCp())
             .engineClient(stub2)
             .runtimeIntent("intent")
             .lang("zh")
-            .sslVerify(false)
             .execute()
             .join();
     assertEquals(r1.isSuccess(), r2.isSuccess());
@@ -403,6 +401,22 @@ class ExecutePsopTest {
 
     assertTrue(result.isSuccess());
     assertEquals(0, closeCalls.get());
+  }
+
+  @Test
+  void builderRejectsInjectedClientCombinedWithConstructionSettings() {
+    StubWorkflowEngineClient client = new StubWorkflowEngineClient("A", "B");
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                ExecutePsop.builder()
+                    .psop(linearWorkflow())
+                    .controlPoint(autoCp())
+                    .engineClient(client)
+                    .sslVerify(false)
+                    .execute());
+    assertTrue(error.getMessage().contains("engineClient cannot be combined"));
   }
 
   @Test

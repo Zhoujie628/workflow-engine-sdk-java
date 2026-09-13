@@ -183,8 +183,8 @@ class SpnCrossCityE2ETest {
     contentClient =
         dev.openan.workflow.engine.examples.util.A2ATInitialization.create(
             () -> new net.openan.a2at.sdk.client.A2ATClient(java.nio.file.Path.of(sdkEnvPath)));
-    authorizationSender = new DefaultExtensionSender(authorizationTransport);
-    notificationSender = new DefaultExtensionSender(notificationTransport);
+    authorizationSender = DefaultExtensionSender.nonOwning(authorizationTransport);
+    notificationSender = DefaultExtensionSender.nonOwning(notificationTransport);
   }
 
   @AfterEach
@@ -327,7 +327,6 @@ class SpnCrossCityE2ETest {
             .engineClient(client)
             .runtimeIntent("SPN跨城专线故障诊断与抢通：客户A上海-广州间SPN专线中断")
             .lang("zh")
-            .sslVerify(false)
             .eventCallback(cb)
             .execute()
             .join();

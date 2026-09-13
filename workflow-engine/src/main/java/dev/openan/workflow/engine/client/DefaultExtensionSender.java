@@ -25,14 +25,33 @@ import dev.openan.workflow.engine.model.SendMessageResult;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import org.a2aproject.sdk.spec.AgentCard;
 
-/** Final-content sender on a caller-owned transport, independent of the workflow client. */
-public record DefaultExtensionSender(A2ATransport transport)
-    implements ExtensionSender, AutoCloseable {
-  public DefaultExtensionSender {
-    Objects.requireNonNull(transport, "transport");
+/** Final-content sender independent of the workflow client. */
+public final class DefaultExtensionSender implements ExtensionSender, AutoCloseable {
+  private final A2ATransport transport;
+  private final boolean closeTransportOnClose;
+  private final AtomicBoolean closed = new AtomicBoolean();
+
+  /** Creates a sender that owns and closes the supplied transport. */
+  public DefaultExtensionSender(A2ATransport transport) {
+    this(transport, true);
+  }
+
+  private DefaultExtensionSender(A2ATransport transport, boolean owning) {
+    this.transport = Objects.requireNonNull(transport, "transport");
+    this.closeTransportOnClose = owning;
+  }
+
+  /** Creates a sender facade whose transport remains caller-owned. */
+  public static DefaultExtensionSender nonOwning(A2ATransport transport) {
+    return new DefaultExtensionSender(transport, false);
+  }
+
+  public A2ATransport transport() {
+    return transport;
   }
 
   @Override
@@ -79,6 +98,8 @@ public record DefaultExtensionSender(A2ATransport transport)
 
   @Override
   public void close() {
-    // Caller owns the independent transport and its subscriptions.
+    if (closed.compareAndSet(false, true) && closeTransportOnClose) {
+      transport.close();
+    }
   }
 }

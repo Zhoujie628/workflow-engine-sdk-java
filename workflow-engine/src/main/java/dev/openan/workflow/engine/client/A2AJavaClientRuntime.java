@@ -42,6 +42,7 @@ import org.a2aproject.sdk.spec.Task;
  */
 public interface A2AJavaClientRuntime {
   String CHANNEL_STATE_KEY = "dev.openan.workflow.engine.channel";
+  String TRANSPORT_ACTIVITY_STATE_KEY = "dev.openan.workflow.engine.transportActivity";
   String NOTIFICATION_CHANNEL = "notification";
 
   /**

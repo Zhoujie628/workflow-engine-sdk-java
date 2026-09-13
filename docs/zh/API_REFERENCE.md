@@ -26,7 +26,7 @@
 |------------------------------------------|------|-------------|---------------------------------|
 | `psop(Workflow)`                         | 必填 | -           | PSOP 工作流定义                 |
 | `agentCards(List<AgentCard>)`            | 可选 | `List.of()` | 被调度智能体的 AgentCard；存在远程步骤且未传入已配置 `engineClient` 时必须提供 |
-| `engineClient(WorkflowEngineClient)`     | 可选 | null        | 预配置客户端（null=自动创建）   |
+| `engineClient(WorkflowEngineClient)`     | 可选 | null        | 预配置客户端（null=自动创建）；传入后不可再设置 AgentCard、runtime、TLS 或 credentials 构造参数 |
 | `controlPoint(ControlPoint)`             | 必填 | -           | 用户决策实现                    |
 | `runtimeIntent(String)`                  | 可选 | `""`        | 自然语言意图，用于上下文组装    |
 | `lang(String)`                           | 可选 | `"zh"`      | 语言提示（`"zh"` 或 `"en"`）    |
@@ -61,6 +61,8 @@ ExecutionResult result = ExecutePsop.builder()
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
     NegotiationStrategy negotiationStrategy);
+CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content,
+    NegotiationStrategy negotiationStrategy, EventCallback invocationEvents);
 CompletableFuture<SendMessageResult> getTask(String agentName, String taskId);
 CompletableFuture<ListTasksResult> listTasks(String agentName, ListTasksParams params);
 CompletableFuture<SendMessageResult> cancelTask(String agentName, String taskId);
@@ -74,6 +76,8 @@ void close();
 `listTasks` 与 `cancelTask` 通过消息下发使用的同一 AgentCard、认证配置和自定义运行时暴露标准 A2A
 任务管理操作。查询结果受认证身份权限约束，只包含当前身份可见的任务；调用方必须使用
 `nextPageToken` 完成分页。关闭本地客户端或通知流不等同于取消远端任务。
+当前 `subscribeToTask` 返回的 Future 表示订阅结果，不是底层 SSE 的独立关闭句柄；取消 Future
+不保证终止传输。非终态订阅需要通过 owning Client/Runtime 的 `close()` 释放。
 
 `sendTask` 在 DAG 外执行宿主提供的最终任务内容。每次调用使用新的 context，并复用工作流任务的发送、等待、查询和
 Negotiation-T 闭环。重载方法接受本次调用独有的协商策略，不修改客户端级 ControlPoint。超时、缺少处理器或其他本地交互失败后，
@@ -107,6 +111,11 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 授权和订阅接收宿主生成的最终内容。三类操作使用独立 transport/runtime/context，成功与否不阻断工作流。openNotification 先注册
 handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。acknowledgement() 是实际 ACK；超时失败。close()
 请求关闭，completion() 在流真正退出后完成。
+`heartbeat().lastEventAt()` 为兼容保留旧名称，实际表示最后一次传输活动；标准 SSE `: heartbeat`
+会刷新它，但不会增加只统计已解码 A2A 业务事件的 `eventCount`。`lastBusinessEventAt()` 返回最近业务事件时间。
+
+`new DefaultExtensionSender(transport)` 默认拥有并在 `close()` 时关闭 transport；仅当 transport
+由其他组件统一管理时使用 `DefaultExtensionSender.nonOwning(transport)`，并由调用方关闭订阅和 transport。
 
 ### WorkflowEngineClientConfig
 
@@ -130,6 +139,8 @@ handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。
 | `credentialEncryptionKey`       | `String`       | null   | 宿主显式传入凭据解密密钥，不从 LLM .env 加载                                                              |
 | `credentialsConfig`             | `Map`          | null   | 内联凭证配置；AgentCard 声明安全要求时必须匹配                                                            |
 | `maxNegotiationExchanges`       | `int`          | `3`    | 本地交互预算，独立于 SDK maxRounds；耗尽仅本地失败                                                        |
+
+`credentialsConfigPath` 与 `credentialsConfig` 是两种互斥的内置凭据来源，同时设置会在构建配置时失败。
 
 ```java
 WorkflowEngineClientConfig config = WorkflowEngineClientConfig.builder()
@@ -259,7 +270,7 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 | `A2ATExtension`               | 规范扩展名称与 URI |
 | `A2ATransport`                | 底层传输、认证、响应组装与订阅生命周期 |
 | `DefaultWorkflowEngineClient` | `WorkflowEngineClient` 默认实现 |
-| `DefaultExtensionSender`      | 基于 `A2ATransport` 的 `ExtensionSender` 默认实现 |
+| `DefaultExtensionSender`      | 基于 `A2ATransport` 的 `ExtensionSender` 默认实现；公开构造器拥有 transport，`nonOwning` 工厂不拥有 |
 | `DefaultA2AJavaClientRuntime`  | HTTP/JSON-RPC/gRPC 的默认 A2A Java SDK runtime |
 | `CredentialCrypto`            | AES-GCM 凭据加密工具与命令行入口 |
 | `EnvFileLoader`               | 显式加载宿主自有 `.env` 配置 |
@@ -343,6 +354,8 @@ public class EventCallback {
 ```java
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
+static Workflow load(String baseUrl, String psopId,
+                     String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -355,6 +368,9 @@ GET `/api/v1/orchestrate/psop/{psop_id}`。返回完整工作流（含步骤、�
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN,
+        String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -366,6 +382,7 @@ LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验�
 显式传 `false` 时，仅该编排中心 HTTPS 连接跳过证书链和主机名校验，可免配本地 CA 文件联调。
 服务端仍须提供 HTTPS 证书；此开关不绕过 mTLS，也不修改其他客户端或 JVM 的全局 TLS 策略。
 生产环境必须保持验证并配置正确的服务端 SAN 与信任库；本设置不是引擎南向 HTTP/JSON-RPC 的 TLS 策略变更。
+连接与读取超时默认均为 30 秒；可通过 `new LoadPsop.Timeouts(connectTimeout, readTimeout)` 为单次调用设置正值。
 
 ### RegistryClient
 
@@ -592,7 +609,7 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 
 ## 线程安全
 
-- 引擎客户端线程安全，内部使用并发集合。
+- 默认引擎客户端可并发执行任务；工作流为每次调用绑定独立协商策略和事件回调，不改写客户端默认回调。
 - `ControlPoint` 实现若在多工作流并发执行中使用，需自行保证线程安全。
 - `EventCallback.onEvent` 从多个线程调用（主线程 + SSE 工作线程），需要时使用同步。
 

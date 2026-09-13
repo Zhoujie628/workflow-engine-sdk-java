@@ -162,7 +162,7 @@ Each `next` entry is a `JumpCondition(step, condition)`; an empty condition make
 ```java
 WorkflowStep diagnosis = WorkflowStep.builder()
     .name("diagnosis")
-    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
+    .subtasks(List.of(Task.builder().agent("Scheduled Agent A").description("diagnose").build()))
     .next(List.of(
         new JumpCondition("notify", ""),                       // unconditional: always active, never reaches onRoute
         new JumpCondition("hardware_recovery", "fault.hardware"),

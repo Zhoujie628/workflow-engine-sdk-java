@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -126,6 +127,45 @@ class ObservedHttpClientTest {
     assertEquals(second, frames.get(1)[0]);
     collector.end(false);
     assertEquals(2, frames.size());
+  }
+
+  @Test
+  void rawSseCommentRefreshesTransportActivityWithoutNeedingADataEvent() throws Exception {
+    AtomicInteger activities = new AtomicInteger();
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/events",
+        exchange -> {
+          byte[] bytes = ": heartbeat\n\n".getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, bytes.length);
+          exchange.getResponseBody().write(bytes);
+          exchange.close();
+        });
+    server.start();
+    try {
+      HttpRequest request =
+          HttpRequest.newBuilder(
+                  URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/events"))
+              .GET()
+              .build();
+      HttpResponse<String> response =
+          TransportActivityMonitor.call(
+              activities::incrementAndGet,
+              () -> {
+                try {
+                  return new ObservedHttpClient(HttpClient.newHttpClient())
+                      .send(request, HttpResponse.BodyHandlers.ofString());
+                } catch (IOException | InterruptedException error) {
+                  throw new CompletionException(error);
+                }
+              });
+
+      assertEquals(": heartbeat\n\n", response.body());
+      assertTrue(activities.get() > 0);
+    } finally {
+      server.stop(0);
+    }
   }
 
   @Test

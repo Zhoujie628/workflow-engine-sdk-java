@@ -139,7 +139,7 @@ RouteDecision.allow (reason) 激活该边，或返回 RouteDecision.deny (reason
 ```java
 WorkflowStep diagnosis = WorkflowStep.builder()
     .name("diagnosis")
-    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
+    .subtasks(List.of(Task.builder().agent("被调度智能体 A").description("diagnose").build()))
     .next(List.of(
         new JumpCondition("notify", ""),                       // 无条件：始终激活，不经 onRoute
         new JumpCondition("hardware_recovery", "fault.hardware"),

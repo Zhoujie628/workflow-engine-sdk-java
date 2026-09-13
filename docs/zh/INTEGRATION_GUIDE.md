@@ -154,6 +154,9 @@ try {
 
 必填项：`psop`、`controlPoint`。其余配置项都有默认值。
 
+若宿主传入已配置好的 `engineClient`，AgentCard、runtime、TLS 和 credentials 均由该 client
+负责，不要再设置对应的 `ExecutePsop.Builder` 构建参数；混用会在启动执行前直接报错，避免配置被静默忽略。
+
 ## 5. 配置
 
 ### 5.1 .env 文件
@@ -406,6 +409,11 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 宿主智能体生成最终 Authorization-T/Notification-T 内容。授权与通知分别使用独立于任务客户端且彼此隔离的
 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。
 handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
+
+`heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间，
+但不会增加只统计已解码 A2A 业务事件的 `eventCount`。需要判断最后一条业务消息时间时使用
+`lastBusinessEventAt()`。取消 `subscribeToTask` 返回的 Future 只停止本地等待；结束独立订阅应关闭
+`NotificationSubscription`，结束客户端管理的任务订阅则关闭其 client/runtime。
 
 `WorkflowEngineClientConfig.notificationAckTimeoutSeconds` 控制首次订阅 ACK 的等待时间，默认 300 秒；Spring 示例可通过
 `a2a.notification-ack-timeout-seconds` 或环境变量 `A2A_NOTIFICATION_ACK_TIMEOUT_SECONDS` 覆盖。该参数不控制 ACK 后的 SSE

@@ -325,6 +325,23 @@ public class DefaultA2AJavaClientRuntime
       ClientCallContext callContext,
       Consumer<ClientEvent> eventSink,
       Consumer<String> logSink) {
+    Object configuredActivity =
+        callContext == null
+            ? null
+            : callContext.getState().get(A2AJavaClientRuntime.TRANSPORT_ACTIVITY_STATE_KEY);
+    Runnable activityListener =
+        configuredActivity instanceof Runnable runnable ? runnable : null;
+    return TransportActivityMonitor.call(
+        activityListener,
+        () -> sendMessageObserved(agentCard, params, callContext, eventSink, logSink));
+  }
+
+  private Iterable<ClientEvent> sendMessageObserved(
+      AgentCard agentCard,
+      org.a2aproject.sdk.spec.MessageSendParams params,
+      ClientCallContext callContext,
+      Consumer<ClientEvent> eventSink,
+      Consumer<String> logSink) {
     if (closed.get()) throw new IllegalStateException("A2A client runtime is closed");
     String agentUrl = extractAgentUrl(agentCard);
     Client client =

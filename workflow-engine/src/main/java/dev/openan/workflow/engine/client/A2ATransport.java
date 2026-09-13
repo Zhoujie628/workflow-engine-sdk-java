@@ -35,6 +35,9 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,6 +84,7 @@ public class A2ATransport implements AutoCloseable {
   private final String contextId;
   private final ClientCallContextFactory clientCallContextFactory;
   private final ExecutorService asyncExecutor;
+  private final ScheduledExecutorService timeoutScheduler;
   private final long notificationAckTimeoutSeconds;
   private final long sendTimeoutSeconds;
   private final AtomicBoolean closed = new AtomicBoolean();
@@ -125,6 +129,13 @@ public class A2ATransport implements AutoCloseable {
               return t;
             },
             new ThreadPoolExecutor.CallerRunsPolicy());
+    this.timeoutScheduler =
+        Executors.newSingleThreadScheduledExecutor(
+            runnable -> {
+              Thread thread = new Thread(runnable, "transport-timeouts");
+              thread.setDaemon(true);
+              return thread;
+            });
     CredentialHttpTransport credentialHttpTransport = null;
     String credentialEncryptionKey = config.getCredentialEncryptionKey();
     if (config.getCredentialsConfigPath() != null || config.getCredentialsConfig() != null) {
@@ -578,6 +589,11 @@ public class A2ATransport implements AutoCloseable {
                             .put(
                                 A2AJavaClientRuntime.CHANNEL_STATE_KEY,
                                 A2AJavaClientRuntime.NOTIFICATION_CHANNEL);
+                        callContext
+                            .getState()
+                            .put(
+                                A2AJavaClientRuntime.TRANSPORT_ACTIVITY_STATE_KEY,
+                                (Runnable) subscription::recordActivity);
                         String endpoint =
                             agentCard.supportedInterfaces().isEmpty()
                                 ? "?"
@@ -653,7 +669,8 @@ public class A2ATransport implements AutoCloseable {
     streamThread.setDaemon(true);
     streamThreadRef.set(streamThread);
     streamThread.start();
-    CompletableFuture.runAsync(
+    ScheduledFuture<?> acknowledgementTimeout =
+        timeoutScheduler.schedule(
         () -> {
           if (subscription.isActive() && !subscription.acknowledgement().isDone()) {
             log.warn(
@@ -665,7 +682,12 @@ public class A2ATransport implements AutoCloseable {
             subscription.close();
           }
         },
-        CompletableFuture.delayedExecutor(notificationAckTimeoutSeconds, TimeUnit.SECONDS));
+        notificationAckTimeoutSeconds,
+        TimeUnit.SECONDS);
+    subscription
+        .acknowledgement()
+        .whenComplete((ignored, error) -> acknowledgementTimeout.cancel(false));
+    subscription.completion().whenComplete((ignored, error) -> acknowledgementTimeout.cancel(false));
     return subscription;
   }
 
@@ -848,6 +870,7 @@ public class A2ATransport implements AutoCloseable {
     }
     awaitNotificationShutdown(subscriptions);
     notificationSubscriptions.clear();
+    timeoutScheduler.shutdownNow();
     asyncExecutor.shutdown();
     try {
       if (!asyncExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
