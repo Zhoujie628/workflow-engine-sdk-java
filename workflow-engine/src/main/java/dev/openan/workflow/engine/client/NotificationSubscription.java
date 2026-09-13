@@ -45,7 +45,8 @@ public final class NotificationSubscription implements AutoCloseable {
   private final Runnable closeAction;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final AtomicLong eventCount = new AtomicLong();
-  private final AtomicReference<Instant> lastEventAt = new AtomicReference<>();
+  private final AtomicReference<Instant> lastActivityAt = new AtomicReference<>();
+  private final AtomicReference<Instant> lastBusinessEventAt = new AtomicReference<>();
   private volatile Throwable streamFailure;
 
   NotificationSubscription(String agentName, String contextId, Runnable closeAction) {
@@ -74,9 +75,18 @@ public final class NotificationSubscription implements AutoCloseable {
     return !closed.get() && !completion.isDone();
   }
 
-  /** Current local liveness snapshot; every protocol event, including heartbeats, refreshes it. */
+  /**
+   * Current local liveness snapshot. For compatibility, {@link Heartbeat#lastEventAt()} represents
+   * the last transport activity, including an SSE comment heartbeat; {@code eventCount} counts only
+   * decoded A2A business events.
+   */
   public Heartbeat heartbeat() {
-    return new Heartbeat(openedAt, lastEventAt.get(), eventCount.get(), isActive());
+    return new Heartbeat(openedAt, lastActivityAt.get(), eventCount.get(), isActive());
+  }
+
+  /** Last decoded A2A business event, excluding transport-only SSE comments. */
+  public Instant lastBusinessEventAt() {
+    return lastBusinessEventAt.get();
   }
 
   public boolean isHealthy(Duration maximumIdle) {
@@ -84,7 +94,7 @@ public final class NotificationSubscription implements AutoCloseable {
     if (maximumIdle.isNegative()) {
       throw new IllegalArgumentException("maximumIdle must not be negative");
     }
-    Instant activity = lastEventAt.get();
+    Instant activity = lastActivityAt.get();
     if (!isActive() || activity == null) {
       return false;
     }
@@ -93,7 +103,13 @@ public final class NotificationSubscription implements AutoCloseable {
 
   void recordEvent() {
     eventCount.incrementAndGet();
-    lastEventAt.set(Instant.now());
+    Instant now = Instant.now();
+    lastBusinessEventAt.set(now);
+    lastActivityAt.set(now);
+  }
+
+  void recordActivity() {
+    lastActivityAt.set(Instant.now());
   }
 
   void acknowledge(SendMessageResult result) {
@@ -137,6 +153,9 @@ public final class NotificationSubscription implements AutoCloseable {
     }
   }
 
-  /** Liveness snapshot of one subscription: open time, last event, event count, active flag. */
+  /**
+   * Liveness snapshot of one subscription: open time, last transport activity (legacy accessor
+   * name), decoded A2A event count, and active flag.
+   */
   public record Heartbeat(Instant openedAt, Instant lastEventAt, long eventCount, boolean active) {}
 }

@@ -22,6 +22,7 @@ package dev.openan.workflow.engine.registry;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -30,6 +31,55 @@ import org.junit.jupiter.api.Test;
  * needed.
  */
 class LoadPsopSearchTest {
+
+  @Test
+  void rejectsInvalidCustomTimeouts() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new LoadPsop.Timeouts(Duration.ZERO, Duration.ofSeconds(1)));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new LoadPsop.Timeouts(Duration.ofSeconds(1), Duration.ofMillis(-1)));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new LoadPsop.Timeouts(Duration.ofNanos(1), Duration.ofSeconds(1)));
+  }
+
+  @Test
+  void customReadTimeoutIsApplied() throws Exception {
+    com.sun.net.httpserver.HttpServer server =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress(0), 0);
+    server.createContext(
+        "/api/v1/orchestrate/search",
+        exchange -> {
+          try {
+            Thread.sleep(500);
+            byte[] response = "{\"data\":[]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+          } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+          } finally {
+            exchange.close();
+          }
+        });
+    server.start();
+    try {
+      String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+      assertThrows(
+          java.net.SocketTimeoutException.class,
+          () ->
+              LoadPsop.search(
+                  baseUrl,
+                  "timeout",
+                  1,
+                  null,
+                  true,
+                  new LoadPsop.Timeouts(Duration.ofSeconds(1), Duration.ofMillis(50))));
+    } finally {
+      server.stop(0);
+    }
+  }
 
   @Test
   void tokenLogsRevealPresenceButNoTokenCharacters() {

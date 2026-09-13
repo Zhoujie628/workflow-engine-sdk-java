@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * Loads agent credentials from config, creates per-agent CredentialService, and builds
  * auth/extension interceptors from AgentCard security schemes.
  *
- * <p>Mirrors the Python SDK's {@code AgentAuthManager} + {@code AuthManager}.
+ * <p>Credential resolution is request-scoped; the manager does not own host token policy.
  */
 class AgentAuthManager {
 

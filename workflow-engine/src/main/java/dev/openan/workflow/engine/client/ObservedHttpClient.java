@@ -144,6 +144,7 @@ final class ObservedHttpClient extends HttpClient {
     final String id = UUID.randomUUID().toString();
     final HttpRequest request;
     final Map<String, String> context = WireLog.context();
+    final Runnable activityListener = TransportActivityMonitor.capture();
     final java.util.concurrent.atomic.AtomicBoolean failureLogged =
         new java.util.concurrent.atomic.AtomicBoolean();
     final java.util.concurrent.atomic.AtomicBoolean cancelledBySubscriber =
@@ -329,6 +330,7 @@ final class ObservedHttpClient extends HttpClient {
 
           @Override
           public void onNext(List<ByteBuffer> items) {
+            TransportActivityMonitor.notifyActivity(activityListener);
             items.forEach(body::accept);
             target.onNext(items);
           }
