@@ -158,6 +158,10 @@ try {
 
 Required: `psop`, `controlPoint`. All other config items have defaults.
 
+When the host supplies a configured `engineClient`, that client owns AgentCard, runtime, TLS, and credentials
+construction. Do not also set the corresponding `ExecutePsop.Builder` options; conflicting settings fail before
+execution instead of being silently ignored.
+
 ## 5. Configuration
 
 ### 5.1 .env File
@@ -428,6 +432,12 @@ The host agent generates final Authorization-T/Notification-T content. Authoriza
 transport/runtime/context independent of the task client and of one another. The listener receives the handle and
 complete ReceivedMessage, and closes on the host-defined terminal event. acknowledgement() and completion() separately
 represent ACK and actual stream exit; neither is a workflow prerequisite.
+
+`heartbeat().lastEventAt()` is the last transport activity. A standard SSE comment heartbeat such as `: heartbeat`
+refreshes it without increasing `eventCount`, which counts decoded A2A business events only. Use
+`lastBusinessEventAt()` for the last business-message time. Cancelling the Future returned by `subscribeToTask`
+only stops the local wait; close `NotificationSubscription` for an independent subscription, or close its owning
+client/runtime for a client-managed task subscription.
 
 `WorkflowEngineClientConfig.notificationAckTimeoutSeconds` controls the initial subscription ACK wait and defaults to
 300 seconds. The Spring sample exposes it as `a2a.notification-ack-timeout-seconds` and
