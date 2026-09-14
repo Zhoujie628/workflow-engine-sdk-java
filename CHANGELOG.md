@@ -111,4 +111,4 @@
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
 Published Maven artifacts use the version selected by the release tag. The default source-build
-`revision=0.0.8-SNAPSHOT` is not a Maven Central release version.
+`revision=0.0.9-SNAPSHOT` is not a Maven Central release version.
