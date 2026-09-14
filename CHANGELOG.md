@@ -1,12 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.9] — 2026-09-14
 
+- Make Negotiation-T activation host-owned. The business activates Negotiation-T per send via the new
+  `MessageContent.withExtension(...)`; the engine mirrors that selection into `message.extensions` and the
+  `A2A-Extensions` request header and validates that the target AgentCard declares the extension before dispatch.
+  An unsolicited negotiation (host did not activate Negotiation-T) fails fast instead of silently entering the
+  auto-loop.
 - Accept Negotiation-T Propose carried on a taskless bare message (A2A-T pre-task negotiation, where the remote
   proposes before creating any task): `onNegotiation` now also fires for a valid Propose without an
   `INPUT_REQUIRED` task status. The exchange is correlated by contextId and negotiation id, and the follow-up send
   carries no taskId. Invalid negotiation metadata on a bare message now fails explicitly instead of being silently
   treated as a normal successful response.
+- Converge non-functional formatting and javadoc drift between `main` and `dev` so the branches differ only in the
+  Eastcom platform integration.
 
 ## [0.0.8] — 2026-09-13
 
@@ -105,7 +112,7 @@
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
 Published Maven artifacts use the version selected by the release tag. The default source-build
-`revision=0.0.8-SNAPSHOT` is not a Maven Central release version.
+`revision=0.0.9-SNAPSHOT` is not a Maven Central release version.
 
 ### Eastcom adapter (dev only)
 
