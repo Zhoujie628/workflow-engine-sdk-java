@@ -42,19 +42,25 @@ class RemoteA2AErrorResponseTest {
     String status = code == 429 ? "RESOURCE_EXHAUSTED" : "INVALID_ARGUMENT";
     String reason = code == 429 ? "ACTIVE_TASK_LIMIT_EXCEEDED" : "INVALID_PARAMS";
     String domain = code == 429 ? "fixture.invalid" : "a2a-protocol.org";
-    return "{\"error\":{\"code\":" + code + ",\"status\":\"" + status
+    return "{\"error\":{\"code\":"
+        + code
+        + ",\"status\":\""
+        + status
         + "\",\"message\":\"该端口下未发现业务信息\",\"details\":["
         + "{\"@type\":\"type.googleapis.com/google.rpc.BadRequest\","
         + "\"fieldViolations\":[{\"field\":\"port\",\"description\":\"required\"}]},"
         + "{\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\",\"reason\":\""
-        + reason + "\",\"domain\":\"" + domain + "\","
+        + reason
+        + "\",\"domain\":\""
+        + domain
+        + "\","
         + "\"metadata\":{\"taskId\":\"task-123\"}}]}}";
   }
 
   @Test
   void preservesStandardFieldsAndFindsErrorInfoAmongTypedDetails() {
-    var error = RemoteA2AErrorException.fromResponse(
-        400, error(400), Map.of("Retry-After", List.of("5")));
+    var error =
+        RemoteA2AErrorException.fromResponse(400, error(400), Map.of("Retry-After", List.of("5")));
     assertNotNull(error);
     assertEquals(400, error.getHttpStatus());
     assertEquals(400, error.getCode());
@@ -69,29 +75,33 @@ class RemoteA2AErrorResponseTest {
 
   @Test
   void ignoresOldProblemShapeAndNestedBusinessErrors() {
-    assertNull(RemoteA2AErrorException.fromPayload(
-        "{\"status\":400,\"title\":\"Invalid Params\",\"detail\":\"missing\"}"));
-    assertNull(RemoteA2AErrorException.fromPayload(
-        "{\"artifactUpdate\":{\"artifact\":{\"parts\":[{\"data\":" + error(400) + "}]}}}"));
-    assertNull(RemoteA2AErrorException.fromPayload("{\"error\":{\"code\":200,\"message\":\"ok\"}}"));
+    assertNull(
+        RemoteA2AErrorException.fromPayload(
+            "{\"status\":400,\"title\":\"Invalid Params\",\"detail\":\"missing\"}"));
+    assertNull(
+        RemoteA2AErrorException.fromPayload(
+            "{\"artifactUpdate\":{\"artifact\":{\"parts\":[{\"data\":" + error(400) + "}]}}}"));
+    assertNull(
+        RemoteA2AErrorException.fromPayload("{\"error\":{\"code\":200,\"message\":\"ok\"}}"));
     assertNull(RemoteA2AErrorException.fromPayload("{\"error\":{\"code\":400}}"));
     assertNull(RemoteA2AErrorException.fromPayload("{\"error\":{"));
   }
 
   @Test
   void redactsTypedDetailsAndResponseHeaders() {
-    String payload = error(400).replace("\"taskId\":\"task-123\"",
-        "\"accessSession\":\"secret-value\"");
-    var error = RemoteA2AErrorException.fromResponse(
-        400, payload, Map.of("Authorization", List.of("Bearer secret")));
-    assertEquals("***", ((Map<?, ?>) error.getDetails().get(1).get("metadata")).get("accessSession"));
+    String payload =
+        error(400).replace("\"taskId\":\"task-123\"", "\"accessSession\":\"secret-value\"");
+    var error =
+        RemoteA2AErrorException.fromResponse(
+            400, payload, Map.of("Authorization", List.of("Bearer secret")));
+    assertEquals(
+        "***", ((Map<?, ?>) error.getDetails().get(1).get("metadata")).get("accessSession"));
     assertEquals(List.of("***"), error.getResponseHeaders().get("Authorization"));
   }
 
   @Test
   void normalizesPeerSuppliedReasonBeforeUsingItAsAWorkflowCode() {
-    String payload =
-        error(400).replace("INVALID_PARAMS", "Invalid Params / Port#1");
+    String payload = error(400).replace("INVALID_PARAMS", "Invalid Params / Port#1");
 
     var error = RemoteA2AErrorException.fromPayload(payload);
 
@@ -106,50 +116,74 @@ class RemoteA2AErrorResponseTest {
     var disconnected = new CountDownLatch(1);
     var requests = new AtomicInteger();
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext("/", exchange -> {
-      requests.incrementAndGet();
-      exchange.getRequestBody().readAllBytes();
-      exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
-      exchange.sendResponseHeaders(200, 0);
-      try {
-        byte[] body = ("data: " + error(status) + "\n\n").getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseBody().write(body, 0, 12);
-        exchange.getResponseBody().flush();
-        exchange.getResponseBody().write(body, 12, body.length - 12);
-        exchange.getResponseBody().flush();
-        for (int i = 0; i < 80 && !release.await(100, TimeUnit.MILLISECONDS); i++) {
-          exchange.getResponseBody().write(": keep-alive\n\n".getBytes(StandardCharsets.UTF_8));
-          exchange.getResponseBody().flush();
-        }
-      } catch (java.io.IOException clientClosed) {
-        disconnected.countDown();
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      } finally {
-        exchange.close();
-      }
-    });
+    server.createContext(
+        "/",
+        exchange -> {
+          requests.incrementAndGet();
+          exchange.getRequestBody().readAllBytes();
+          exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          try {
+            byte[] body = ("data: " + error(status) + "\n\n").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseBody().write(body, 0, 12);
+            exchange.getResponseBody().flush();
+            exchange.getResponseBody().write(body, 12, body.length - 12);
+            exchange.getResponseBody().flush();
+            for (int i = 0; i < 80 && !release.await(100, TimeUnit.MILLISECONDS); i++) {
+              exchange.getResponseBody().write(": keep-alive\n\n".getBytes(StandardCharsets.UTF_8));
+              exchange.getResponseBody().flush();
+            }
+          } catch (java.io.IOException clientClosed) {
+            disconnected.countDown();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          } finally {
+            exchange.close();
+          }
+        });
     server.start();
     var runtime = new DefaultA2AJavaClientRuntime(true, null, 20, "HTTP+JSON");
     try {
-      AgentCard card = AgentCard.builder().name("remote-test").description("test").version("1")
-          .capabilities(AgentCapabilities.builder().streaming(true).build())
-          .defaultInputModes(List.of("text/plain")).defaultOutputModes(List.of("text/plain"))
-          .skills(List.of()).supportedInterfaces(List.of(new AgentInterface("HTTP+JSON",
-              "http://127.0.0.1:" + server.getAddress().getPort() + "/a2a/json"))).build();
-      MessageSendParams params = MessageSendParams.builder().message(Message.builder()
-          .role(Message.Role.ROLE_USER).messageId("test").parts(new TextPart("diagnose")).build()).build();
+      AgentCard card =
+          AgentCard.builder()
+              .name("remote-test")
+              .description("test")
+              .version("1")
+              .capabilities(AgentCapabilities.builder().streaming(true).build())
+              .defaultInputModes(List.of("text/plain"))
+              .defaultOutputModes(List.of("text/plain"))
+              .skills(List.of())
+              .supportedInterfaces(
+                  List.of(
+                      new AgentInterface(
+                          "HTTP+JSON",
+                          "http://127.0.0.1:" + server.getAddress().getPort() + "/a2a/json")))
+              .build();
+      MessageSendParams params =
+          MessageSendParams.builder()
+              .message(
+                  Message.builder()
+                      .role(Message.Role.ROLE_USER)
+                      .messageId("test")
+                      .parts(new TextPart("diagnose"))
+                      .build())
+              .build();
       var events = new AtomicInteger();
-      var response = CompletableFuture.supplyAsync(
-          () -> runtime.sendMessage(card, params, null, event -> events.incrementAndGet(), null));
-      var thrown = assertThrows(java.util.concurrent.ExecutionException.class,
-          () -> response.get(3, TimeUnit.SECONDS));
+      var response =
+          CompletableFuture.supplyAsync(
+              () ->
+                  runtime.sendMessage(card, params, null, event -> events.incrementAndGet(), null));
+      var thrown =
+          assertThrows(
+              java.util.concurrent.ExecutionException.class,
+              () -> response.get(3, TimeUnit.SECONDS));
       var remoteError = RemoteA2AErrorException.findIn(thrown);
       assertNotNull(remoteError);
       assertEquals(status, remoteError.getHttpStatus());
       assertEquals(0, events.get());
       assertEquals(1, requests.get());
-      assertTrue(disconnected.await(3, TimeUnit.SECONDS), "failed SSE must close its HTTP connection");
+      assertTrue(
+          disconnected.await(3, TimeUnit.SECONDS), "failed SSE must close its HTTP connection");
     } finally {
       release.countDown();
       runtime.close();
@@ -159,8 +193,9 @@ class RemoteA2AErrorResponseTest {
 
   @Test
   void projectsTypedSdkErrorsAndHandlesCauseCycles() {
-    var projected = RemoteA2AErrorException.findIn(
-        new IllegalStateException("wrapper", new InvalidParamsError("missing port")));
+    var projected =
+        RemoteA2AErrorException.findIn(
+            new IllegalStateException("wrapper", new InvalidParamsError("missing port")));
     assertNotNull(projected);
     assertEquals("INVALID_PARAMS", projected.getReason());
     assertEquals("a2a.invalid_params", projected.workflowErrorCode());
@@ -174,18 +209,28 @@ class RemoteA2AErrorResponseTest {
   @Test
   void nonStreamingResponsesPreserveTheStandardA2AError() throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext("/", exchange -> {
-      byte[] body = error(400).getBytes(StandardCharsets.UTF_8);
-      exchange.getResponseHeaders().set("Content-Type", "application/a2a+json");
-      exchange.sendResponseHeaders(400, body.length);
-      exchange.getResponseBody().write(body);
-      exchange.close();
-    });
+    server.createContext(
+        "/",
+        exchange -> {
+          byte[] body = error(400).getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/a2a+json");
+          exchange.sendResponseHeaders(400, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
     server.start();
     try {
-      var client = new A2AErrorDetectingHttpClient(new JdkA2AHttpClient(HttpClient.newHttpClient()));
-      var error = assertThrows(RemoteA2AErrorException.class, () -> client.createPost()
-          .url("http://127.0.0.1:" + server.getAddress().getPort()).body("{}").post());
+      var client =
+          new A2AErrorDetectingHttpClient(new JdkA2AHttpClient(HttpClient.newHttpClient()));
+      var error =
+          assertThrows(
+              RemoteA2AErrorException.class,
+              () ->
+                  client
+                      .createPost()
+                      .url("http://127.0.0.1:" + server.getAddress().getPort())
+                      .body("{}")
+                      .post());
       assertEquals(400, error.getHttpStatus());
       assertEquals("INVALID_PARAMS", error.getReason());
     } finally {
@@ -196,27 +241,48 @@ class RemoteA2AErrorResponseTest {
   @Test
   void runtimeUsesTheHttpClientCustomizationHookWithoutBypassingErrorDetection() throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext("/", exchange -> {
-      exchange.getRequestBody().readAllBytes();
-      byte[] body = ("data: " + error(400) + "\n\n").getBytes(StandardCharsets.UTF_8);
-      exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
-      exchange.sendResponseHeaders(200, 0);
-      exchange.getResponseBody().write(body);
-      exchange.close();
-    });
+    server.createContext(
+        "/",
+        exchange -> {
+          exchange.getRequestBody().readAllBytes();
+          byte[] body = ("data: " + error(400) + "\n\n").getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
     server.start();
     var runtime = new CustomizingRuntime();
     try {
-      AgentCard card = AgentCard.builder().name("customized-runtime").description("test").version("1")
-          .capabilities(AgentCapabilities.builder().streaming(true).build())
-          .defaultInputModes(List.of("text/plain")).defaultOutputModes(List.of("text/plain"))
-          .skills(List.of()).supportedInterfaces(List.of(new AgentInterface("HTTP+JSON",
-              "http://127.0.0.1:" + server.getAddress().getPort() + "/a2a/json"))).build();
-      MessageSendParams params = MessageSendParams.builder().message(Message.builder()
-          .role(Message.Role.ROLE_USER).messageId("test").parts(new TextPart("diagnose")).build()).build();
+      AgentCard card =
+          AgentCard.builder()
+              .name("customized-runtime")
+              .description("test")
+              .version("1")
+              .capabilities(AgentCapabilities.builder().streaming(true).build())
+              .defaultInputModes(List.of("text/plain"))
+              .defaultOutputModes(List.of("text/plain"))
+              .skills(List.of())
+              .supportedInterfaces(
+                  List.of(
+                      new AgentInterface(
+                          "HTTP+JSON",
+                          "http://127.0.0.1:" + server.getAddress().getPort() + "/a2a/json")))
+              .build();
+      MessageSendParams params =
+          MessageSendParams.builder()
+              .message(
+                  Message.builder()
+                      .role(Message.Role.ROLE_USER)
+                      .messageId("test")
+                      .parts(new TextPart("diagnose"))
+                      .build())
+              .build();
 
-      var thrown = assertThrows(RuntimeException.class,
-          () -> runtime.sendMessage(card, params, null, ignored -> {}, null));
+      var thrown =
+          assertThrows(
+              RuntimeException.class,
+              () -> runtime.sendMessage(card, params, null, ignored -> {}, null));
 
       assertNotNull(RemoteA2AErrorException.findIn(thrown));
       assertEquals(1, runtime.customizations.get());

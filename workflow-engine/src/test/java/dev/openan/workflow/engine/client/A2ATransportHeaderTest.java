@@ -161,14 +161,11 @@ class A2ATransportHeaderTest {
             extensions);
 
     try (A2ATransport transport =
-        new A2ATransport(
-            List.of(card), runtime, WorkflowEngineClientConfig.builder().build())) {
+        new A2ATransport(List.of(card), runtime, WorkflowEngineClientConfig.builder().build())) {
       transport.send(card, card.name(), message, "context-1", null, null).join();
     }
 
-    assertEquals(
-        TASK_T_URI + "," + NEGOTIATION_T_URI,
-        capturedHeaders.get().get("A2A-Extensions"));
+    assertEquals(TASK_T_URI + "," + NEGOTIATION_T_URI, capturedHeaders.get().get("A2A-Extensions"));
   }
 
   @Test

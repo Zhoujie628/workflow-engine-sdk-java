@@ -18,6 +18,7 @@
  */
 
 /**
- * The four business callback contracts (onTask, onSelfTask, onRoute, onNegotiation) plus the engine event callback surface.
+ * The four business callback contracts (onTask, onSelfTask, onRoute, onNegotiation) plus the engine
+ * event callback surface.
  */
 package dev.openan.workflow.engine.control;

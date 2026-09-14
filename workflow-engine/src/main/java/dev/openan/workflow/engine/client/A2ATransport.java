@@ -542,10 +542,10 @@ public class A2ATransport implements AutoCloseable {
   }
 
   /**
-   * Long-lived SSE stream for Notification-T subscription. Opens a daemon thread that keeps the
-   * SSE response stream open. The eventSink callback processes events in real-time (subscribed ack
-   * + later recovery results). The returned future completes on the first event carrying a
-   * concrete task state; an artifact alone is application data, not a protocol acknowledgement.
+   * Long-lived SSE stream for Notification-T subscription. Opens a daemon thread that keeps the SSE
+   * response stream open. The eventSink callback processes events in real-time (subscribed ack +
+   * later recovery results). The returned future completes on the first event carrying a concrete
+   * task state; an artifact alone is application data, not a protocol acknowledgement.
    */
   public NotificationSubscription openNotificationStream(
       AgentCard agentCard,

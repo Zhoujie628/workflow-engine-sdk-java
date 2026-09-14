@@ -18,6 +18,7 @@
  */
 package dev.openan.workflow.engine.spring;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,12 +30,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.hamcrest.Matchers.containsString;
 
 import java.lang.reflect.Modifier;
 import java.util.concurrent.ExecutorService;
@@ -49,13 +49,12 @@ import org.a2aproject.sdk.server.config.A2AConfigProvider;
 import org.a2aproject.sdk.server.requesthandlers.RequestHandler;
 import org.a2aproject.sdk.spec.AgentCapabilities;
 import org.a2aproject.sdk.spec.AgentCard;
-import org.a2aproject.sdk.spec.TaskNotFoundError;
 import org.a2aproject.sdk.spec.StreamingEventKind;
+import org.a2aproject.sdk.spec.TaskNotFoundError;
 import org.a2aproject.sdk.transport.rest.handler.RestHandler;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
-import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -169,26 +168,30 @@ class A2AAutoConfigurationTest {
     assertEquals(0, controller.activeStreamCount());
   }
 
-
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
       strings = {"before-subscribe", "after-subscribe", "during-request"})
-  void synchronousPublisherFailureReleasesResourcesBeforeMvcDispatch(String phase) throws Exception {
+  void synchronousPublisherFailureReleasesResourcesBeforeMvcDispatch(String phase)
+      throws Exception {
     for (String endpoint : new String[] {"/message:stream", "/tasks/task-1:subscribe"}) {
       RestHandler restHandler = mock(RestHandler.class);
       when(restHandler.createErrorResponse(any()))
-          .thenReturn(new RestHandler.HTTPRestResponse(
-              500, "application/a2a+json",
-              "{\"error\":{\"code\":500,\"status\":\"INTERNAL\",\"message\":\"Setup failed\"}}"));
+          .thenReturn(
+              new RestHandler.HTTPRestResponse(
+                  500,
+                  "application/a2a+json",
+                  "{\"error\":{\"code\":500,\"status\":\"INTERNAL\",\"message\":\"Setup failed\"}}"));
       RequestHandler requestHandler = mock(RequestHandler.class);
       AgentCard agentCard = mock(AgentCard.class);
-      when(agentCard.capabilities()).thenReturn(AgentCapabilities.builder().streaming(true).build());
+      when(agentCard.capabilities())
+          .thenReturn(AgentCapabilities.builder().streaming(true).build());
       var agentInterface = mock(org.a2aproject.sdk.spec.AgentInterface.class);
       when(agentInterface.protocolVersion()).thenReturn("1.0");
       when(agentCard.supportedInterfaces()).thenReturn(java.util.List.of(agentInterface));
       AtomicInteger subscriptionCancellations = new AtomicInteger();
       AtomicInteger eventConsumerCancellations = new AtomicInteger();
-      AtomicReference<Flow.Subscriber<? super StreamingEventKind>> subscriber = new AtomicReference<>();
+      AtomicReference<Flow.Subscriber<? super StreamingEventKind>> subscriber =
+          new AtomicReference<>();
       org.mockito.stubbing.Answer<Flow.Publisher<StreamingEventKind>> answer =
           invocation -> {
             ServerCallContext context = invocation.getArgument(1);
@@ -196,19 +199,20 @@ class A2AAutoConfigurationTest {
             return receiver -> {
               subscriber.set(receiver);
               if (!phase.equals("before-subscribe")) {
-                receiver.onSubscribe(new Flow.Subscription() {
-                  @Override
-                  public void request(long count) {
-                    if (phase.equals("during-request")) {
-                      throw new IllegalStateException("Request failed");
-                    }
-                  }
+                receiver.onSubscribe(
+                    new Flow.Subscription() {
+                      @Override
+                      public void request(long count) {
+                        if (phase.equals("during-request")) {
+                          throw new IllegalStateException("Request failed");
+                        }
+                      }
 
-                  @Override
-                  public void cancel() {
-                    subscriptionCancellations.incrementAndGet();
-                  }
-                });
+                      @Override
+                      public void cancel() {
+                        subscriptionCancellations.incrementAndGet();
+                      }
+                    });
               }
               throw new IllegalStateException("Subscribe failed");
             };
@@ -216,16 +220,20 @@ class A2AAutoConfigurationTest {
       when(requestHandler.onSubscribeToTask(any(), any())).thenAnswer(answer);
       when(requestHandler.onMessageSendStream(any(), any())).thenAnswer(answer);
       var controller = new A2AController(restHandler, requestHandler, agentCard);
-      MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
-          .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
-          .build();
+      MockMvc mockMvc =
+          MockMvcBuilders.standaloneSetup(controller)
+              .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+              .build();
 
-      mockMvc.perform(post("/a2a/json" + endpoint)
-              .header("A2A-Version", "1.0")
-              .contentType("application/json")
-              .accept("text/event-stream")
-              .content("{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\","
-                  + "\"parts\":[{\"text\":\"test\"}]}}"))
+      mockMvc
+          .perform(
+              post("/a2a/json" + endpoint)
+                  .header("A2A-Version", "1.0")
+                  .contentType("application/json")
+                  .accept("text/event-stream")
+                  .content(
+                      "{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\","
+                          + "\"parts\":[{\"text\":\"test\"}]}}"))
           .andExpect(status().isInternalServerError())
           .andExpect(request().asyncNotStarted())
           .andExpect(content().contentTypeCompatibleWith("application/a2a+json"))
@@ -414,8 +422,7 @@ class A2AAutoConfigurationTest {
             .withBean(A2AController.class, () -> canonical)
             .withPropertyValues("a2at.server.enabled=true");
 
-    runner.run(
-        context -> assertFalse(context.containsBean("a2aSlashActionAliasController")));
+    runner.run(context -> assertFalse(context.containsBean("a2aSlashActionAliasController")));
     runner
         .withPropertyValues("a2at.server.slash-action-aliases-enabled=true")
         .run(context -> assertTrue(context.containsBean("a2aSlashActionAliasController")));

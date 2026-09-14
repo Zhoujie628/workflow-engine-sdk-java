@@ -81,7 +81,8 @@ public class RegistryClient {
   public List<Map<String, Object>> fetchAgentCards() throws Exception {
     String url = baseUrl + "/rest/v1/registry-center/agent-cards";
     log.info("[Registry] Fetching all agent cards from {}", baseUrl);
-    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
+    HttpRequest request =
+        HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
       throw requestFailure("Registry", resp.statusCode(), resp.body());
@@ -116,7 +117,8 @@ public class RegistryClient {
     }
     String url = urlBuilder.toString();
     log.info("[Registry] Fetching agent card: name={}, org={}", name, organization);
-    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
+    HttpRequest request =
+        HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
       throw requestFailure("Registry", resp.statusCode(), resp.body());
@@ -165,7 +167,8 @@ public class RegistryClient {
     var response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
     try {
       // Also bound body consumption: a peer may send headers and then stall its body.
-      return response.get(Math.max(1, requestTimeout.toMillis()), java.util.concurrent.TimeUnit.MILLISECONDS);
+      return response.get(
+          Math.max(1, requestTimeout.toMillis()), java.util.concurrent.TimeUnit.MILLISECONDS);
     } catch (java.util.concurrent.TimeoutException error) {
       response.cancel(true);
       throw new java.net.http.HttpTimeoutException("Registry response deadline exceeded");

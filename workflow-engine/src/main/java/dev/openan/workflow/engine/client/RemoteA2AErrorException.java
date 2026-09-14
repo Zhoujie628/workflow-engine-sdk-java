@@ -120,7 +120,9 @@ public final class RemoteA2AErrorException extends RuntimeException {
   /** Finds or projects a standard A2A error in a wrapped SDK/transport exception chain. */
   public static RemoteA2AErrorException findIn(Throwable error) {
     Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-    for (Throwable current = error; current != null && seen.add(current); current = current.getCause()) {
+    for (Throwable current = error;
+        current != null && seen.add(current);
+        current = current.getCause()) {
       if (current instanceof RemoteA2AErrorException remote) return remote;
       if (current instanceof A2AClientHTTPError http) {
         RemoteA2AErrorException parsed =
@@ -196,10 +198,7 @@ public final class RemoteA2AErrorException extends RuntimeException {
   /** Stable workflow-facing error code that does not expose SDK exception class names. */
   public String workflowErrorCode() {
     String normalizedReason =
-        reason
-            .toLowerCase(Locale.ROOT)
-            .replaceAll("[^a-z0-9]+", "_")
-            .replaceAll("^_+|_+$", "");
+        reason.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
     if (!normalizedReason.isBlank()) return "a2a." + normalizedReason;
     return "a2a.http." + httpStatus;
   }

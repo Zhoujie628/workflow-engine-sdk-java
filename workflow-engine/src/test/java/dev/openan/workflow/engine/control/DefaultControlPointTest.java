@@ -18,16 +18,15 @@
  */
 package dev.openan.workflow.engine.control;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import dev.openan.workflow.engine.model.RouteRequest;
 import dev.openan.workflow.engine.model.TaskRequest;
 import dev.openan.workflow.engine.model.TaskResult;
 import dev.openan.workflow.engine.model.WorkflowInput;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.junit.jupiter.api.Test;
 
 class DefaultControlPointTest {
 
@@ -55,8 +54,8 @@ class DefaultControlPointTest {
         () ->
             new DefaultControlPoint()
                 .onRoute(
-                        new RouteRequest(
-                                "run", "step", "next", "condition", WorkflowInput.empty(), List.of()))
+                    new RouteRequest(
+                        "run", "step", "next", "condition", WorkflowInput.empty(), List.of()))
                 .join());
   }
 
