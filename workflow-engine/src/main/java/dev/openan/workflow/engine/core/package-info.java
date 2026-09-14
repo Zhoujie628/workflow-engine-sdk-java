@@ -18,6 +18,7 @@
  */
 
 /**
- * The scheduler: workflow graph validation, traversal, parallel dispatch, upstream context windows, and failure mapping.
+ * The scheduler: workflow graph validation, traversal, parallel dispatch, upstream context windows,
+ * and failure mapping.
  */
 package dev.openan.workflow.engine.core;

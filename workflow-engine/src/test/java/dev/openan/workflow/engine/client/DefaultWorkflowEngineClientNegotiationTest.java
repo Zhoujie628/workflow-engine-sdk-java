@@ -300,7 +300,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
       CompletionException error =
           assertThrows(
               CompletionException.class,
-          () -> client.sendTask("test", negotiationTask("start")).join());
+              () -> client.sendTask("test", negotiationTask("start")).join());
       assertInstanceOf(TimeoutException.class, error.getCause());
       assertTrue(canceled.await(3, TimeUnit.SECONDS));
     }
@@ -343,7 +343,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
       CompletionException error =
           assertThrows(
               CompletionException.class,
-          () -> client.sendTask("test", negotiationTask("start")).join());
+              () -> client.sendTask("test", negotiationTask("start")).join());
       assertTrue(error.getCause().getMessage().contains("TASK_STATE_AUTH_REQUIRED"));
       assertEquals(1, cancellations.get());
     }
@@ -443,7 +443,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
       CompletionException error =
           assertThrows(
               CompletionException.class,
-          () -> client.sendTask("test", negotiationTask("start")).join());
+              () -> client.sendTask("test", negotiationTask("start")).join());
       RemoteA2AErrorException actual = RemoteA2AErrorException.findIn(error);
       assertNotNull(actual);
       assertEquals(429, actual.getHttpStatus());
@@ -485,7 +485,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
               .build());
       assertEquals(
           "TASK_STATE_COMPLETED",
-        client.sendTask("test", negotiationTask("start")).join().getTaskState());
+          client.sendTask("test", negotiationTask("start")).join().getTaskState());
     }
     assertEquals(2, sent.size());
     assertNull(sent.get(0).message().taskId());
@@ -519,7 +519,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                     return CompletableFuture.failedFuture(new AssertionError());
                   })
               .build());
-    client.sendTask("test", negotiationTask("start")).join();
+      client.sendTask("test", negotiationTask("start")).join();
     }
     assertEquals(0, callbacks.get());
   }
@@ -552,7 +552,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                 .build());
         assertThrows(
             CompletionException.class,
-          () -> client.sendTask("test", negotiationTask("start")).join());
+            () -> client.sendTask("test", negotiationTask("start")).join());
       }
       assertEquals(1, sends.get());
     }
@@ -629,13 +629,16 @@ class DefaultWorkflowEngineClientNegotiationTest {
             params -> {
               sent.add(params);
               return switch (sent.size()) {
-                case 1 -> messageResponse(
-                    params, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
-                case 2 -> messageResponse(
-                    params, negotiation("pre", 2, 5, NegotiationPerformative.PROPOSE));
-                default -> List.of(
-                    response(
-                        params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
+                case 1 ->
+                    messageResponse(
+                        params, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
+                case 2 ->
+                    messageResponse(
+                        params, negotiation("pre", 2, 5, NegotiationPerformative.PROPOSE));
+                default ->
+                    List.of(
+                        response(
+                            params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
               };
             });
     try (var transport =
@@ -716,9 +719,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
         new A2ATransport(
             List.of(card()),
             runtime(
-                p ->
-                    messageResponse(
-                        p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE))),
+                p -> messageResponse(p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE))),
             WorkflowEngineClientConfig.builder().build())) {
       var client = new DefaultWorkflowEngineClient(transport);
       client.setControlPoint(
@@ -794,7 +795,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                           new NegotiationReply.Send(
                               negotiation("city1", 1, NegotiationPerformative.ABORT))))
               .build());
-    var result = client.sendTask("test", negotiationTask("start")).join();
+      var result = client.sendTask("test", negotiationTask("start")).join();
       assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
       assertEquals("negotiation.aborted", result.getFailureCode());
     }
@@ -857,7 +858,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
         assertEquals(
             "TASK_STATE_COMPLETED",
             client
-              .sendTask("test", negotiationTask("start"))
+                .sendTask("test", negotiationTask("start"))
                 .get(5, TimeUnit.SECONDS)
                 .getTaskState());
         assertEquals(2, sends.get());
@@ -895,7 +896,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                       return answer;
                     })
                 .build());
-      var result = client.sendTask("test", negotiationTask("start"));
+        var result = client.sendTask("test", negotiationTask("start"));
         assertTrue(entered.await(1, TimeUnit.SECONDS));
         if (timeout) assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
         else assertTrue(result.cancel(true));

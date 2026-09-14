@@ -40,8 +40,8 @@ public class A2AProperties {
   private String pathPrefix = "/a2a/json";
 
   /**
-   * Whether to expose slash-style aliases for A2A action endpoints for gateways that reject
-   * colons in published paths. Standard colon-style endpoints always remain available.
+   * Whether to expose slash-style aliases for A2A action endpoints for gateways that reject colons
+   * in published paths. Standard colon-style endpoints always remain available.
    */
   private boolean slashActionAliasesEnabled = false;
 

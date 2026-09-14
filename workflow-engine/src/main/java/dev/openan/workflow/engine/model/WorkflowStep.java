@@ -19,12 +19,11 @@
 
 package dev.openan.workflow.engine.model;
 
+import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.util.List;
 
 /**
  * One node of a {@link Workflow}: the subtasks to dispatch, the outgoing jumps, and the upstream

@@ -24,37 +24,27 @@ package dev.openan.workflow.engine.model;
  * activated together with every unconditional edge and every other allowed conditional edge.
  */
 public record RouteDecision(boolean allowed, String reason) {
-  /**
-   * Creates a decision and normalizes a null reason to an empty string.
-   */
+  /** Creates a decision and normalizes a null reason to an empty string. */
   public RouteDecision {
     reason = reason == null ? "" : reason;
   }
 
-  /**
-   * Allows the edge without an explanatory reason.
-   */
+  /** Allows the edge without an explanatory reason. */
   public static RouteDecision allow() {
     return new RouteDecision(true, "");
   }
 
-  /**
-   * Allows the edge and records the business reason for observability.
-   */
+  /** Allows the edge and records the business reason for observability. */
   public static RouteDecision allow(String reason) {
     return new RouteDecision(true, reason);
   }
 
-  /**
-   * Denies the edge without an explanatory reason.
-   */
+  /** Denies the edge without an explanatory reason. */
   public static RouteDecision deny() {
     return new RouteDecision(false, "");
   }
 
-  /**
-   * Denies the edge and records the business reason for observability.
-   */
+  /** Denies the edge and records the business reason for observability. */
   public static RouteDecision deny(String reason) {
     return new RouteDecision(false, reason);
   }

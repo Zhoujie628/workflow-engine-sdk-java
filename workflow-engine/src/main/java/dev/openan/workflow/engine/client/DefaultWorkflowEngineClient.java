@@ -441,8 +441,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   /**
    * Shared negotiation loop for both carriers: a task-anchored {@code INPUT_REQUIRED} status
    * ({@code remoteTask} set) and a taskless bare-message Propose ({@code remoteTask == null},
-   * pre-task A2A-T negotiation). The follow-up send reuses the remote task id when there is one
-   * and stays taskless otherwise.
+   * pre-task A2A-T negotiation). The follow-up send reuses the remote task id when there is one and
+   * stays taskless otherwise.
    */
   private CompletableFuture<SendMessageResult> negotiate(
       AgentCard card, Invocation invocation, SendMessageResult result, String remoteTask) {

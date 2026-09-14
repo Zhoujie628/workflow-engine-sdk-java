@@ -42,9 +42,7 @@ final class CredentialHeaderContributor implements HeaderContributor {
   }
 
   private static void addCredentialHeader(
-      Map<String, String> headers,
-      Map<String, Object> schemeConfig,
-      String credential) {
+      Map<String, String> headers, Map<String, Object> schemeConfig, String credential) {
     String authHeader = (String) schemeConfig.get("auth_header");
     if (authHeader != null && !authHeader.isEmpty()) {
       String prefix = (String) schemeConfig.getOrDefault("auth_header_prefix", "");

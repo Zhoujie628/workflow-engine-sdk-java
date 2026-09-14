@@ -22,9 +22,7 @@ package dev.openan.workflow.engine.model;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Business input for evaluating one conditional outgoing edge.
- */
+/** Business input for evaluating one conditional outgoing edge. */
 public record RouteRequest(
     String executionId,
     String stepName,

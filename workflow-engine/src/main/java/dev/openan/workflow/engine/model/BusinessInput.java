@@ -19,7 +19,6 @@
 
 package dev.openan.workflow.engine.model;
 
-
 /** Business content, not a protocol message. Exactly one of text/data is present. */
 public record BusinessInput(String text, Object data) {
   public BusinessInput {

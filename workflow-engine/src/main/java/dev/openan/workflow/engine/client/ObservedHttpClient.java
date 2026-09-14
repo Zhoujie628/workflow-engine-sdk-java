@@ -181,16 +181,18 @@ final class ObservedHttpClient extends HttpClient {
       if (cancelledBySubscriber.get()) return;
       // Body subscriber and sendAsync completion can report the same exchange failure.
       if (!failureLogged.compareAndSet(false, true)) return;
-      String message = SensitiveDataRedactor.redact(Objects.toString(error.getMessage(), ""))
-          .replace("\r", "\\r")
-          .replace("\n", "\\n");
+      String message =
+          SensitiveDataRedactor.redact(Objects.toString(error.getMessage(), ""))
+              .replace("\r", "\\r")
+              .replace("\n", "\\n");
       emit(
           "FAILURE",
           null,
           Map.of(),
           "transport-error",
           "",
-          "errorType=" + error.getClass().getSimpleName()
+          "errorType="
+              + error.getClass().getSimpleName()
               + (message.isBlank() ? "" : "; errorMessage=" + message));
     }
 

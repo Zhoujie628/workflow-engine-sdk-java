@@ -36,10 +36,13 @@ import lombok.NoArgsConstructor;
 @Builder
 public class ExecutionResult {
   private boolean success;
+
   /** Per-step records in execution order. */
   private List<Map<String, Object>> history;
+
   /** Step name to business outputs; nested structure preserved. */
   private Map<String, Map<String, Object>> stepOutputs;
+
   /** Terminal failure description; raw error text, not redacted. Null on success. */
   private String error;
 }
