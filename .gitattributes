@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repository; working-tree endings follow
+# the per-type rules below so Windows and Linux checkouts are identical.
+* text=auto
+
+# The spotless google-java-format gate expects LF; force LF in every checkout.
+*.java text eol=lf
