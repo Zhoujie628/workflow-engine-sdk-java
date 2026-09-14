@@ -55,10 +55,14 @@ class CredentialHeaderContributorTest {
 
   private static Map<String, Object> scheme(String url, String header) {
     return Map.of(
-        "login_url", url,
-        "token_field", "access_token",
-        "request_fields", Map.of("username", "user", "password", "password"),
-        "auth_header", header);
+        "login_url",
+        url,
+        "token_field",
+        "access_token",
+        "request_fields",
+        Map.of("username", "user", "password", "password"),
+        "auth_header",
+        header);
   }
 
   @Test
@@ -102,10 +106,7 @@ class CredentialHeaderContributorTest {
 
       Map<String, String> headers =
           contributor.contribute(
-              card("[{\"schemes\":{\"first\":{},\"second\":{}}}]"),
-              "agent",
-              Map.of(),
-              Map.of());
+              card("[{\"schemes\":{\"first\":{},\"second\":{}}}]"), "agent", Map.of(), Map.of());
 
       assertEquals(Map.of("X-First", "token", "X-Second", "token"), headers);
     } finally {

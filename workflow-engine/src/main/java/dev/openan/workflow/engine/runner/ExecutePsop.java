@@ -128,32 +128,37 @@ public class ExecutePsop {
     }
     CompletableFuture<ExecutionResult> exposed = new CompletableFuture<>();
     var closed = new java.util.concurrent.atomic.AtomicBoolean();
-    Runnable cleanup = () -> {
-      if (closed.compareAndSet(false, true)) {
-        closeExecution(client, closeClientOnFinish, collectingCallback);
-      }
-    };
-    var finishing = new java.util.concurrent.atomic.AtomicReference<CompletableFuture<ExecutionResult>>();
-    exposed.whenComplete((result, error) -> {
-      if (exposed.isCancelled()) {
-        execution.cancel(true);
-        CompletableFuture<ExecutionResult> pending = finishing.get();
-        if (pending != null) pending.cancel(true);
-        cleanup.run();
-      }
-    });
+    Runnable cleanup =
+        () -> {
+          if (closed.compareAndSet(false, true)) {
+            closeExecution(client, closeClientOnFinish, collectingCallback);
+          }
+        };
+    var finishing =
+        new java.util.concurrent.atomic.AtomicReference<CompletableFuture<ExecutionResult>>();
+    exposed.whenComplete(
+        (result, error) -> {
+          if (exposed.isCancelled()) {
+            execution.cancel(true);
+            CompletableFuture<ExecutionResult> pending = finishing.get();
+            if (pending != null) pending.cancel(true);
+            cleanup.run();
+          }
+        });
     // Observe the source independently: cancelling the public future must not skip cleanup.
-    execution.whenComplete((result, error) -> {
-      ExecutionResult outcome = error == null ? result : handleExecutionError(error);
-      CompletableFuture<ExecutionResult> completion =
-          finalizeResult(outcome, collectingCallback, collected, onFinish, cleanup);
-      finishing.set(completion);
-      if (exposed.isCancelled()) completion.cancel(true);
-      completion.whenComplete((value, failure) -> {
-        if (failure == null) exposed.complete(value);
-        else exposed.completeExceptionally(failure);
-      });
-    });
+    execution.whenComplete(
+        (result, error) -> {
+          ExecutionResult outcome = error == null ? result : handleExecutionError(error);
+          CompletableFuture<ExecutionResult> completion =
+              finalizeResult(outcome, collectingCallback, collected, onFinish, cleanup);
+          finishing.set(completion);
+          if (exposed.isCancelled()) completion.cancel(true);
+          completion.whenComplete(
+              (value, failure) -> {
+                if (failure == null) exposed.complete(value);
+                else exposed.completeExceptionally(failure);
+              });
+        });
     return exposed;
   }
 
@@ -282,8 +287,10 @@ public class ExecutePsop {
 
   private static ExecutionResult handleExecutionError(Throwable error) {
     boolean cancelled = error instanceof java.util.concurrent.CancellationException;
-    String message = cancelled ? "Workflow execution cancelled"
-        : error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+    String message =
+        cancelled
+            ? "Workflow execution cancelled"
+            : error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
     if (cancelled) log.info("[execute_psop] {}", message);
     else log.error("[execute_psop] Execution failed: {}", message);
     return ExecutionResult.builder()

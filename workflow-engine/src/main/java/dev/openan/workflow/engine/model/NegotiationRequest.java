@@ -25,8 +25,8 @@ import java.util.Objects;
 
 /**
  * Uninterpreted received content and history for one task's current negotiation session. Throws
- * {@link NullPointerException} if any component is null (including {@code previousExchanges})
- * and {@link IllegalArgumentException} if {@code remainingWait} is negative.
+ * {@link NullPointerException} if any component is null (including {@code previousExchanges}) and
+ * {@link IllegalArgumentException} if {@code remainingWait} is negative.
  */
 public record NegotiationRequest(
     TaskRequest task,

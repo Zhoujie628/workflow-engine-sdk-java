@@ -33,6 +33,7 @@ class TransportFailuresTest {
             new RuntimeException("wrapper", new AsynchronousCloseException())));
     assertTrue(
         TransportFailures.isExpectedLocalClose(new IOException("Connection closed locally")));
-    assertFalse(TransportFailures.isExpectedLocalClose(new IOException("connection reset by peer")));
+    assertFalse(
+        TransportFailures.isExpectedLocalClose(new IOException("connection reset by peer")));
   }
 }

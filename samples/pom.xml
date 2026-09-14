@@ -76,6 +76,8 @@
 
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>
+        <!-- Demo module: formatting gate applies to the published modules only. -->
+        <spotless.skip>true</spotless.skip>
     </properties>
 
     <build>

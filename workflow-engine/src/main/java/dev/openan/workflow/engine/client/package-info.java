@@ -18,6 +18,7 @@
  */
 
 /**
- * Protocol adaptation: transport runtimes, authentication, negotiation correlation, independent subscriptions, and wire observability. Content generation stays with the host.
+ * Protocol adaptation: transport runtimes, authentication, negotiation correlation, independent
+ * subscriptions, and wire observability. Content generation stays with the host.
  */
 package dev.openan.workflow.engine.client;

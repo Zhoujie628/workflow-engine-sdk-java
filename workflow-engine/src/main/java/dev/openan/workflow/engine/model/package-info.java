@@ -18,6 +18,7 @@
  */
 
 /**
- * Business-facing contracts: workflow definitions, callback request and response types, and message content. Depends only on standard A2A value types, never on A2A-T content-generation types.
+ * Business-facing contracts: workflow definitions, callback request and response types, and message
+ * content. Depends only on standard A2A value types, never on A2A-T content-generation types.
  */
 package dev.openan.workflow.engine.model;

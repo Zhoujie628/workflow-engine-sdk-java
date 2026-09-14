@@ -17,7 +17,5 @@
  *    under the License.
  */
 
-/**
- * Cross-cutting helpers shared by engine packages, such as sensitive-data redaction.
- */
+/** Cross-cutting helpers shared by engine packages, such as sensitive-data redaction. */
 package dev.openan.workflow.engine.util;

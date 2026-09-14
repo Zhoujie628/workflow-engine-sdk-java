@@ -23,7 +23,9 @@ import java.nio.channels.ClosedChannelException;
 import java.util.Locale;
 import java.util.concurrent.CancellationException;
 
-/** Classifies transport termination without making provider-specific messages the primary signal. */
+/**
+ * Classifies transport termination without making provider-specific messages the primary signal.
+ */
 final class TransportFailures {
   private TransportFailures() {}
 

@@ -32,8 +32,8 @@ import org.a2aproject.sdk.spec.Task;
  * parts, message/task metadata, and artifacts at their own levels — and is the source for all
  * convenience projections. It is not a wire-level transcript: envelope fields such as task and
  * context identifiers, status history, and artifact delta flags are not preserved. {@code
- * failureCode}/{@code failureMessage} describe local interaction failures, separate from the
- * remote task state.
+ * failureCode}/{@code failureMessage} describe local interaction failures, separate from the remote
+ * task state.
  */
 @Data
 @NoArgsConstructor

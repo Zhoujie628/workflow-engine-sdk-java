@@ -45,9 +45,10 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code search} -- POST /api/v1/orchestrate/search (summary list by intent)
  * </ul>
  *
- * <p>Defaults verify the server using JVM trust and hostname checks. Explicit {@code sslVerify=false}
- * skips both checks for this connection only, for controlled development without local trust files.
- * It does not remove the server's HTTPS certificate or satisfy a server requirement for mTLS.
+ * <p>Defaults verify the server using JVM trust and hostname checks. Explicit {@code
+ * sslVerify=false} skips both checks for this connection only, for controlled development without
+ * local trust files. It does not remove the server's HTTPS certificate or satisfy a server
+ * requirement for mTLS.
  */
 public class LoadPsop {
   private static final Logger log = LoggerFactory.getLogger(LoadPsop.class);
@@ -72,7 +73,10 @@ public class LoadPsop {
           .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
     String url = urlBuilder.toString();
-    log.info("[Registry] Loading PSOP from {} (ssl_verify={})", anonymousUrl(url, accessToken), sslVerify);
+    log.info(
+        "[Registry] Loading PSOP from {} (ssl_verify={})",
+        anonymousUrl(url, accessToken),
+        sslVerify);
     HttpResult resp = execute("GET", url, null, sslVerify, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
@@ -112,7 +116,11 @@ public class LoadPsop {
           .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
     }
     String url = urlBuilder.toString();
-    log.info("[Registry] Searching PSOP at {} (intent={}, top_n={})", anonymousUrl(url, accessToken), intent, topN);
+    log.info(
+        "[Registry] Searching PSOP at {} (intent={}, top_n={})",
+        anonymousUrl(url, accessToken),
+        intent,
+        topN);
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
     HttpResult resp = execute("POST", url, jsonBody, sslVerify, timeouts);
     if (resp.statusCode() != 200) {

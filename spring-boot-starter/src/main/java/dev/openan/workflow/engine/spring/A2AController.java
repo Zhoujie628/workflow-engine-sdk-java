@@ -172,7 +172,8 @@ public class A2AController {
             try {
               context.invokeEventConsumerCancelCallback();
             } catch (RuntimeException error) {
-              log.warn("[SSE] Failed to notify SDK event consumer cancellation: {}", error.getMessage());
+              log.warn(
+                  "[SSE] Failed to notify SDK event consumer cancellation: {}", error.getMessage());
             }
           }
         };
@@ -278,14 +279,14 @@ public class A2AController {
   @PostMapping(
       value = "${a2at.server.path-prefix}/tasks/{id}:subscribe",
       produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-  public SseEmitter subscribeToTask(
-      HttpServletRequest req, @PathVariable("id") String taskId) {
+  public SseEmitter subscribeToTask(HttpServletRequest req, @PathVariable("id") String taskId) {
     try {
       var ctx = buildContext(req);
       requireStreamingSupport();
       requestHandler.authorizeTaskAccess(taskId, ctx, TaskOperation.SUBSCRIBE_TO_TASK);
       Flow.Publisher<StreamingEventKind> publisher =
-          requestHandler.onSubscribeToTask(TaskIdParams.builder().id(taskId).tenant("").build(), ctx);
+          requestHandler.onSubscribeToTask(
+              TaskIdParams.builder().id(taskId).tenant("").build(), ctx);
       return subscribeToEmitter(publisher, ctx);
     } catch (A2AError e) {
       log.warn("[SSE] Task subscription rejected before stream creation: {}", e.getMessage());

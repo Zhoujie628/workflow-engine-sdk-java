@@ -313,15 +313,50 @@ class ObservedHttpClientTest {
       return sendAsync(request, handler);
     }
 
-    @Override public Optional<CookieHandler> cookieHandler() { return Optional.empty(); }
-    @Override public Optional<Duration> connectTimeout() { return Optional.empty(); }
-    @Override public Redirect followRedirects() { return Redirect.NEVER; }
-    @Override public Optional<ProxySelector> proxy() { return Optional.empty(); }
-    @Override public javax.net.ssl.SSLContext sslContext() { return defaultSslContext(); }
-    @Override public javax.net.ssl.SSLParameters sslParameters() { return new javax.net.ssl.SSLParameters(); }
-    @Override public Optional<Authenticator> authenticator() { return Optional.empty(); }
-    @Override public Version version() { return Version.HTTP_1_1; }
-    @Override public Optional<Executor> executor() { return Optional.empty(); }
+    @Override
+    public Optional<CookieHandler> cookieHandler() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<Duration> connectTimeout() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Redirect followRedirects() {
+      return Redirect.NEVER;
+    }
+
+    @Override
+    public Optional<ProxySelector> proxy() {
+      return Optional.empty();
+    }
+
+    @Override
+    public javax.net.ssl.SSLContext sslContext() {
+      return defaultSslContext();
+    }
+
+    @Override
+    public javax.net.ssl.SSLParameters sslParameters() {
+      return new javax.net.ssl.SSLParameters();
+    }
+
+    @Override
+    public Optional<Authenticator> authenticator() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Version version() {
+      return Version.HTTP_1_1;
+    }
+
+    @Override
+    public Optional<Executor> executor() {
+      return Optional.empty();
+    }
 
     private static javax.net.ssl.SSLContext defaultSslContext() {
       try {

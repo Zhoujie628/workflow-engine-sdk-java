@@ -30,8 +30,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * Optional slash-style aliases for A2A action endpoints.
  *
- * <p>Every operation delegates to {@link A2AController}; the aliases therefore retain the
- * canonical endpoint's authentication, A2A error envelope, streaming, and cleanup behavior.
+ * <p>Every operation delegates to {@link A2AController}; the aliases therefore retain the canonical
+ * endpoint's authentication, A2A error envelope, streaming, and cleanup behavior.
  */
 @RestController
 @ConditionalOnProperty(
