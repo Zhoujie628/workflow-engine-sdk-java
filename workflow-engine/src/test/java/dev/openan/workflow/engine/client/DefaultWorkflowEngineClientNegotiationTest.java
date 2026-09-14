@@ -94,13 +94,31 @@ class DefaultWorkflowEngineClientNegotiationTest {
   }
 
   static MessageContent negotiation(String id, int round, NegotiationPerformative performative) {
+    return negotiation(id, round, round, performative);
+  }
+
+  static MessageContent negotiation(
+      String id, int round, int maxRounds, NegotiationPerformative performative) {
     return A2atMessages.from(
         new MetadataContent(
             "Negotiation-T/information-negotiation/propose/v1",
             "opaque",
             A2ATExtension.NEGOTIATION_T.uri(),
-            new NegotiationContext(id, round, round, performative)),
+            new NegotiationContext(id, round, maxRounds, performative)),
         List.of(new TextPart("not interpreted")));
+  }
+
+  /** A taskless A2A-T response: a bare agent message with no task lifecycle attached. */
+  static List<ClientEvent> messageResponse(MessageSendParams request, MessageContent content) {
+    Message message =
+        Message.builder()
+            .messageId(UUID.randomUUID().toString())
+            .contextId(request.message().contextId())
+            .role(Message.Role.ROLE_AGENT)
+            .parts(content.parts())
+            .metadata(content.metadata())
+            .build();
+    return List.of(new MessageEvent(message));
   }
 
   static TaskEvent response(MessageSendParams request, TaskState state, MessageContent content) {
@@ -557,6 +575,197 @@ class DefaultWorkflowEngineClientNegotiationTest {
       assertThrows(
           CompletionException.class,
           () -> client.sendTask("test", negotiationTask("start")).join());
+    }
+  }
+
+  @Test
+  void tasklessProposeEntersNegotiationAndFollowUpOmitsTaskId() throws Exception {
+    List<MessageSendParams> sent = new CopyOnWriteArrayList<>();
+    AtomicInteger negotiations = new AtomicInteger();
+    var runtime =
+        runtime(
+            params -> {
+              sent.add(params);
+              return sent.size() == 1
+                  ? messageResponse(
+                      params, negotiation("pre-task", 1, 5, NegotiationPerformative.PROPOSE))
+                  : messageResponse(params, MessageContent.text("诊断结果"));
+            });
+    try (var transport =
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    negotiations.incrementAndGet();
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("", result.getTaskState());
+      assertEquals("诊断结果", result.getText());
+    }
+    assertEquals(2, sent.size());
+    assertNull(sent.get(0).message().taskId());
+    assertNull(sent.get(1).message().taskId());
+    assertEquals(1, negotiations.get());
+    assertEquals(sent.get(0).message().contextId(), sent.get(1).message().contextId());
+  }
+
+  @Test
+  void tasklessRoundLoopAdvancesRoundsAndCompletesWithTaskAnchoredResult() throws Exception {
+    List<MessageSendParams> sent = new CopyOnWriteArrayList<>();
+    List<Integer> historySizes = new CopyOnWriteArrayList<>();
+    var runtime =
+        runtime(
+            params -> {
+              sent.add(params);
+              return switch (sent.size()) {
+                case 1 -> messageResponse(
+                    params, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
+                case 2 -> messageResponse(
+                    params, negotiation("pre", 2, 5, NegotiationPerformative.PROPOSE));
+                default -> List.of(
+                    response(
+                        params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
+              };
+            });
+    try (var transport =
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    historySizes.add(request.previousExchanges().size());
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+    }
+    assertEquals(3, sent.size());
+    assertNull(sent.get(1).message().taskId());
+    assertNull(sent.get(2).message().taskId());
+    assertEquals(List.of(0, 1), historySizes);
+  }
+
+  @Test
+  void tasklessProposeWithoutHostActivationFailsLoudly() throws Exception {
+    AtomicInteger sends = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(
+                p -> {
+                  sends.incrementAndGet();
+                  return messageResponse(
+                      p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
+                }),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", MessageContent.text("plain")).join());
+      assertTrue(error.getCause().getMessage().contains("not activated by the host"));
+      assertEquals(1, sends.get());
+    }
+  }
+
+  @Test
+  void tasklessProposeWithMissingNegotiationContextFailsLoudly() throws Exception {
+    MessageContent malformed =
+        new MessageContent(
+            List.of(new TextPart("propose without context")),
+            Map.of(A2ATExtension.NEGOTIATION_T.uri(), "unstructured"),
+            Set.of(A2ATExtension.NEGOTIATION_T.uri()));
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(p -> messageResponse(p, malformed)),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", negotiationTask("start")).join());
+      assertTrue(error.getCause().getMessage().contains("negotiationContext"));
+    }
+  }
+
+  @Test
+  void duplicateTasklessProposeFailsExplicitlyWithoutRepeatingTheCallback() throws Exception {
+    AtomicInteger negotiations = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(
+                p ->
+                    messageResponse(
+                        p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE))),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    negotiations.incrementAndGet();
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", negotiationTask("start")).join());
+      assertTrue(error.getCause().getMessage().contains("Duplicate taskless"));
+      assertEquals(1, negotiations.get());
+    }
+  }
+
+  @Test
+  void tasklessMessageWithoutNegotiationMetadataRemainsNormalResponse() throws Exception {
+    AtomicInteger negotiations = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(p -> messageResponse(p, MessageContent.text("plain final"))),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  q -> {
+                    negotiations.incrementAndGet();
+                    return CompletableFuture.failedFuture(new AssertionError());
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("", result.getTaskState());
+      assertEquals("plain final", result.getText());
+      assertEquals(0, negotiations.get());
     }
   }
 

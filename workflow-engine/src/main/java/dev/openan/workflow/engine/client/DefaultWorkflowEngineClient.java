@@ -100,19 +100,21 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
   private static ReceivedMessage negotiationResponse(SendMessageResult result) {
     for (ReceivedMessage received : result.getReceivedMessages()) {
-      boolean present =
-          received.taskMetadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
-              || received.message() != null
-                  && received.message().metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
-              || received.artifacts().stream()
-                  .anyMatch(
-                      a ->
-                          a.metadata() != null
-                              && a.metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri()));
-      if (present) return received;
+      if (carriesNegotiationMetadata(received)) return received;
     }
     throw new IllegalArgumentException(
         "Unsupported INPUT_REQUIRED interaction: no Negotiation-T Propose");
+  }
+
+  private static boolean carriesNegotiationMetadata(ReceivedMessage received) {
+    return received.taskMetadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
+        || received.message() != null
+            && received.message().metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
+        || received.artifacts().stream()
+            .anyMatch(
+                a ->
+                    a.metadata() != null
+                        && a.metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri()));
   }
 
   private static NegotiationContext validateReply(
@@ -414,6 +416,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
               "Unsupported non-final remote task state: " + result.getTaskState()));
     }
     if (!"TASK_STATE_INPUT_REQUIRED".equals(result.getTaskState())) {
+      if (result.getTask() == null
+          && result.getTaskState().isEmpty()
+          && result.getReceivedMessages().stream()
+              .anyMatch(DefaultWorkflowEngineClient::carriesNegotiationMetadata)) {
+        // A2A-T pre-task negotiation: the remote proposes on a bare message before creating any
+        // task, so there is no taskId to anchor on; correlate by contextId + negotiation id and
+        // continue with taskless follow-up sends instead of failing or treating it as output.
+        log.info(
+            "[EngineClient] Taskless Negotiation-T propose: agent={}",
+            invocation.task.getAgentName());
+        return negotiate(card, invocation, result, null);
+      }
       emitAgentResponse(invocation, result);
       return CompletableFuture.completedFuture(result);
     }
@@ -421,12 +435,22 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("INPUT_REQUIRED has no remote task identity"));
     }
+    return negotiate(card, invocation, result, result.getTask().id());
+  }
+
+  /**
+   * Shared negotiation loop for both carriers: a task-anchored {@code INPUT_REQUIRED} status
+   * ({@code remoteTask} set) and a taskless bare-message Propose ({@code remoteTask == null},
+   * pre-task A2A-T negotiation). The follow-up send reuses the remote task id when there is one
+   * and stays taskless otherwise.
+   */
+  private CompletableFuture<SendMessageResult> negotiate(
+      AgentCard card, Invocation invocation, SendMessageResult result, String remoteTask) {
     if (!invocation.original.extensions().contains(A2ATExtension.NEGOTIATION_T.uri())) {
       return CompletableFuture.failedFuture(
           new IllegalArgumentException(
               "Remote requested Negotiation-T although it was not activated by the host"));
     }
-    String remoteTask = result.getTask().id();
     ReceivedMessage received = negotiationResponse(result);
     NegotiationContext context = A2atMessages.contextOf(received);
     if (context.performative() != NegotiationPerformative.PROPOSE || context.isExhausted()) {
@@ -439,8 +463,15 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("Negotiation round regressed or maxRounds changed"));
     }
-    String key = remoteTask + ":" + context.id() + ":" + context.round();
-    if (!invocation.answered.add(key)) {
+    if (!invocation.answered.add(answerKey(remoteTask, context))) {
+      if (remoteTask == null) {
+        return CompletableFuture.failedFuture(
+            new IllegalStateException(
+                "Duplicate taskless Negotiation-T Propose with no remote task to observe: "
+                    + context.id()
+                    + " round "
+                    + context.round()));
+      }
       return observeTask(card, invocation).thenCompose(next -> advance(card, invocation, next));
     }
     if (++invocation.exchanges > maxNegotiationExchanges) {
@@ -509,6 +540,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                     return advance(card, invocation, next);
                   });
         });
+  }
+
+  private static String answerKey(String remoteTask, NegotiationContext context) {
+    return (remoteTask == null ? "taskless" : remoteTask)
+        + ":"
+        + context.id()
+        + ":"
+        + context.round();
   }
 
   /** A send ACK is not a task result. Observe without resending the business command. */
