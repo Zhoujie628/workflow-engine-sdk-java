@@ -60,6 +60,7 @@ import org.slf4j.LoggerFactory;
  */
 final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSession {
   private static final Logger log = LoggerFactory.getLogger(OrderHttpClientAdapter.class);
+  private static final String TERMINAL_CANCEL_MARKER = "EXPECTED_A2A_TERMINAL_CANCEL";
 
   private final HttpClient httpClient;
   private final String ne;
@@ -187,6 +188,26 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
     }
   }
 
+  /**
+   * Streams the exchange through the vendor SDK's blocking {@code sendSse} API.
+   *
+   * <p>When {@code responseSink} reports the A2A terminal event, this method cancels the vendor
+   * stream instead of waiting for its natural end. Field logs show the forwarded stream remaining
+   * open for about 60 seconds after the terminal event, but the observable boundary cannot
+   * identify which downstream layer eventually closes it. The {@link SseListener} API offers no
+   * cancellation hook, so cancellation is delivered as a listener-side exception; the vendor
+   * pipeline propagates listener exceptions to the blocked caller (the same path an A2A error
+   * frame takes) and cancels the underlying RSocket channel. If the SDK ever swallows the
+   * exception instead, this call simply keeps blocking until the downstream stream closes,
+   * degrading to the pre-fix behavior.
+   *
+   * <p>The vendor SDK logs this control-flow exception at WARN before wrapping it. Its stable
+   * {@value #TERMINAL_CANCEL_MARKER} marker and the shared request id distinguish expected terminal
+   * cancellation from a transport failure without suppressing unrelated vendor warnings.
+   *
+   * @param responseSink receives every 2xx body chunk; returning {@code true} means the terminal
+   *     A2A event was parsed and the exchange result is complete
+   */
   @Override
   public void executeStreaming(
       OrderHttpSessionStrRequest request,
@@ -199,6 +220,8 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
     java.util.concurrent.atomic.AtomicReference<Map<String, List<String>>> headers =
         new java.util.concurrent.atomic.AtomicReference<>(Map.of());
     StringBuilder errorBody = new StringBuilder();
+    java.util.concurrent.atomic.AtomicBoolean terminalSignalled =
+        new java.util.concurrent.atomic.AtomicBoolean();
     java.util.concurrent.atomic.AtomicReference<WireLog.Body> observation =
         new java.util.concurrent.atomic.AtomicReference<>();
     boolean interrupted = true;
@@ -256,8 +279,9 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
                       content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
               if (status.get() < 200 || status.get() >= 300) {
                 errorBody.append(content);
-              } else {
-                responseSink.test(chunk);
+              } else if (responseSink.test(chunk)) {
+                terminalSignalled.set(true);
+                throw new SseTerminalCompletion(requestId);
               }
             }
 
@@ -273,8 +297,19 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
       }
       interrupted = false;
     } catch (RuntimeException error) {
-      logFailure(requestId, request, trace, error);
-      throw error;
+      if (!terminalSignalled.get()) {
+        logFailure(requestId, request, trace, error);
+        throw error;
+      }
+      // Expected completion: the sink already consumed the terminal A2A event and this exception
+      // is the vendor SDK surfacing (possibly wrapped) our listener-side cancellation. The
+      // exchange result is complete, so treat it as success.
+      log.info(
+          "[OrderHttpClient] SSE_TERMINAL_CANCELLED requestId={}, ne={}, vendorError={}",
+          requestId,
+          ne,
+          error.getClass().getSimpleName());
+      interrupted = false;
     } finally {
       WireLog.Body bodyObservation = observation.get();
       if (bodyObservation != null) {
@@ -348,5 +383,24 @@ final class OrderHttpClientAdapter implements OrderGatewayClientRuntime.OrderSes
       spec.body(body);
     }
     return spec;
+  }
+
+  /**
+   * Control-flow signal carrying the sink's terminal report out of the listener callback. The
+   * vendor SDK offers no SSE cancellation API; the exception cancels its reactive subscription
+   * (RSocket requestChannel cancel), releasing the platform-side forward. Never escapes {@link
+   * #executeStreaming}.
+   */
+  private static final class SseTerminalCompletion extends RuntimeException {
+    SseTerminalCompletion(String requestId) {
+      super(
+          TERMINAL_CANCEL_MARKER
+              + " requestId="
+              + requestId
+              + ": A2A terminal event observed; cancelling vendor SSE stream",
+          null,
+          false,
+          false);
+    }
   }
 }

@@ -221,9 +221,19 @@ The production adapter uses the public v1.8 HTTP API:
 
 For each send, the runtime resolves AgentCard name to NE and URI/tenant, serializes `MessageSendParams` as A2A protobuf
 JSON, preserves `ClientCallContext` headers, and selects `/message:send` or `/message:stream` from AgentCard streaming
-capability. Streaming events are delivered as they arrive. A terminal A2A state completes the logical parse, while the
-vendor `sendSse` call waits for natural platform stream completion. Timeout values are configured in seconds and passed
-to the vendor SDK in milliseconds.
+capability. Streaming events are delivered as they arrive. When a terminal A2A state is parsed, the adapter cancels the
+vendor `sendSse` stream through a listener-side exception. Field logs show the forwarded SSE remaining open for about
+60 seconds after the terminal event, but the available logs cannot identify whether the OMC, forwarding platform,
+transport channel, or SDK eventually closes it. Client-side cancellation avoids waiting for that natural close and
+releases the RSocket requestChannel. If the SDK ever swallows the exception, the call degrades to the previous
+wait-for-close behavior. `OrderSseTerminalCancelTest` verifies millisecond-level completion with an OMC stub that holds
+its stream open; the real platform still requires acceptance testing. Timeout values are configured in seconds and
+passed to the vendor SDK in milliseconds.
+
+The vendor SDK logs the listener-side control exception at WARN before wrapping it. This expected warning contains the
+stable marker `EXPECTED_A2A_TERMINAL_CANCEL` and the same `requestId` as the adapter's
+`SSE_TERMINAL_CANCELLED` INFO entry. Alert rules may downgrade that exact marker, but must not suppress the entire vendor
+logger because it also reports real channel failures.
 
 Standard task management uses the same route and authentication: `GET /tasks` forwards filters and pagination tokens,
 while `POST /tasks/{id}:cancel` cancels a selected task. These calls use independent short-lived Order sessions, so demo
@@ -281,7 +291,7 @@ to a one-request resource because safe round association is impossible.
 |------|------------------------------------------------------------------|----------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
 | L-01 | SSE chunks are forwarded immediately                             | Incremental SSE framing across arbitrary chunks                            | WORKING/artifacts arrive before COMPLETED with acceptable delay                                   |
 | L-02 | First/subsequent item status, headers, cookies                   | Requires 2xx when status is present; later status `0` is tolerated         | Real frames cannot be misclassified                                                               |
-| L-03 | Stream closes promptly after terminal state                      | Preserves terminal event and waits for natural Flux completion             | Stream closes within the agreed interval                                                          |
+| L-03 | Stream closes promptly after terminal state                      | Cancels `sendSse` on terminal via listener-side exception                  | Stream closes within the agreed interval                                                          |
 | L-04 | Idle limit and heartbeat syntax                                  | Ignores empty heartbeats as business events                                | Subscription survives the agreed idle interval                                                    |
 | L-05 | Blocking `/message:send` response forms                          | Parses A2A Message or Task and rejects standard A2A errors                 | Message, Task, and failure cases are covered                                                      |
 | L-06 | Base path and tenant override rules                              | Request tenant overrides AgentInterface tenant                             | Default, override, and empty tenant route correctly                                               |

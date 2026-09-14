@@ -323,6 +323,20 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     log.info("[EastcomSimulator] READY host={}:{}, protocol=RSocket-RPC", host, port);
   }
 
+  /**
+   * Controls whether streaming forwards close eagerly when the forwarded payload reaches a
+   * terminal A2A event. The default ({@code true}) terminates the forwarded response like an
+   * agent-side SSE server would. Setting {@code false} reproduces the field-observed hold-open
+   * behavior without attributing it to a specific downstream layer: the forwarded SSE remains open
+   * after the terminal event until the client cancels or the stream is otherwise closed.
+   *
+   * @param closeOnTerminalEvent {@code false} to hold streaming forwards open after terminal
+   *     events
+   */
+  public void setCloseOnTerminalEvent(boolean closeOnTerminalEvent) {
+    service.setCloseOnTerminalEvent(closeOnTerminalEvent);
+  }
+
   @Override
   public synchronized void close() {
     if (server == null) {
@@ -390,6 +404,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
     private final SSLContext sslContext = SslContextFactory.createTrustAll();
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private volatile boolean closeOnTerminalEvent = true;
 
     private SimulatorService(
         String username,
@@ -513,6 +528,10 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
 
     private void prepareStart() {
       shuttingDown.set(false);
+    }
+
+    private void setCloseOnTerminalEvent(boolean closeOnTerminalEvent) {
+      this.closeOnTerminalEvent = closeOnTerminalEvent;
     }
 
     private void beginShutdown() {
@@ -884,7 +903,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                           ? responseWithHeader(status, connection.getHeaderFields(), chunk)
                           : responseChunk(chunk));
                   terminalScan.append(chunk);
-                  if (containsForwardingCompletionEvent(terminalScan)) {
+                  if (closeOnTerminalEvent && containsForwardingCompletionEvent(terminalScan)) {
                     terminal = true;
                     terminalRound = true;
                     log.info(
