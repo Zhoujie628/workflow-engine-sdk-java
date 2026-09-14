@@ -329,8 +329,7 @@ public class DefaultA2AJavaClientRuntime
         callContext == null
             ? null
             : callContext.getState().get(A2AJavaClientRuntime.TRANSPORT_ACTIVITY_STATE_KEY);
-    Runnable activityListener =
-        configuredActivity instanceof Runnable runnable ? runnable : null;
+    Runnable activityListener = configuredActivity instanceof Runnable runnable ? runnable : null;
     return TransportActivityMonitor.call(
         activityListener,
         () -> sendMessageObserved(agentCard, params, callContext, eventSink, logSink));
@@ -717,20 +716,19 @@ public class DefaultA2AJavaClientRuntime
             Duration.ofSeconds(60),
             httpClientExecutor);
     return customizeHttpClient(
-        new A2AErrorDetectingHttpClient(
-            new JdkA2AHttpClient(new ObservedHttpClient(httpClient))));
+        new A2AErrorDetectingHttpClient(new JdkA2AHttpClient(new ObservedHttpClient(httpClient))));
   }
 
   /**
-   * Customizes the fully configured HTTP client used by REST and JSON-RPC transports.
+   * Decorates the HTTP client used by REST and JSON-RPC transports.
    *
-   * <p>The supplied client already applies TLS, protocol observation, and A2A error-envelope
-   * handling. Subclasses may decorate it to integrate an HTTP gateway (for example, URI rewriting
-   * or gateway-specific headers) while preserving those behaviors. The default implementation
-   * returns the client unchanged.
+   * <p>The default implementation preserves the standard A2A request paths. A custom runtime may
+   * override this hook for gateway-specific transport concerns such as rewriting action path
+   * separators, while continuing to reuse this runtime's TLS, SSE, protocol-error, and lifecycle
+   * handling.
    *
-   * @param httpClient fully configured transport client
-   * @return the client to use; never {@code null}
+   * @param httpClient fully configured engine HTTP client
+   * @return the client to supply to the A2A Java SDK transport
    */
   protected A2AHttpClient customizeHttpClient(A2AHttpClient httpClient) {
     return Objects.requireNonNull(httpClient, "httpClient");

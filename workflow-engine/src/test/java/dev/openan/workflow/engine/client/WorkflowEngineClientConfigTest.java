@@ -42,6 +42,7 @@ class WorkflowEngineClientConfigTest {
 
     assertTrue(error.getMessage().contains("mutually exclusive"));
   }
+
   @Test
   void notificationAcknowledgementDefaultsToFiveMinutesAndRemainsConfigurable() {
     assertEquals(

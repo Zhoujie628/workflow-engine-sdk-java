@@ -671,23 +671,25 @@ public class A2ATransport implements AutoCloseable {
     streamThread.start();
     ScheduledFuture<?> acknowledgementTimeout =
         timeoutScheduler.schedule(
-        () -> {
-          if (subscription.isActive() && !subscription.acknowledgement().isDone()) {
-            log.warn(
-                "[Transport] Notification-T subscription: no acknowledgement in {}s; closing unconfirmed stream",
-                notificationAckTimeoutSeconds);
-            subscription.failAcknowledgement(
-                new java.util.concurrent.TimeoutException(
-                    "No subscription acknowledgement received"));
-            subscription.close();
-          }
-        },
-        notificationAckTimeoutSeconds,
-        TimeUnit.SECONDS);
+            () -> {
+              if (subscription.isActive() && !subscription.acknowledgement().isDone()) {
+                log.warn(
+                    "[Transport] Notification-T subscription: no acknowledgement in {}s; closing unconfirmed stream",
+                    notificationAckTimeoutSeconds);
+                subscription.failAcknowledgement(
+                    new java.util.concurrent.TimeoutException(
+                        "No subscription acknowledgement received"));
+                subscription.close();
+              }
+            },
+            notificationAckTimeoutSeconds,
+            TimeUnit.SECONDS);
     subscription
         .acknowledgement()
         .whenComplete((ignored, error) -> acknowledgementTimeout.cancel(false));
-    subscription.completion().whenComplete((ignored, error) -> acknowledgementTimeout.cancel(false));
+    subscription
+        .completion()
+        .whenComplete((ignored, error) -> acknowledgementTimeout.cancel(false));
     return subscription;
   }
 

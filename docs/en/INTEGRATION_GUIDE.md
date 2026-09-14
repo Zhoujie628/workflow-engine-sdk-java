@@ -422,10 +422,10 @@ exhausted budget or a missing handler fails locally; no implicit Accept or synth
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
 task success, even if the dispatched agent acknowledges it with COMPLETED.
 
-For a task outside a workflow DAG, call the task client directly. It uses a fresh context but keeps
-the same remote task identity through waiting and negotiation. The optional per-call strategy does
-not change the client-wide ControlPoint. Plain A2A content is allowed; activated Task-T content must
-include Task-T metadata and the target AgentCard must declare the extension.
+For a task outside a workflow DAG, call the task client directly. It uses a fresh context but keeps the same remote task
+identity through waiting and negotiation. The optional per-call strategy does not change the client-wide ControlPoint.
+Plain A2A content is allowed; activated Task-T content must include Task-T metadata and the target AgentCard must
+declare the extension.
 
 ```java
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
@@ -433,9 +433,9 @@ CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent c
     NegotiationStrategy negotiationStrategy);
 ```
 
-If a known remote task is still non-final when local interaction cannot continue, the client makes
-a best-effort cancellation before completing exceptionally. Standard A2A request errors remain
-exceptional results and are not converted into business task failures.
+If a known remote task is still non-final when local interaction cannot continue, the client makes a best-effort
+cancellation before completing exceptionally. Standard A2A request errors remain exceptional results and are not
+converted into business task failures.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -674,17 +674,17 @@ Logging configuration, pretty display and observer callbacks do not determine ta
 
 ## 15. Interface Reference
 
-| Interface/Class                                        | Purpose                                                                 |
-|--------------------------------------------------------|-------------------------------------------------------------------------|
-| `ExecutePsop.Builder`                                  | Workflow execution entry point                                          |
-| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)   |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow and standalone task interaction                               |
-| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
-| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)         |
-| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget)   |
-| `AuthProvider`                                         | Custom authentication                                                   |
-| `EventCallback` / `EventType`                          | Event callback                                                          |
-| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                   |
-| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                     |
-| `ExecutionResult`                                      | Execution result                                                        |
-| `SendMessageResult` / `TaskResult`                     | Message/task response                                                   |
+| Interface/Class                                        | Purpose                                                                            |
+|--------------------------------------------------------|------------------------------------------------------------------------------------|
+| `ExecutePsop.Builder`                                  | Workflow execution entry point                                                     |
+| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)              |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow and standalone task interaction                                           |
+| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions            |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)                    |
+| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget) |
+| `AuthProvider`                                         | Custom authentication                                                              |
+| `EventCallback` / `EventType`                          | Event callback                                                                     |
+| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                              |
+| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                                |
+| `ExecutionResult`                                      | Execution result                                                                   |
+| `SendMessageResult` / `TaskResult`                     | Message/task response                                                              |

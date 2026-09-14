@@ -154,8 +154,8 @@ try {
 
 必填项：`psop`、`controlPoint`。其余配置项都有默认值。
 
-若宿主传入已配置好的 `engineClient`，AgentCard、runtime、TLS 和 credentials 均由该 client
-负责，不要再设置对应的 `ExecutePsop.Builder` 构建参数；混用会在启动执行前直接报错，避免配置被静默忽略。
+若宿主传入已配置好的 `engineClient`，AgentCard、runtime、TLS 和 credentials 均由该 client 负责，不要再设置对应的
+`ExecutePsop.Builder` 构建参数；混用会在启动执行前直接报错，避免配置被静默忽略。
 
 ## 5. 配置
 
@@ -393,14 +393,15 @@ A2A-T 先协商后建任务模式：按 contextId 与协商 id 关联，续发�
 nextRound 或返回新 Propose。
 
 返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
-引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
 
 对于 DAG 外的独立任务，直接调用任务客户端。每次调用使用新的 context，但等待和协商续发始终保持同一个远端 taskId。
-可选的单次调用策略不会修改客户端级 ControlPoint。普通 A2A 内容可以直接发送；激活 Task-T 时必须携带 Task-T metadata，
-且目标 AgentCard 必须声明该扩展。
+可选的单次调用策略不会修改客户端级 ControlPoint。普通 A2A 内容可以直接发送；激活 Task-T 时必须携带 Task-T metadata， 且目标
+AgentCard 必须声明该扩展。
 
 ```java
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
@@ -421,8 +422,8 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。
 handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
 
-`heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间，
-但不会增加只统计已解码 A2A 业务事件的 `eventCount`。需要判断最后一条业务消息时间时使用
+`heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间， 但不会增加只统计已解码
+A2A 业务事件的 `eventCount`。需要判断最后一条业务消息时间时使用
 `lastBusinessEventAt()`。取消 `subscribeToTask` 返回的 Future 只停止本地等待；结束独立订阅应关闭
 `NotificationSubscription`，结束客户端管理的任务订阅则关闭其 client/runtime。
 
@@ -627,7 +628,7 @@ contextId 与 executionId，供跨层定位。已识别的 A2A 错误使用 WARN
 |--------------------------------------------------------|---------------------------------------------------------------|
 | `ExecutePsop.Builder`                                  | 工作流执行入口                                                |
 | `ControlPoint` / `DefaultControlPoint`                 | 业务决策实现（onTask、onSelfTask、onRoute、onNegotiation 等） |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流与独立任务交互                                        |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流与独立任务交互                                          |
 | `ExtensionSender` / `DefaultExtensionSender`           | 独立 Authorization-T 操作与 Notification-T 长连接订阅         |
 | `A2ATransport`                                         | 共享通信层（A2A Java 客户端 runtime、认证、SSE 消费）         |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |

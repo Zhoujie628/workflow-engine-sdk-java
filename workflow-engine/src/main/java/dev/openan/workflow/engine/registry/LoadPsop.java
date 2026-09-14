@@ -62,11 +62,7 @@ public class LoadPsop {
 
   /** Loads one workflow with explicit connection and response-read deadlines. */
   public static Workflow load(
-      String baseUrl,
-      String psopId,
-      String accessToken,
-      boolean sslVerify,
-      Timeouts timeouts)
+      String baseUrl, String psopId, String accessToken, boolean sslVerify, Timeouts timeouts)
       throws Exception {
     StringBuilder urlBuilder =
         new StringBuilder(baseUrl).append("/api/v1/orchestrate/psop/").append(psopId);
@@ -164,11 +160,7 @@ public class LoadPsop {
   }
 
   private static HttpResult execute(
-      String method,
-      String url,
-      String jsonBody,
-      boolean sslVerify,
-      Timeouts timeouts)
+      String method, String url, String jsonBody, boolean sslVerify, Timeouts timeouts)
       throws Exception {
     java.util.Objects.requireNonNull(timeouts, "timeouts");
     HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
@@ -218,14 +210,6 @@ public class LoadPsop {
       requirePositiveAndSupported(readTimeout, "readTimeout");
     }
 
-    int connectTimeoutMillis() {
-      return Math.toIntExact(connectTimeout.toMillis());
-    }
-
-    int readTimeoutMillis() {
-      return Math.toIntExact(readTimeout.toMillis());
-    }
-
     private static void requirePositiveAndSupported(Duration value, String name) {
       if (value == null || value.isZero() || value.isNegative()) {
         throw new IllegalArgumentException(name + " must be positive");
@@ -242,6 +226,14 @@ public class LoadPsop {
       if (milliseconds > Integer.MAX_VALUE) {
         throw new IllegalArgumentException(name + " exceeds HttpURLConnection limit");
       }
+    }
+
+    int connectTimeoutMillis() {
+      return Math.toIntExact(connectTimeout.toMillis());
+    }
+
+    int readTimeoutMillis() {
+      return Math.toIntExact(readTimeout.toMillis());
     }
   }
 
