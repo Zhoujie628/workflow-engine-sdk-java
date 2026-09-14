@@ -20,11 +20,11 @@ A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-<version>0.0.8</version>
+<version>0.0.9</version>
 </dependency>
 ```
 
-`0.0.8` 已发布到 Maven Central，包含本文说明的接口。
+`0.0.9` 已发布到 Maven Central，包含本文说明的接口。
 
 ## 4. 快速上手
 
@@ -154,8 +154,8 @@ try {
 
 必填项：`psop`、`controlPoint`。其余配置项都有默认值。
 
-若宿主传入已配置好的 `engineClient`，AgentCard、runtime、TLS 和 credentials 均由该 client
-负责，不要再设置对应的 `ExecutePsop.Builder` 构建参数；混用会在启动执行前直接报错，避免配置被静默忽略。
+若宿主传入已配置好的 `engineClient`，AgentCard、runtime、TLS 和 credentials 均由该 client 负责，不要再设置对应的
+`ExecutePsop.Builder` 构建参数；混用会在启动执行前直接报错，避免配置被静默忽略。
 
 ## 5. 配置
 
@@ -217,17 +217,17 @@ A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 
 **加密密码**
 
-先执行 `mvn -pl workflow-engine -am "-Drevision=0.0.8" package`，以下命令在仓库根目录运行，仅需 SDK jar 和 JDK。
+先执行 `mvn -pl workflow-engine -am "-Drevision=0.0.9" package`，以下命令在仓库根目录运行，仅需 SDK jar 和 JDK。
 `set` 是 Windows cmd 语法，PowerShell 应使用 `$env:A2AT_CRED_KEY='...'`。
 以下参数仅用于演示；命令行口令/密钥可能进入终端历史和进程参数。生产应由集成方安全读取密钥并调用 Java 加密 API。
 
 ```bash
 # 方式一：先设置环境变量
 set A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
-java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
 
 # 方式二：密钥作为第二个参数
-java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
 输出：
@@ -242,7 +242,7 @@ enc:uHQcTeKZMVNRM9Ga:o5vm4weRozBXBs04phrLq7j7+/yRVyDsrw==
 
 1. 生成新密钥：`openssl rand -hex 32`
 2. 更新集成方密钥存储及显式 `credentialEncryptionKey`，或 OS/JVM 的 `A2AT_CRED_KEY`；引擎不自动加载 `.env`
-3. 用新密钥重新加密所有密码：`java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "明文密码" 新密钥`
+3. 用新密钥重新加密所有密码：`java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "明文密码" 新密钥`
 4. 将新的 `enc:...` 结果更新到凭证 JSON 文件
 
 > `.env` 文件不应提交到版本库，建议加入 `.gitignore`。
@@ -376,20 +376,32 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 ## 7. A2A-T 扩展能力
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
-明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+AgentCard 声明 Negotiation-T 只表示目标支持协商，不代表本次任务已经启用。是否允许协商由宿主业务在首轮最终内容中选择：
+
+```java
+MessageContent outgoing = A2atMessages.from(generatedTask, parts)
+    .withExtension(A2ATExtension.NEGOTIATION_T.uri());
+```
+
+引擎将 `extensions` 同时写入 A2A Message 和 `A2A-Extensions` 请求头。首轮 metadata 仍然只有 Task-T 正文；不要在收到
+Propose 前伪造 Negotiation-T metadata。仅配置协商回调不会自动激活扩展，不允许协商的任务不要调用 `withExtension`。
+
+只有远端 `INPUT_REQUIRED` 或无任务裸 message 携带有效 Negotiation-T Propose 才进入 `onNegotiation`（后者对应
+A2A-T 先协商后建任务模式：按 contextId 与协商 id 关联，续发请求不带 taskId）。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互；无任务裸 message 上的无效协商元数据同样显式失败，不会静默当作普通结果。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
 返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
-引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
 
 对于 DAG 外的独立任务，直接调用任务客户端。每次调用使用新的 context，但等待和协商续发始终保持同一个远端 taskId。
-可选的单次调用策略不会修改客户端级 ControlPoint。普通 A2A 内容可以直接发送；激活 Task-T 时必须携带 Task-T metadata，
-且目标 AgentCard 必须声明该扩展。
+可选的单次调用策略不会修改客户端级 ControlPoint。普通 A2A 内容可以直接发送；激活 Task-T 时必须携带 Task-T metadata， 且目标
+AgentCard 必须声明该扩展。
 
 ```java
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
@@ -410,8 +422,8 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。
 handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
 
-`heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间，
-但不会增加只统计已解码 A2A 业务事件的 `eventCount`。需要判断最后一条业务消息时间时使用
+`heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间， 但不会增加只统计已解码
+A2A 业务事件的 `eventCount`。需要判断最后一条业务消息时间时使用
 `lastBusinessEventAt()`。取消 `subscribeToTask` 返回的 Future 只停止本地等待；结束独立订阅应关闭
 `NotificationSubscription`，结束客户端管理的任务订阅则关闭其 client/runtime。
 
@@ -616,7 +628,7 @@ contextId 与 executionId，供跨层定位。已识别的 A2A 错误使用 WARN
 |--------------------------------------------------------|---------------------------------------------------------------|
 | `ExecutePsop.Builder`                                  | 工作流执行入口                                                |
 | `ControlPoint` / `DefaultControlPoint`                 | 业务决策实现（onTask、onSelfTask、onRoute、onNegotiation 等） |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流与独立任务交互                                        |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | 工作流与独立任务交互                                          |
 | `ExtensionSender` / `DefaultExtensionSender`           | 独立 Authorization-T 操作与 Notification-T 长连接订阅         |
 | `A2ATransport`                                         | 共享通信层（A2A Java 客户端 runtime、认证、SSE 消费）         |
 | `WorkflowEngineClientConfig`                           | 配置（SSL、认证、A2A-T、协商轮数、自定义 Handler）            |

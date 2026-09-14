@@ -236,13 +236,18 @@ Task-T：宿主生成最终内容，引擎只封装并发送。AgentCard 声明�
 
 Negotiation-T：
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
-明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+宿主业务通过首轮 `MessageContent.extensions` 决定本次任务是否允许协商；AgentCard 声明和协商回调本身不触发激活。引擎只把该选择
+映射为消息扩展和 `A2A-Extensions` 请求头，并管理后续协商关联。
+
+只有远端 `INPUT_REQUIRED` 或无任务裸 message 携带有效 Negotiation-T Propose 才进入 `onNegotiation`（后者对应
+A2A-T 先协商后建任务模式：按 contextId 与协商 id 关联，续发请求不带 taskId）。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互；无任务裸 message 上的无效协商元数据同样显式失败，不会静默当作普通结果。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
 返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
-引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。

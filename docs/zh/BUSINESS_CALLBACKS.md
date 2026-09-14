@@ -1,6 +1,6 @@
 # 业务回调集成契约
 
-`0.0.8` API，A2A-T SDK `1.1.0`，A2A Java `1.2.0.Final`。 引擎负责 DAG、标准 A2A 信封、认证、传输和任务等待；宿主负责消息内容、schema、模板、语义校验和
+`0.0.9` API，A2A-T SDK `1.1.0`，A2A Java `1.2.0.Final`。 引擎负责 DAG、标准 A2A 信封、认证、传输和任务等待；宿主负责消息内容、schema、模板、语义校验和
 LLM。业务契约独立于具体传输实现。
 
 ## 1. 回调接口
@@ -105,17 +105,24 @@ MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("处
 
 ## 5. 协商
 
+是否允许本次任务协商由宿主业务显式决定。AgentCard 声明 Negotiation-T 只表示目标具备能力；需要允许协商时，宿主在首轮
+Task-T 内容上调用 `withExtension(A2ATExtension.NEGOTIATION_T.uri())`。引擎据此同时写入 `message.extensions` 和
+`A2A-Extensions` 请求头，但不添加首轮 Negotiation-T metadata。仅实现 `onNegotiation` 或传入 `NegotiationStrategy`
+不会自动激活协商；未激活时对端不得发起 Negotiation-T。
+
 NegotiationRequest(task, originalSubmission, received, previousExchanges, remainingWait)： task 是原始
 TaskRequest，originalSubmission 是首次最终提交， received 是当前完整响应，previousExchanges 只含该会话的 Exchange
 (received, reply)， remainingWait 是本次交互剩余时间。引擎不规定业务 proposal 分类或 schema。
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
-明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+只有远端 `INPUT_REQUIRED` 或无任务裸 message 携带有效 Negotiation-T Propose 才进入 `onNegotiation`（后者对应
+A2A-T 先协商后建任务模式：按 contextId 与协商 id 关联，续发请求不带 taskId）。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互；无任务裸 message 上的无效协商元数据同样显式失败，不会静默当作普通结果。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
 返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
-引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
@@ -139,7 +146,7 @@ RouteDecision.allow (reason) 激活该边，或返回 RouteDecision.deny (reason
 ```java
 WorkflowStep diagnosis = WorkflowStep.builder()
     .name("diagnosis")
-    .subtasks(List.of(Task.builder().agent("被调度智能体 A").description("diagnose").build()))
+    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
     .next(List.of(
         new JumpCondition("notify", ""),                       // 无条件：始终激活，不经 onRoute
         new JumpCondition("hardware_recovery", "fault.hardware"),

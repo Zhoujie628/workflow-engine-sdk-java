@@ -1,6 +1,6 @@
 # Business callback integration contract
 
-Release `0.0.8` API; A2A-T SDK `1.1.0`, A2A Java `1.2.0.Final`. The engine owns DAG scheduling, standard A2A envelopes,
+Release `0.0.9` API; A2A-T SDK `1.1.0`, A2A Java `1.2.0.Final`. The engine owns DAG scheduling, standard A2A envelopes,
 auth, transport and task waiting. The host owns content, schemas, templates, semantic validation and any LLM calls.
 The business contracts are independent of the transport runtime.
 
@@ -120,13 +120,22 @@ one. Sample initialization helpers are host-side examples, not engine dependenci
 
 ## 5. Negotiation
 
+The host business explicitly decides whether the current task allows negotiation. An AgentCard declaration only says
+that the target supports Negotiation-T. To allow it, call
+`withExtension(A2ATExtension.NEGOTIATION_T.uri())` on the initial Task-T content. The engine then writes both
+`message.extensions` and the `A2A-Extensions` request header without adding premature Negotiation-T metadata. Merely
+implementing `onNegotiation` or supplying a `NegotiationStrategy` does not activate negotiation; the target must not
+start Negotiation-T when it was not activated.
+
 NegotiationRequest(task, originalSubmission, received, previousExchanges, remainingWait):
 task is the original TaskRequest; originalSubmission is the exact initial content; received is the complete current
 response; previousExchanges contains only this session's completed Exchange (received, reply); remainingWait is the
 remaining local interaction deadline. There are no engine-defined business proposal schemas.
 
-Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
-restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
+Only a remote `INPUT_REQUIRED` or a taskless bare message carrying a valid Negotiation-T Propose enters
+`onNegotiation` (the latter is the A2A-T pre-task mode: correlated by contextId and negotiation id, with taskId-less
+follow-up sends). Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. Invalid
+negotiation metadata on a bare message also fails explicitly instead of being treated as a normal response. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to
 obtain the received context; reply with the same id, round and maxRounds. The last allowed round can still be answered.
 Do not call nextRound for an ending reply or return a new Propose.
@@ -162,7 +171,7 @@ Each `next` entry is a `JumpCondition(step, condition)`; an empty condition make
 ```java
 WorkflowStep diagnosis = WorkflowStep.builder()
     .name("diagnosis")
-    .subtasks(List.of(Task.builder().agent("Scheduled Agent A").description("diagnose").build()))
+    .subtasks(List.of(Task.builder().agent("SPN Domain Agent City1").description("diagnose").build()))
     .next(List.of(
         new JumpCondition("notify", ""),                       // unconditional: always active, never reaches onRoute
         new JumpCondition("hardware_recovery", "fault.hardware"),
@@ -205,17 +214,18 @@ output comes as JSON in outputs; natural-language output calls for text matching
 Callbacks for different conditional edges may run concurrently; do not hold shared mutable current-task state. Each
 workflow task activation
 (preparation and dispatch combined) is bounded by the client timeout (default sendTimeoutSeconds=600). Routing has a
-callback timeout; task interaction/negotiation additionally has its own total wait deadline. Cancellation/timeout prevents late
+callback timeout; task interaction/negotiation additionally has its own total wait deadline. Cancellation/timeout
+prevents late
 sends; it does not automatically stop external business/LLM work. Hosts own cancellation of their resources. Synchronous
 callback entry points must return promptly; place blocking operations in an asynchronous executor.
 Missing/null/exceptional callbacks fail; uncertain sends are not blindly retried.
 
 ### 6.1 Standalone task
 
-Use `WorkflowEngineClient.sendTask(agentName, finalContent)` for a task outside the DAG. The overload
-with `NegotiationStrategy` supplies only that call's negotiation decisions. The host still owns
-content generation and semantic validation; the engine preserves the remote task/context, waits for
-a final state and cleans up a known non-final task when local interaction cannot continue.
+Use `WorkflowEngineClient.sendTask(agentName, finalContent)` for a task outside the DAG. The overload with
+`NegotiationStrategy` supplies only that call's negotiation decisions. The host still owns content generation and
+semantic validation; the engine preserves the remote task/context, waits for a final state and cleans up a known
+non-final task when local interaction cannot continue.
 
 ## 7. Independent extensions
 

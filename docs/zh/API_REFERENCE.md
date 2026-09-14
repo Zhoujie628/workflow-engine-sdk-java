@@ -22,21 +22,21 @@
 
 #### ExecutePsop.Builder
 
-| 方法                                     | 类型 | 默认值      | 说明                            |
-|------------------------------------------|------|-------------|---------------------------------|
-| `psop(Workflow)`                         | 必填 | -           | PSOP 工作流定义                 |
-| `agentCards(List<AgentCard>)`            | 可选 | `List.of()` | 被调度智能体的 AgentCard；存在远程步骤且未传入已配置 `engineClient` 时必须提供 |
+| 方法                                     | 类型 | 默认值      | 说明                                                                                            |
+|------------------------------------------|------|-------------|-------------------------------------------------------------------------------------------------|
+| `psop(Workflow)`                         | 必填 | -           | PSOP 工作流定义                                                                                 |
+| `agentCards(List<AgentCard>)`            | 可选 | `List.of()` | 被调度智能体的 AgentCard；存在远程步骤且未传入已配置 `engineClient` 时必须提供                  |
 | `engineClient(WorkflowEngineClient)`     | 可选 | null        | 预配置客户端（null=自动创建）；传入后不可再设置 AgentCard、runtime、TLS 或 credentials 构造参数 |
-| `controlPoint(ControlPoint)`             | 必填 | -           | 用户决策实现                    |
-| `runtimeIntent(String)`                  | 可选 | `""`        | 自然语言意图，用于上下文组装    |
-| `lang(String)`                           | 可选 | `"zh"`      | 语言提示（`"zh"` 或 `"en"`）    |
-| `credentialsConfigPath(String)`          | 可选 | null        | 凭证 JSON 文件路径              |
-| `sslVerify(boolean)`                     | 可选 | `true`      | 是否验证 TLS 证书               |
-| `caCertsPath(String)`                    | 可选 | null        | CA 证书 PEM 文件路径            |
-| `a2aClientRuntime(A2AJavaClientRuntime)` | 可选 | null        | 自定义运行时（null = 自动创建） |
-| `eventCallback(EventCallback)`           | 可选 | null        | 实时事件回调                    |
-| `onFinish(BiConsumer)`                   | 可选 | null        | 执行完成回调                    |
-| `onEvent(Function)`                      | 可选 | null        | 单事件转换钩子                  |
+| `controlPoint(ControlPoint)`             | 必填 | -           | 用户决策实现                                                                                    |
+| `runtimeIntent(String)`                  | 可选 | `""`        | 自然语言意图，用于上下文组装                                                                    |
+| `lang(String)`                           | 可选 | `"zh"`      | 语言提示（`"zh"` 或 `"en"`）                                                                    |
+| `credentialsConfigPath(String)`          | 可选 | null        | 凭证 JSON 文件路径                                                                              |
+| `sslVerify(boolean)`                     | 可选 | `true`      | 是否验证 TLS 证书                                                                               |
+| `caCertsPath(String)`                    | 可选 | null        | CA 证书 PEM 文件路径                                                                            |
+| `a2aClientRuntime(A2AJavaClientRuntime)` | 可选 | null        | 自定义运行时（null = 自动创建）                                                                 |
+| `eventCallback(EventCallback)`           | 可选 | null        | 实时事件回调                                                                                    |
+| `onFinish(BiConsumer)`                   | 可选 | null        | 执行完成回调                                                                                    |
+| `onEvent(Function)`                      | 可选 | null        | 单事件转换钩子                                                                                  |
 
 ```java
 ExecutionResult result = ExecutePsop.builder()
@@ -75,27 +75,33 @@ void close();
 
 `listTasks` 与 `cancelTask` 通过消息下发使用的同一 AgentCard、认证配置和自定义运行时暴露标准 A2A
 任务管理操作。查询结果受认证身份权限约束，只包含当前身份可见的任务；调用方必须使用
-`nextPageToken` 完成分页。关闭本地客户端或通知流不等同于取消远端任务。
-当前 `subscribeToTask` 返回的 Future 表示订阅结果，不是底层 SSE 的独立关闭句柄；取消 Future
-不保证终止传输。非终态订阅需要通过 owning Client/Runtime 的 `close()` 释放。
+`nextPageToken` 完成分页。关闭本地客户端或通知流不等同于取消远端任务。 当前 `subscribeToTask` 返回的 Future 表示订阅结果，不是底层
+SSE 的独立关闭句柄；取消 Future 不保证终止传输。非终态订阅需要通过 owning Client/Runtime 的 `close()` 释放。
 
-`sendTask` 在 DAG 外执行宿主提供的最终任务内容。每次调用使用新的 context，并复用工作流任务的发送、等待、查询和
-Negotiation-T 闭环。重载方法接受本次调用独有的协商策略，不修改客户端级 ControlPoint。超时、缺少处理器或其他本地交互失败后，
+`sendTask` 在 DAG 外执行宿主提供的最终任务内容。每次调用使用新的 context，并复用工作流任务的发送、等待、查询和 Negotiation-T
+闭环。重载方法接受本次调用独有的协商策略，不修改客户端级 ControlPoint。超时、缺少处理器或其他本地交互失败后，
 如果已知远端任务仍处于非终态，客户端会先尝试取消，再以异常完成。`sendTask` 是公开任务提交的唯一名称；传输运行时内部仍可使用
 A2A 标准动作名称 `sendMessage`。
 
 普通 A2A 内容不要求 Task-T；一旦激活 Task-T，就必须同时携带对应 metadata，且目标 AgentCard 必须声明支持 Task-T。
 
-`onTask` 返回后由执行器内部调用 `sendTask`；`onTask` 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建 A2ATClient，不按
+`onTask` 返回后由执行器内部调用 `sendTask`；`onTask` 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建
+A2ATClient，不按
 AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 SDK。
 
-只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
-明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
+AgentCard 声明 Negotiation-T 不会激活协商。宿主业务需要允许当前任务协商时，在首轮 Task-T `MessageContent` 上调用
+`withExtension(A2ATExtension.NEGOTIATION_T.uri())`；引擎将业务选择同步到消息扩展和 `A2A-Extensions` 请求头。
+`onNegotiation` 或 `NegotiationStrategy` 只处理已收到的 Propose，不隐式修改首轮扩展。
+
+只有远端 `INPUT_REQUIRED` 或无任务裸 message 携带有效 Negotiation-T Propose 才进入 `onNegotiation`（后者对应
+A2A-T 先协商后建任务模式：按 contextId 与协商 id 关联，续发请求不带 taskId）。 终态不会重启协商，普通 INPUT_REQUIRED
+明确报告不支持的交互；无任务裸 message 上的无效协商元数据同样显式失败，不会静默当作普通结果。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
 nextRound 或返回新 Propose。
 
 返回 `new NegotiationReply.Send(content)` 发送最终内容；返回 `new NegotiationReply.Stop(code, reason)` 时不生成 Abort 内容，
-引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过 getTask 观察。
+引擎随后通过取消已知的非终态 A2A 任务完成生命周期清理。同一任务／会话／轮次的重复等待事件不会重复回调、重复提交；未变化状态通过
+getTask 观察。
 `maxNegotiationExchanges` 默认 3，是独立于 SDK context.maxRounds 的本地交互资源预算。 超时、预算耗尽、回调缺失均明确失败，不默认
 Accept，也不自动生成 Abort。 Accept/Reject 的 SUBMITTED/WORKING ACK 仍需等待任务结果，不重发原命令。 业务发送 Abort 后，即使远端用
 COMPLETED 确认，也不能判为任务成功。
@@ -114,8 +120,8 @@ handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。
 `heartbeat().lastEventAt()` 为兼容保留旧名称，实际表示最后一次传输活动；标准 SSE `: heartbeat`
 会刷新它，但不会增加只统计已解码 A2A 业务事件的 `eventCount`。`lastBusinessEventAt()` 返回最近业务事件时间。
 
-`new DefaultExtensionSender(transport)` 默认拥有并在 `close()` 时关闭 transport；仅当 transport
-由其他组件统一管理时使用 `DefaultExtensionSender.nonOwning(transport)`，并由调用方关闭订阅和 transport。
+`new DefaultExtensionSender(transport)` 默认拥有并在 `close()` 时关闭 transport；仅当 transport 由其他组件统一管理时使用
+`DefaultExtensionSender.nonOwning(transport)`，并由调用方关闭订阅和 transport。
 
 ### WorkflowEngineClientConfig
 
@@ -265,20 +271,20 @@ Map<String, Object> normalized = AgentCardNormalizer.normalize(rawMap);
 
 以下公开类型面向高级集成。除非需要自定义 runtime、观测适配或显式生命周期管理，优先使用上述高层接口。
 
-| 类型                          | 用途 |
-|-------------------------------|------|
-| `A2ATExtension`               | 规范扩展名称与 URI |
-| `A2ATransport`                | 底层传输、认证、响应组装与订阅生命周期 |
-| `DefaultWorkflowEngineClient` | `WorkflowEngineClient` 默认实现 |
+| 类型                          | 用途                                                                                                |
+|-------------------------------|-----------------------------------------------------------------------------------------------------|
+| `A2ATExtension`               | 规范扩展名称与 URI                                                                                  |
+| `A2ATransport`                | 底层传输、认证、响应组装与订阅生命周期                                                              |
+| `DefaultWorkflowEngineClient` | `WorkflowEngineClient` 默认实现                                                                     |
 | `DefaultExtensionSender`      | 基于 `A2ATransport` 的 `ExtensionSender` 默认实现；公开构造器拥有 transport，`nonOwning` 工厂不拥有 |
-| `DefaultA2AJavaClientRuntime`  | HTTP/JSON-RPC/gRPC 的默认 A2A Java SDK runtime |
-| `CredentialCrypto`            | AES-GCM 凭据加密工具与命令行入口 |
-| `EnvFileLoader`               | 显式加载宿主自有 `.env` 配置 |
-| `SslContextFactory`           | 传输与发现辅助 API 的 TLS 上下文构造 |
-| `ProtocolResponses`           | A2A 事件与结果组装辅助方法 |
-| `ClientEventMapper`           | 面向回调和诊断的稳定事件投影 |
-| `WireLog`                     | 关联上下文与协议观测门面 |
-| `RemoteA2AErrorException`     | 标准 A2A HTTP 错误投影（`code`、`status`、`message`、类型化详情及安全响应头） |
+| `DefaultA2AJavaClientRuntime` | HTTP/JSON-RPC/gRPC 的默认 A2A Java SDK runtime                                                      |
+| `CredentialCrypto`            | AES-GCM 凭据加密工具与命令行入口                                                                    |
+| `EnvFileLoader`               | 显式加载宿主自有 `.env` 配置                                                                        |
+| `SslContextFactory`           | 传输与发现辅助 API 的 TLS 上下文构造                                                                |
+| `ProtocolResponses`           | A2A 事件与结果组装辅助方法                                                                          |
+| `ClientEventMapper`           | 面向回调和诊断的稳定事件投影                                                                        |
+| `WireLog`                     | 关联上下文与协议观测门面                                                                            |
+| `RemoteA2AErrorException`     | 标准 A2A HTTP 错误投影（`code`、`status`、`message`、类型化详情及安全响应头）                       |
 
 ---
 
@@ -381,8 +387,8 @@ POST `/api/v1/orchestrate/search`。返回按自然语言意图匹配的工作�
 LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验主机名。
 显式传 `false` 时，仅该编排中心 HTTPS 连接跳过证书链和主机名校验，可免配本地 CA 文件联调。
 服务端仍须提供 HTTPS 证书；此开关不绕过 mTLS，也不修改其他客户端或 JVM 的全局 TLS 策略。
-生产环境必须保持验证并配置正确的服务端 SAN 与信任库；本设置不是引擎南向 HTTP/JSON-RPC 的 TLS 策略变更。
-连接与读取超时默认均为 30 秒；可通过 `new LoadPsop.Timeouts(connectTimeout, readTimeout)` 为单次调用设置正值。
+生产环境必须保持验证并配置正确的服务端 SAN 与信任库；本设置不是引擎南向 HTTP/JSON-RPC 的 TLS 策略变更。 连接与读取超时默认均为
+30 秒；可通过 `new LoadPsop.Timeouts(connectTimeout, readTimeout)` 为单次调用设置正值。
 
 ### RegistryClient
 

@@ -359,7 +359,8 @@ class EmbeddedA2AServerTest {
                 new dev.openan.workflow.engine.model.MessageContent(
                     List.of(new org.a2aproject.sdk.spec.TextPart("diagnose SPN fault")),
                     metadata,
-                    java.util.Set.of(A2ATExtension.TASK_T.uri())),
+                    java.util.Set.of(A2ATExtension.TASK_T.uri()))
+                    .withExtension(A2ATExtension.NEGOTIATION_T.uri()),
                 negotiation ->
                     callbacks.onNegotiation(
                         new dev.openan.workflow.engine.model.NegotiationRequest(
@@ -389,7 +390,8 @@ class EmbeddedA2AServerTest {
         new MessageContent(
             List.of(new org.a2aproject.sdk.spec.TextPart("diagnose")),
             SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintPromptBlankObject()),
-            java.util.Set.of(A2ATExtension.TASK_T.uri()));
+            java.util.Set.of(A2ATExtension.TASK_T.uri()))
+            .withExtension(A2ATExtension.NEGOTIATION_T.uri());
     var result =
         transport
             .send(
@@ -398,6 +400,25 @@ class EmbeddedA2AServerTest {
     assertEquals("TASK_STATE_INPUT_REQUIRED", result.getTaskState());
     assertEquals(0, diagnosisCount);
     return result;
+  }
+
+  @Test
+  void incompleteTaskWithoutNegotiationActivationDoesNotStartNegotiation() {
+    var content =
+        new MessageContent(
+            List.of(new org.a2aproject.sdk.spec.TextPart("diagnose")),
+            SpnCasePrompts.taskTMetadata(SpnCasePrompts.privateLineComplaintPromptBlankObject()),
+            java.util.Set.of(A2ATExtension.TASK_T.uri()));
+
+    var result =
+        transport
+            .send(
+                agentCard, AGENT_NAME, content, java.util.UUID.randomUUID().toString(), null, null)
+            .join();
+
+    assertEquals("TASK_STATE_FAILED", result.getTaskState());
+    assertTrue(result.getText().contains("Negotiation-T was not activated"), result.getText());
+    assertEquals(0, diagnosisCount);
   }
 
   private NegotiationContext negotiationContext(SendMessageResult pending) {
@@ -505,7 +526,8 @@ class EmbeddedA2AServerTest {
                 AGENT_NAME,
                 A2atMessages.from(
                     generated,
-                    List.of(new org.a2aproject.sdk.spec.TextPart("diagnose unknown port"))),
+                    List.of(new org.a2aproject.sdk.spec.TextPart("diagnose unknown port")))
+                    .withExtension(A2ATExtension.NEGOTIATION_T.uri()),
                 java.util.UUID.randomUUID().toString(),
                 null,
                 null)

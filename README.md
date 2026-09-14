@@ -12,7 +12,7 @@ return final message content and own any A2A-T generation, schema, validation or
 
 ## Features
 
-- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (stateless auto negotiation loop),
+- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (host-activated auto negotiation loop),
   Authorization-T (independent authorization operation), Notification-T (independent long-lived SSE subscription)
 - **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local multi-output TaskResult and
   explicit NegotiationReply.Send/Stop
@@ -38,7 +38,7 @@ subscription remains open until the host-defined terminal event, explicit cancel
 
 ### 1. Add Maven dependency
 
-The current engine release is `0.0.8` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
+The current engine release is `0.0.9` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
 
 A2A-T SDK `1.1.0` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
@@ -51,7 +51,7 @@ upgrade guidance.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
 </dependency>
 ```
 
@@ -61,7 +61,7 @@ For Spring Boot server-side integration:
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>spring-boot-starter</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
 </dependency>
 ```
 

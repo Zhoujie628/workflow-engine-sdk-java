@@ -26,11 +26,12 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Strategy for making typed negotiation decisions.
  *
- * <p>Single responsibility: when an agent returns INPUT_REQUIRED (Negotiation-T), produce the typed
- * decision to send back. This is a <b>separate concern</b> from workflow orchestration (task
- * dispatch, routing). Users who need custom negotiation logic (LLM-based decisions, DAG-predecessor
- * forwarding, etc.) implement this interface and inject it into {@link DefaultControlPoint} rather
- * than mixing negotiation policy into their ControlPoint class.
+ * <p>Single responsibility: when an agent requests negotiation (Negotiation-T) — either as a
+ * task-anchored {@code INPUT_REQUIRED} status or as a taskless pre-task bare-message Propose —
+ * produce the typed decision to send back. This is a <b>separate concern</b> from workflow
+ * orchestration (task dispatch, routing). Users who need custom negotiation logic (LLM-based
+ * decisions, DAG-predecessor forwarding, etc.) implement this interface and inject it into {@link
+ * DefaultControlPoint} rather than mixing negotiation policy into their ControlPoint class.
  *
  * <p>The SDK's {@link ControlPoint#onNegotiation} remains the entry point for the auto-negotiation
  * loop; {@link DefaultControlPoint} delegates to an injected strategy by default. Users may still

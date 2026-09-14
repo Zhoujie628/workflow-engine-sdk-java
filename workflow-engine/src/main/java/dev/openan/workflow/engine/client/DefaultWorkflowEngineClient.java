@@ -100,19 +100,21 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
   private static ReceivedMessage negotiationResponse(SendMessageResult result) {
     for (ReceivedMessage received : result.getReceivedMessages()) {
-      boolean present =
-          received.taskMetadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
-              || received.message() != null
-                  && received.message().metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
-              || received.artifacts().stream()
-                  .anyMatch(
-                      a ->
-                          a.metadata() != null
-                              && a.metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri()));
-      if (present) return received;
+      if (carriesNegotiationMetadata(received)) return received;
     }
     throw new IllegalArgumentException(
         "Unsupported INPUT_REQUIRED interaction: no Negotiation-T Propose");
+  }
+
+  private static boolean carriesNegotiationMetadata(ReceivedMessage received) {
+    return received.taskMetadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
+        || received.message() != null
+            && received.message().metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri())
+        || received.artifacts().stream()
+            .anyMatch(
+                a ->
+                    a.metadata() != null
+                        && a.metadata().containsKey(A2ATExtension.NEGOTIATION_T.uri()));
   }
 
   private static NegotiationContext validateReply(
@@ -147,9 +149,39 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     return transport.sendTimeoutSeconds();
   }
 
+  private static void validateTaskExtension(AgentCard card, MessageContent content) {
+    String taskExtension = A2ATExtension.TASK_T.uri();
+    List<String> declaredExtensions = A2ATransport.extractExtensionUris(card);
+    boolean activated = content.extensions().contains(taskExtension);
+    boolean supplied = content.metadata().containsKey(taskExtension);
+    if (activated || supplied) {
+      if (!activated || !supplied) {
+        throw new IllegalArgumentException(
+            "Task-T content must contain matching extension activation and metadata");
+      }
+      if (!declaredExtensions.contains(taskExtension)) {
+        throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
+      }
+    }
+    String negotiationExtension = A2ATExtension.NEGOTIATION_T.uri();
+    if (content.extensions().contains(negotiationExtension)
+        && !declaredExtensions.contains(negotiationExtension)) {
+      throw new IllegalArgumentException(
+          "Target agent does not declare Negotiation-T: " + card.name());
+    }
+  }
+
+  private static Throwable unwrap(Throwable error) {
+    Throwable current = error;
+    while ((current instanceof CompletionException || current instanceof ExecutionException)
+        && current.getCause() != null) {
+      current = current.getCause();
+    }
+    return current;
+  }
+
   @Override
-  public CompletableFuture<SendMessageResult> sendTask(
-      String agentName, MessageContent content) {
+  public CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content) {
     TaskRequest request =
         TaskRequest.builder()
             .agentName(agentName)
@@ -267,20 +299,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     return invocation.completion;
   }
 
-  private static void validateTaskExtension(AgentCard card, MessageContent content) {
-    String taskExtension = A2ATExtension.TASK_T.uri();
-    boolean activated = content.extensions().contains(taskExtension);
-    boolean supplied = content.metadata().containsKey(taskExtension);
-    if (!activated && !supplied) return;
-    if (!activated || !supplied) {
-      throw new IllegalArgumentException(
-          "Task-T content must contain matching extension activation and metadata");
-    }
-    if (!A2ATransport.extractExtensionUris(card).contains(taskExtension)) {
-      throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
-    }
-  }
-
   private void completeExceptionallyAfterCleanup(
       AgentCard card, Invocation invocation, Throwable error) {
     if (!invocation.finishing.compareAndSet(false, true)) {
@@ -292,7 +310,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
     Throwable primary = unwrap(error);
     cancelRemoteTask(card, invocation, primary)
-        .whenComplete((ignored, cleanupError) -> invocation.completion.completeExceptionally(primary));
+        .whenComplete(
+            (ignored, cleanupError) -> invocation.completion.completeExceptionally(primary));
   }
 
   private CompletableFuture<Void> cancelRemoteTask(
@@ -327,15 +346,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                   });
       return invocation.cleanup;
     }
-  }
-
-  private static Throwable unwrap(Throwable error) {
-    Throwable current = error;
-    while ((current instanceof CompletionException || current instanceof ExecutionException)
-        && current.getCause() != null) {
-      current = current.getCause();
-    }
-    return current;
   }
 
   private CompletableFuture<SendMessageResult> send(
@@ -406,6 +416,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
               "Unsupported non-final remote task state: " + result.getTaskState()));
     }
     if (!"TASK_STATE_INPUT_REQUIRED".equals(result.getTaskState())) {
+      if (result.getTask() == null
+          && result.getTaskState().isEmpty()
+          && result.getReceivedMessages().stream()
+              .anyMatch(DefaultWorkflowEngineClient::carriesNegotiationMetadata)) {
+        // A2A-T pre-task negotiation: the remote proposes on a bare message before creating any
+        // task, so there is no taskId to anchor on; correlate by contextId + negotiation id and
+        // continue with taskless follow-up sends instead of failing or treating it as output.
+        log.info(
+            "[EngineClient] Taskless Negotiation-T propose: agent={}",
+            invocation.task.getAgentName());
+        return negotiate(card, invocation, result, null);
+      }
       emitAgentResponse(invocation, result);
       return CompletableFuture.completedFuture(result);
     }
@@ -413,7 +435,22 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("INPUT_REQUIRED has no remote task identity"));
     }
-    String remoteTask = result.getTask().id();
+    return negotiate(card, invocation, result, result.getTask().id());
+  }
+
+  /**
+   * Shared negotiation loop for both carriers: a task-anchored {@code INPUT_REQUIRED} status
+   * ({@code remoteTask} set) and a taskless bare-message Propose ({@code remoteTask == null},
+   * pre-task A2A-T negotiation). The follow-up send reuses the remote task id when there is one
+   * and stays taskless otherwise.
+   */
+  private CompletableFuture<SendMessageResult> negotiate(
+      AgentCard card, Invocation invocation, SendMessageResult result, String remoteTask) {
+    if (!invocation.original.extensions().contains(A2ATExtension.NEGOTIATION_T.uri())) {
+      return CompletableFuture.failedFuture(
+          new IllegalArgumentException(
+              "Remote requested Negotiation-T although it was not activated by the host"));
+    }
     ReceivedMessage received = negotiationResponse(result);
     NegotiationContext context = A2atMessages.contextOf(received);
     if (context.performative() != NegotiationPerformative.PROPOSE || context.isExhausted()) {
@@ -426,8 +463,15 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("Negotiation round regressed or maxRounds changed"));
     }
-    String key = remoteTask + ":" + context.id() + ":" + context.round();
-    if (!invocation.answered.add(key)) {
+    if (!invocation.answered.add(answerKey(remoteTask, context))) {
+      if (remoteTask == null) {
+        return CompletableFuture.failedFuture(
+            new IllegalStateException(
+                "Duplicate taskless Negotiation-T Propose with no remote task to observe: "
+                    + context.id()
+                    + " round "
+                    + context.round()));
+      }
       return observeTask(card, invocation).thenCompose(next -> advance(card, invocation, next));
     }
     if (++invocation.exchanges > maxNegotiationExchanges) {
@@ -496,6 +540,14 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                     return advance(card, invocation, next);
                   });
         });
+  }
+
+  private static String answerKey(String remoteTask, NegotiationContext context) {
+    return (remoteTask == null ? "taskless" : remoteTask)
+        + ":"
+        + context.id()
+        + ":"
+        + context.round();
   }
 
   /** A send ACK is not a task result. Observe without resending the business command. */
@@ -666,6 +718,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     if (closeTransportOnClose) transport.close();
   }
 
+  private static final class PendingPoll {
+    final CompletableFuture<Void> completion = new CompletableFuture<>();
+    volatile ScheduledFuture<?> scheduled;
+
+    void cancel() {
+      ScheduledFuture<?> current = scheduled;
+      if (current != null) current.cancel(false);
+      completion.completeExceptionally(
+          new java.util.concurrent.CancellationException("Task wait ended"));
+    }
+  }
+
   private final class Invocation {
     final TaskRequest task;
     final MessageContent original;
@@ -687,10 +751,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     int exchanges;
 
     Invocation(
-        TaskRequest task,
-        MessageContent content,
-        ControlPoint callbacks,
-        EventCallback events) {
+        TaskRequest task, MessageContent content, ControlPoint callbacks, EventCallback events) {
       this.task = task;
       this.original = content;
       this.callbacks = callbacks;
@@ -702,27 +763,12 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     boolean active() {
-      return !closed.get()
-          && !finishing.get()
-          && !completion.isDone()
-          && !remaining().isZero();
+      return !closed.get() && !finishing.get() && !completion.isDone() && !remaining().isZero();
     }
 
     void cancelPendingPoll() {
       PendingPoll pending = pendingPoll.getAndSet(null);
       if (pending != null) pending.cancel();
-    }
-  }
-
-  private static final class PendingPoll {
-    final CompletableFuture<Void> completion = new CompletableFuture<>();
-    volatile ScheduledFuture<?> scheduled;
-
-    void cancel() {
-      ScheduledFuture<?> current = scheduled;
-      if (current != null) current.cancel(false);
-      completion.completeExceptionally(
-          new java.util.concurrent.CancellationException("Task wait ended"));
     }
   }
 }

@@ -27,7 +27,8 @@ import net.openan.a2at.sdk.core.model.ExtensionUriConstants;
  * <p>Each enum constant encapsulates the full extension URI so callers never need to hardcode URI
  * strings. Use these when explicitly activating final message content.
  *
- * <p>The engine handles these extensions automatically:
+ * <p>The engine supports these extensions while the host keeps business activation and content
+ * decisions:
  *
  * <ul>
  *   <li>{@link #TASK_T} - host-generated task content (workflow or standalone task)
@@ -41,7 +42,7 @@ public enum A2ATExtension {
   /** Host-generated task content. The engine does not generate it. */
   TASK_T(ExtensionUriConstants.TASK_T_EXTENSION_URI),
 
-  /** Negotiation text exchange. Handled automatically via auto-loop. */
+  /** Negotiation exchange. The host activates it; the engine handles the resulting auto-loop. */
   NEGOTIATION_T(ExtensionUriConstants.NEGOTIATION_T_EXTENSION_URI),
 
   /** Authorization whitelist. Pre-positioned before workflow starts. */

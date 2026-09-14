@@ -29,8 +29,8 @@ import lombok.Getter;
 /**
  * Configuration for DefaultWorkflowEngineClient.
  *
- * <p>Use the builder to create immutable transport, authentication, timeout, and
- * protocol-selection settings for one engine client.
+ * <p>Use the builder to create immutable transport, authentication, timeout, and protocol-selection
+ * settings for one engine client.
  */
 @Getter
 public class WorkflowEngineClientConfig {

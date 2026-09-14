@@ -22,11 +22,11 @@ callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-<version>0.0.8</version>
+<version>0.0.9</version>
 </dependency>
 ```
 
-Version `0.0.8` is published to Maven Central and contains the APIs documented in this guide.
+Version `0.0.9` is published to Maven Central and contains the APIs documented in this guide.
 
 ## 4. Quick Start
 
@@ -227,7 +227,7 @@ configuration without modifying system properties. Never log plaintext or the ke
 
 **Encrypt a password**
 
-Build the jar with `mvn -pl workflow-engine -am "-Drevision=0.0.8" package`; commands below run from the repository root.
+Build the jar with `mvn -pl workflow-engine -am "-Drevision=0.0.9" package`; commands below run from the repository root.
 `set` is Windows cmd syntax (PowerShell: `$env:A2AT_CRED_KEY='...'`). This CLI needs only the SDK jar and JDK.
 Use disposable example values here: command-line passwords/keys can appear in shell history and process listings.
 For production, obtain secrets securely in the host and use the Java encryption API.
@@ -235,10 +235,10 @@ For production, obtain secrets securely in the host and use the Java encryption 
 ```bash
 # Option 1: set env var first
 set A2AT_CRED_KEY=4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
-java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
+java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123"
 
 # Option 2: pass key as second argument
-java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "Admin@123" 4f8a2b1c3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 ```
 
 Output:
@@ -254,7 +254,7 @@ Paste the output into the `value` field of the credentials JSON.
 1. Generate a new key: `openssl rand -hex 32`
 2. Update the host secret store / explicit `credentialEncryptionKey`, or its OS/JVM `A2AT_CRED_KEY`
 3. Re-encrypt all passwords:
-   `java -cp workflow-engine/target/workflow-engine-0.0.8.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
+   `java -cp workflow-engine/target/workflow-engine-0.0.9.jar dev.openan.workflow.engine.client.CredentialCrypto "plaintext" new-key`
 4. Update the `enc:...` results in the credentials JSON file
 
 > The `.env` file should not be committed to version control. Add it to `.gitignore`.
@@ -392,8 +392,23 @@ authentication.
 
 ## 7. A2A-T Extensions
 
-Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
-restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
+Declaring Negotiation-T in the AgentCard means the target supports it; it does not enable negotiation for every task.
+The host business selects it on the initial final content:
+
+```java
+MessageContent outgoing = A2atMessages.from(generatedTask, parts)
+    .withExtension(A2ATExtension.NEGOTIATION_T.uri());
+```
+
+The engine writes this extension set to both the A2A Message and the `A2A-Extensions` request header. Initial metadata
+still contains only the Task-T body; do not manufacture Negotiation-T metadata before receiving a Propose. Configuring
+a negotiation callback alone does not activate the extension, and tasks that disallow negotiation must not call
+`withExtension`.
+
+Only a remote `INPUT_REQUIRED` or a taskless bare message carrying a valid Negotiation-T Propose enters
+`onNegotiation` (the latter is the A2A-T pre-task mode: correlated by contextId and negotiation id, with taskId-less
+follow-up sends). Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. Invalid
+negotiation metadata on a bare message also fails explicitly instead of being treated as a normal response. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to
 obtain the received context; reply with the same id, round and maxRounds. The last allowed round can still be answered.
 Do not call nextRound for an ending reply or return a new Propose.
@@ -407,10 +422,10 @@ exhausted budget or a missing handler fails locally; no implicit Accept or synth
 SUBMITTED/WORKING remain pending and are observed without resending the command. A business-sent Abort is never
 task success, even if the dispatched agent acknowledges it with COMPLETED.
 
-For a task outside a workflow DAG, call the task client directly. It uses a fresh context but keeps
-the same remote task identity through waiting and negotiation. The optional per-call strategy does
-not change the client-wide ControlPoint. Plain A2A content is allowed; activated Task-T content must
-include Task-T metadata and the target AgentCard must declare the extension.
+For a task outside a workflow DAG, call the task client directly. It uses a fresh context but keeps the same remote task
+identity through waiting and negotiation. The optional per-call strategy does not change the client-wide ControlPoint.
+Plain A2A content is allowed; activated Task-T content must include Task-T metadata and the target AgentCard must
+declare the extension.
 
 ```java
 CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content);
@@ -418,9 +433,9 @@ CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent c
     NegotiationStrategy negotiationStrategy);
 ```
 
-If a known remote task is still non-final when local interaction cannot continue, the client makes
-a best-effort cancellation before completing exceptionally. Standard A2A request errors remain
-exceptional results and are not converted into business task failures.
+If a known remote task is still non-final when local interaction cannot continue, the client makes a best-effort
+cancellation before completing exceptionally. Standard A2A request errors remain exceptional results and are not
+converted into business task failures.
 
 ```java
 CompletableFuture<SendMessageResult> sendAuthorization(String agentName, MessageContent content);
@@ -659,17 +674,17 @@ Logging configuration, pretty display and observer callbacks do not determine ta
 
 ## 15. Interface Reference
 
-| Interface/Class                                        | Purpose                                                                 |
-|--------------------------------------------------------|-------------------------------------------------------------------------|
-| `ExecutePsop.Builder`                                  | Workflow execution entry point                                          |
-| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)   |
-| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow and standalone task interaction                               |
-| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions |
-| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)         |
-| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget)   |
-| `AuthProvider`                                         | Custom authentication                                                   |
-| `EventCallback` / `EventType`                          | Event callback                                                          |
-| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                   |
-| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                     |
-| `ExecutionResult`                                      | Execution result                                                        |
-| `SendMessageResult` / `TaskResult`                     | Message/task response                                                   |
+| Interface/Class                                        | Purpose                                                                            |
+|--------------------------------------------------------|------------------------------------------------------------------------------------|
+| `ExecutePsop.Builder`                                  | Workflow execution entry point                                                     |
+| `ControlPoint` / `DefaultControlPoint`                 | Business decisions (onTask, onSelfTask, onRoute, onNegotiation, etc.)              |
+| `WorkflowEngineClient` / `DefaultWorkflowEngineClient` | Workflow and standalone task interaction                                           |
+| `ExtensionSender` / `DefaultExtensionSender`           | Independent Authorization-T operations and Notification-T subscriptions            |
+| `A2ATransport`                                         | Shared wire layer (A2A Java client runtime, auth, SSE consumer)                    |
+| `WorkflowEngineClientConfig`                           | Configuration (TLS, auth, deadlines, executor limits, negotiation exchange budget) |
+| `AuthProvider`                                         | Custom authentication                                                              |
+| `EventCallback` / `EventType`                          | Event callback                                                                     |
+| `LoadPsop` / `RegistryClient`                          | Workflow loading / AgentCard fetching                                              |
+| `Workflow` / `WorkflowStep` / `Task` / `JumpCondition` | Workflow definition                                                                |
+| `ExecutionResult`                                      | Execution result                                                                   |
+| `SendMessageResult` / `TaskResult`                     | Message/task response                                                              |

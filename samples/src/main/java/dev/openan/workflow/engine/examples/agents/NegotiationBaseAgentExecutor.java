@@ -59,9 +59,9 @@ import org.slf4j.LoggerFactory;
  * Accept reply it validates and consumes the filled parameters before diagnosis. Reject and Abort
  * are validated separately and end the task without executing diagnosis.
  *
- * <p>Negotiation is triggered by incomplete SDK-validated task data, not merely by extension
- * activation. A configured A2A-T client/server is mandatory for protocol generation and validation;
- * the sample never manufactures protocol-shaped fallback text.
+ * <p>Negotiation is triggered only when the caller activates Negotiation-T and SDK-validated task
+ * data is incomplete. A configured A2A-T client/server is mandatory for protocol generation and
+ * validation; the sample never manufactures protocol-shaped fallback text.
  */
 public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
 
@@ -391,6 +391,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
     }
     List<String> missing = invalidTaskFields(data);
     if (!missing.isEmpty()) {
+      activateNegotiation(ctx);
       requestNegotiation(ctx, emitter, data, missing);
     } else {
       log.info("[{}] Parameters sufficient, skipping negotiation", getClass().getSimpleName());
@@ -405,6 +406,7 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
 
   /** Replies are read from Negotiation-T metadata, validated by phase, then consumed once. */
   private void handleFollowUp(RequestContext ctx, AgentEmitter emitter) {
+    activateNegotiation(ctx);
     Map<String, Object> metadata = ctx.getMessage().metadata();
     var context =
         java.util.Objects.requireNonNull(
@@ -451,6 +453,16 @@ public abstract class NegotiationBaseAgentExecutor extends BaseAgentExecutor {
       }
       default -> throw new IllegalArgumentException("Expected Accept, Reject or Abort reply");
     }
+  }
+
+  private void activateNegotiation(RequestContext ctx) {
+    var callContext = ctx.getCallContext();
+    String extension = A2ATExtension.NEGOTIATION_T.uri();
+    if (callContext == null || !callContext.isExtensionRequested(extension)) {
+      throw new IllegalArgumentException(
+          "Negotiation-T was not activated in the A2A-Extensions request header");
+    }
+    callContext.activateExtension(extension);
   }
 
   private void acceptReply(

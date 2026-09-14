@@ -34,58 +34,6 @@ import org.a2aproject.sdk.spec.*;
 import org.junit.jupiter.api.Test;
 
 class DefaultWorkflowEngineClientNegotiationTest {
-  @Test
-  void publicClientContractExposesOnlyTheTaskOrientedSendName() {
-    Set<String> methodNames =
-        Arrays.stream(WorkflowEngineClient.class.getMethods())
-            .map(java.lang.reflect.Method::getName)
-            .collect(java.util.stream.Collectors.toSet());
-    assertFalse(methodNames.contains("dispatch"));
-    assertFalse(methodNames.contains("sendMessage"));
-  }
-
-  static AgentCard card() throws Exception {
-    return new com.fasterxml.jackson.databind.ObjectMapper()
-        .registerModule(new AgentCardJacksonModule())
-        .readValue(
-            """
-                    {"name":"test","description":"test","version":"1",
-                     "capabilities":{"streaming":true,"extensions":[]},
-                     "defaultInputModes":["text/plain"],"defaultOutputModes":["text/plain"],
-                     "skills":[],"supportedInterfaces":[{"protocolBinding":"HTTP+JSON","protocolVersion":"1.0",
-                     "url":"http://localhost:1","tenant":""}]}
-                    """,
-            AgentCard.class);
-  }
-
-  static MessageContent negotiation(String id, int round, NegotiationPerformative performative) {
-    return A2atMessages.from(
-        new MetadataContent(
-            "Negotiation-T/information-negotiation/propose/v1",
-            "opaque",
-            A2ATExtension.NEGOTIATION_T.uri(),
-            new NegotiationContext(id, round, round, performative)),
-        List.of(new TextPart("not interpreted")));
-  }
-
-  static TaskEvent response(MessageSendParams request, TaskState state, MessageContent content) {
-    Message message =
-        Message.builder()
-            .messageId(UUID.randomUUID().toString())
-            .role(Message.Role.ROLE_AGENT)
-            .parts(content.parts())
-            .metadata(content.metadata())
-            .build();
-    return new TaskEvent(
-        org.a2aproject.sdk.spec.Task.builder()
-            .id("remote-task")
-            .contextId(request.message().contextId())
-            .status(new org.a2aproject.sdk.spec.TaskStatus(state, message, null))
-            .history(List.of())
-            .metadata(Map.of())
-            .build());
-  }
-
   static A2AJavaClientRuntime runtime(Function<MessageSendParams, List<ClientEvent>> send) {
     AtomicReference<MessageSendParams> lastRequest = new AtomicReference<>();
     return new A2AJavaClientRuntime() {
@@ -111,6 +59,94 @@ class DefaultWorkflowEngineClientNegotiationTest {
 
       public void close() {}
     };
+  }
+
+  static AgentCard card() throws Exception {
+    return card(true);
+  }
+
+  static AgentCard cardWithoutNegotiation() throws Exception {
+    return card(false);
+  }
+
+  private static AgentCard card(boolean supportsNegotiation) throws Exception {
+    return new com.fasterxml.jackson.databind.ObjectMapper()
+        .registerModule(new AgentCardJacksonModule())
+        .readValue(
+            """
+                    {"name":"test","description":"test","version":"1",
+                     "capabilities":{"streaming":true,"extensions":[%s]},
+                     "defaultInputModes":["text/plain"],"defaultOutputModes":["text/plain"],
+                     "skills":[],"supportedInterfaces":[{"protocolBinding":"HTTP+JSON","protocolVersion":"1.0",
+                     "url":"http://localhost:1","tenant":""}]}
+                    """
+                .formatted(
+                    supportsNegotiation
+                        ? "{\"uri\":\""
+                            + A2ATExtension.NEGOTIATION_T.uri()
+                            + "\",\"required\":false}"
+                        : ""),
+            AgentCard.class);
+  }
+
+  static MessageContent negotiationTask(String text) {
+    return MessageContent.text(text).withExtension(A2ATExtension.NEGOTIATION_T.uri());
+  }
+
+  static MessageContent negotiation(String id, int round, NegotiationPerformative performative) {
+    return negotiation(id, round, round, performative);
+  }
+
+  static MessageContent negotiation(
+      String id, int round, int maxRounds, NegotiationPerformative performative) {
+    return A2atMessages.from(
+        new MetadataContent(
+            "Negotiation-T/information-negotiation/propose/v1",
+            "opaque",
+            A2ATExtension.NEGOTIATION_T.uri(),
+            new NegotiationContext(id, round, maxRounds, performative)),
+        List.of(new TextPart("not interpreted")));
+  }
+
+  /** A taskless A2A-T response: a bare agent message with no task lifecycle attached. */
+  static List<ClientEvent> messageResponse(MessageSendParams request, MessageContent content) {
+    Message message =
+        Message.builder()
+            .messageId(UUID.randomUUID().toString())
+            .contextId(request.message().contextId())
+            .role(Message.Role.ROLE_AGENT)
+            .parts(content.parts())
+            .metadata(content.metadata())
+            .build();
+    return List.of(new MessageEvent(message));
+  }
+
+  static TaskEvent response(MessageSendParams request, TaskState state, MessageContent content) {
+    Message message =
+        Message.builder()
+            .messageId(UUID.randomUUID().toString())
+            .role(Message.Role.ROLE_AGENT)
+            .parts(content.parts())
+            .metadata(content.metadata())
+            .build();
+    return new TaskEvent(
+        org.a2aproject.sdk.spec.Task.builder()
+            .id("remote-task")
+            .contextId(request.message().contextId())
+            .status(new org.a2aproject.sdk.spec.TaskStatus(state, message, null))
+            .history(List.of())
+            .metadata(Map.of())
+            .build());
+  }
+
+  @Test
+  void publicClientContractExposesOnlyTheTaskOrientedSendName() {
+    Set<String> methodNames =
+        Arrays.stream(WorkflowEngineClient.class.getMethods())
+            .map(java.lang.reflect.Method::getName)
+            .collect(java.util.stream.Collectors.toSet());
+    assertFalse(methodNames.contains("dispatch"));
+    assertFalse(methodNames.contains("sendMessage"));
   }
 
   @Test
@@ -167,7 +203,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
           client
               .sendTask(
                   "test",
-                  MessageContent.text("start"),
+                  negotiationTask("start"),
                   request -> {
                     negotiations.incrementAndGet();
                     return CompletableFuture.completedFuture(
@@ -215,13 +251,12 @@ class DefaultWorkflowEngineClientNegotiationTest {
           public void close() {}
         };
     try (var transport =
-        new A2ATransport(
-            List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
       var client = new DefaultWorkflowEngineClient(transport);
 
       assertThrows(
           CompletionException.class,
-          () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
       assertEquals(1, cancellations.get());
     }
   }
@@ -239,8 +274,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
               Consumer<ClientEvent> sink,
               Consumer<String> logs) {
             sent.set(params);
-            java.util.concurrent.locks.LockSupport.parkNanos(
-                TimeUnit.MILLISECONDS.toNanos(1_200));
+            java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1_200));
             return List.of(
                 response(
                     params,
@@ -266,7 +300,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
       CompletionException error =
           assertThrows(
               CompletionException.class,
-              () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
       assertInstanceOf(TimeoutException.class, error.getCause());
       assertTrue(canceled.await(3, TimeUnit.SECONDS));
     }
@@ -303,14 +337,13 @@ class DefaultWorkflowEngineClientNegotiationTest {
           public void close() {}
         };
     try (var transport =
-        new A2ATransport(
-            List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
       var client = new DefaultWorkflowEngineClient(transport);
 
       CompletionException error =
           assertThrows(
               CompletionException.class,
-              () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
       assertTrue(error.getCause().getMessage().contains("TASK_STATE_AUTH_REQUIRED"));
       assertEquals(1, cancellations.get());
     }
@@ -346,8 +379,36 @@ class DefaultWorkflowEngineClientNegotiationTest {
   }
 
   @Test
-  void standaloneTaskPreservesStandardA2AErrorWithoutCancelingAnUncreatedTask()
-      throws Exception {
+  void standaloneTaskRejectsNegotiationActivationNotDeclaredByTarget() throws Exception {
+    AtomicInteger sends = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(cardWithoutNegotiation()),
+            runtime(
+                params -> {
+                  sends.incrementAndGet();
+                  return List.of(
+                      response(
+                          params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
+                }),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      MessageContent content =
+          new MessageContent(
+              List.of(new TextPart("negotiation-capable task")),
+              Map.of(),
+              Set.of(A2ATExtension.NEGOTIATION_T.uri()));
+
+      CompletionException error =
+          assertThrows(CompletionException.class, () -> client.sendTask("test", content).join());
+
+      assertTrue(error.getCause().getMessage().contains("does not declare Negotiation-T"));
+      assertEquals(0, sends.get());
+    }
+  }
+
+  @Test
+  void standaloneTaskPreservesStandardA2AErrorWithoutCancelingAnUncreatedTask() throws Exception {
     AtomicInteger cancellations = new AtomicInteger();
     RemoteA2AErrorException remoteError =
         RemoteA2AErrorException.fromPayload(
@@ -376,14 +437,13 @@ class DefaultWorkflowEngineClientNegotiationTest {
           public void close() {}
         };
     try (var transport =
-        new A2ATransport(
-            List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
       var client = new DefaultWorkflowEngineClient(transport);
 
       CompletionException error =
           assertThrows(
               CompletionException.class,
-              () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
       RemoteA2AErrorException actual = RemoteA2AErrorException.findIn(error);
       assertNotNull(actual);
       assertEquals(429, actual.getHttpStatus());
@@ -425,7 +485,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
               .build());
       assertEquals(
           "TASK_STATE_COMPLETED",
-          client.sendTask("test", MessageContent.text("start")).join().getTaskState());
+        client.sendTask("test", negotiationTask("start")).join().getTaskState());
     }
     assertEquals(2, sent.size());
     assertNull(sent.get(0).message().taskId());
@@ -433,7 +493,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
     assertEquals(sent.get(0).message().contextId(), sent.get(1).message().contextId());
     assertTrue(seen.get().previousExchanges().isEmpty());
     assertFalse(seen.get().remainingWait().isZero());
-    assertEquals(MessageContent.text("start"), seen.get().originalSubmission());
+    assertEquals(negotiationTask("start"), seen.get().originalSubmission());
   }
 
   @Test
@@ -459,7 +519,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                     return CompletableFuture.failedFuture(new AssertionError());
                   })
               .build());
-      client.sendTask("test", MessageContent.text("start")).join();
+    client.sendTask("test", negotiationTask("start")).join();
     }
     assertEquals(0, callbacks.get());
   }
@@ -492,7 +552,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                 .build());
         assertThrows(
             CompletionException.class,
-            () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
       }
       assertEquals(1, sends.get());
     }
@@ -514,7 +574,198 @@ class DefaultWorkflowEngineClientNegotiationTest {
       var client = new DefaultWorkflowEngineClient(transport);
       assertThrows(
           CompletionException.class,
-          () -> client.sendTask("test", MessageContent.text("start")).join());
+          () -> client.sendTask("test", negotiationTask("start")).join());
+    }
+  }
+
+  @Test
+  void tasklessProposeEntersNegotiationAndFollowUpOmitsTaskId() throws Exception {
+    List<MessageSendParams> sent = new CopyOnWriteArrayList<>();
+    AtomicInteger negotiations = new AtomicInteger();
+    var runtime =
+        runtime(
+            params -> {
+              sent.add(params);
+              return sent.size() == 1
+                  ? messageResponse(
+                      params, negotiation("pre-task", 1, 5, NegotiationPerformative.PROPOSE))
+                  : messageResponse(params, MessageContent.text("诊断结果"));
+            });
+    try (var transport =
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    negotiations.incrementAndGet();
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("", result.getTaskState());
+      assertEquals("诊断结果", result.getText());
+    }
+    assertEquals(2, sent.size());
+    assertNull(sent.get(0).message().taskId());
+    assertNull(sent.get(1).message().taskId());
+    assertEquals(1, negotiations.get());
+    assertEquals(sent.get(0).message().contextId(), sent.get(1).message().contextId());
+  }
+
+  @Test
+  void tasklessRoundLoopAdvancesRoundsAndCompletesWithTaskAnchoredResult() throws Exception {
+    List<MessageSendParams> sent = new CopyOnWriteArrayList<>();
+    List<Integer> historySizes = new CopyOnWriteArrayList<>();
+    var runtime =
+        runtime(
+            params -> {
+              sent.add(params);
+              return switch (sent.size()) {
+                case 1 -> messageResponse(
+                    params, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
+                case 2 -> messageResponse(
+                    params, negotiation("pre", 2, 5, NegotiationPerformative.PROPOSE));
+                default -> List.of(
+                    response(
+                        params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
+              };
+            });
+    try (var transport =
+        new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    historySizes.add(request.previousExchanges().size());
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
+    }
+    assertEquals(3, sent.size());
+    assertNull(sent.get(1).message().taskId());
+    assertNull(sent.get(2).message().taskId());
+    assertEquals(List.of(0, 1), historySizes);
+  }
+
+  @Test
+  void tasklessProposeWithoutHostActivationFailsLoudly() throws Exception {
+    AtomicInteger sends = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(
+                p -> {
+                  sends.incrementAndGet();
+                  return messageResponse(
+                      p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
+                }),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", MessageContent.text("plain")).join());
+      assertTrue(error.getCause().getMessage().contains("not activated by the host"));
+      assertEquals(1, sends.get());
+    }
+  }
+
+  @Test
+  void tasklessProposeWithMissingNegotiationContextFailsLoudly() throws Exception {
+    MessageContent malformed =
+        new MessageContent(
+            List.of(new TextPart("propose without context")),
+            Map.of(A2ATExtension.NEGOTIATION_T.uri(), "unstructured"),
+            Set.of(A2ATExtension.NEGOTIATION_T.uri()));
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(p -> messageResponse(p, malformed)),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", negotiationTask("start")).join());
+      assertTrue(error.getCause().getMessage().contains("negotiationContext"));
+    }
+  }
+
+  @Test
+  void duplicateTasklessProposeFailsExplicitlyWithoutRepeatingTheCallback() throws Exception {
+    AtomicInteger negotiations = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(
+                p ->
+                    messageResponse(
+                        p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE))),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  request -> {
+                    negotiations.incrementAndGet();
+                    var context = A2atMessages.contextOf(request.received());
+                    return CompletableFuture.completedFuture(
+                        new NegotiationReply.Send(
+                            negotiation(
+                                context.id(),
+                                context.round(),
+                                context.maxRounds(),
+                                NegotiationPerformative.ACCEPT)));
+                  })
+              .build());
+      CompletionException error =
+          assertThrows(
+              CompletionException.class,
+              () -> client.sendTask("test", negotiationTask("start")).join());
+      assertTrue(error.getCause().getMessage().contains("Duplicate taskless"));
+      assertEquals(1, negotiations.get());
+    }
+  }
+
+  @Test
+  void tasklessMessageWithoutNegotiationMetadataRemainsNormalResponse() throws Exception {
+    AtomicInteger negotiations = new AtomicInteger();
+    try (var transport =
+        new A2ATransport(
+            List.of(card()),
+            runtime(p -> messageResponse(p, MessageContent.text("plain final"))),
+            WorkflowEngineClientConfig.builder().build())) {
+      var client = new DefaultWorkflowEngineClient(transport);
+      client.setControlPoint(
+          ControlPoint.builder()
+              .onNegotiation(
+                  q -> {
+                    negotiations.incrementAndGet();
+                    return CompletableFuture.failedFuture(new AssertionError());
+                  })
+              .build());
+      SendMessageResult result = client.sendTask("test", negotiationTask("start")).join();
+      assertEquals("", result.getTaskState());
+      assertEquals("plain final", result.getText());
+      assertEquals(0, negotiations.get());
     }
   }
 
@@ -543,7 +794,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                           new NegotiationReply.Send(
                               negotiation("city1", 1, NegotiationPerformative.ABORT))))
               .build());
-      var result = client.sendTask("test", MessageContent.text("start")).join();
+    var result = client.sendTask("test", negotiationTask("start")).join();
       assertEquals("TASK_STATE_COMPLETED", result.getTaskState());
       assertEquals("negotiation.aborted", result.getFailureCode());
     }
@@ -606,7 +857,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
         assertEquals(
             "TASK_STATE_COMPLETED",
             client
-                .sendTask("test", MessageContent.text("start"))
+              .sendTask("test", negotiationTask("start"))
                 .get(5, TimeUnit.SECONDS)
                 .getTaskState());
         assertEquals(2, sends.get());
@@ -644,7 +895,7 @@ class DefaultWorkflowEngineClientNegotiationTest {
                       return answer;
                     })
                 .build());
-        var result = client.sendTask("test", MessageContent.text("start"));
+      var result = client.sendTask("test", negotiationTask("start"));
         assertTrue(entered.await(1, TimeUnit.SECONDS));
         if (timeout) assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
         else assertTrue(result.cancel(true));

@@ -66,6 +66,13 @@ public record MessageContent(
     return new MessageContent(parts, Map.of(), Set.of());
   }
 
+  /** Returns a copy with one additional business-selected extension activation. */
+  public MessageContent withExtension(String extensionUri) {
+    LinkedHashSet<String> active = new LinkedHashSet<>(extensions);
+    active.add(Objects.requireNonNull(extensionUri, "extensionUri"));
+    return new MessageContent(parts, metadata, active);
+  }
+
   static List<Part<?>> snapshotParts(List<Part<?>> parts) {
     List<Part<?>> snapshot = new ArrayList<>(parts.size());
     for (Part<?> part : parts) {
