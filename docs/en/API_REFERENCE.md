@@ -96,6 +96,11 @@ parts/metadata/extensions. The engine manages
 envelopes and interactions, never instantiates A2ATClient or generates content from AgentCard declarations. Template
 queries and generation belong to the host SDK.
 
+Declaring Negotiation-T in an AgentCard does not activate it. When the host business allows negotiation for the current
+task, call `withExtension(A2ATExtension.NEGOTIATION_T.uri())` on the initial Task-T `MessageContent`; the engine mirrors
+that selection into the message extensions and the `A2A-Extensions` request header. `onNegotiation` and
+`NegotiationStrategy` only handle a received Propose and do not modify the initial extension set.
+
 Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
 restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to

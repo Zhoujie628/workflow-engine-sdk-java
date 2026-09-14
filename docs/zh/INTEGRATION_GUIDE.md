@@ -376,6 +376,16 @@ AgentCard 通过 `capabilities.extensions` 声明扩展点：
 
 ## 7. A2A-T 扩展能力
 
+AgentCard 声明 Negotiation-T 只表示目标支持协商，不代表本次任务已经启用。是否允许协商由宿主业务在首轮最终内容中选择：
+
+```java
+MessageContent outgoing = A2atMessages.from(generatedTask, parts)
+    .withExtension(A2ATExtension.NEGOTIATION_T.uri());
+```
+
+引擎将 `extensions` 同时写入 A2A Message 和 `A2A-Extensions` 请求头。首轮 metadata 仍然只有 Task-T 正文；不要在收到
+Propose 前伪造 Negotiation-T metadata。仅配置协商回调不会自动激活扩展，不允许协商的任务不要调用 `withExtension`。
+
 只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
 明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行

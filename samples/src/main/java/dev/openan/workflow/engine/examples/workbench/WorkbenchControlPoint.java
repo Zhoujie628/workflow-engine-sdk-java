@@ -130,7 +130,9 @@ public class WorkbenchControlPoint extends DefaultControlPoint {
                         "[onTask] DEMO_NEGOTIATION agent={}, fault=missing-port,"
                             + " source=explicit-sample-switch",
                         request.getAgentName());
-                    return new MessageContent(content.parts(), metadata, content.extensions());
+                    return new MessageContent(content.parts(), metadata, content.extensions())
+                        .withExtension(
+                            dev.openan.workflow.engine.client.A2ATExtension.NEGOTIATION_T.uri());
                   }
                   return content;
                 }));

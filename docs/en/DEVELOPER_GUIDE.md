@@ -131,6 +131,11 @@ ExecutionResult result = executor.run().join();
 
 ### 6.1 Negotiation Auto-Loop
 
+When the host business allows negotiation for a task, call
+`withExtension(A2ATExtension.NEGOTIATION_T.uri())` on the initial Task-T `MessageContent`. An AgentCard declaration or a
+negotiation callback does not add the request header automatically; the engine only maps the business selection to
+`message.extensions` and `A2A-Extensions`.
+
 Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
 restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to

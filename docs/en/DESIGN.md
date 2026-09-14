@@ -261,6 +261,10 @@ generation.
 
 Negotiation-T:
 
+The host business decides whether a task allows negotiation through the initial `MessageContent.extensions`. Neither
+the AgentCard declaration nor the callback itself activates it. The engine only maps that selection to the message and
+the `A2A-Extensions` request header, then manages subsequent negotiation correlation.
+
 Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
 restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to

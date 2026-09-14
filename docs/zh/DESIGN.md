@@ -236,6 +236,9 @@ Task-T：宿主生成最终内容，引擎只封装并发送。AgentCard 声明�
 
 Negotiation-T：
 
+宿主业务通过首轮 `MessageContent.extensions` 决定本次任务是否允许协商；AgentCard 声明和协商回调本身不触发激活。引擎只把该选择
+映射为消息扩展和 `A2A-Extensions` 请求头，并管理后续协商关联。
+
 只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
 明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行

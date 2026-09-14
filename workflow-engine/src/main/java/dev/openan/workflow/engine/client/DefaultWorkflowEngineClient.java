@@ -147,9 +147,39 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     return transport.sendTimeoutSeconds();
   }
 
+  private static void validateTaskExtension(AgentCard card, MessageContent content) {
+    String taskExtension = A2ATExtension.TASK_T.uri();
+    List<String> declaredExtensions = A2ATransport.extractExtensionUris(card);
+    boolean activated = content.extensions().contains(taskExtension);
+    boolean supplied = content.metadata().containsKey(taskExtension);
+    if (activated || supplied) {
+      if (!activated || !supplied) {
+        throw new IllegalArgumentException(
+            "Task-T content must contain matching extension activation and metadata");
+      }
+      if (!declaredExtensions.contains(taskExtension)) {
+        throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
+      }
+    }
+    String negotiationExtension = A2ATExtension.NEGOTIATION_T.uri();
+    if (content.extensions().contains(negotiationExtension)
+        && !declaredExtensions.contains(negotiationExtension)) {
+      throw new IllegalArgumentException(
+          "Target agent does not declare Negotiation-T: " + card.name());
+    }
+  }
+
+  private static Throwable unwrap(Throwable error) {
+    Throwable current = error;
+    while ((current instanceof CompletionException || current instanceof ExecutionException)
+        && current.getCause() != null) {
+      current = current.getCause();
+    }
+    return current;
+  }
+
   @Override
-  public CompletableFuture<SendMessageResult> sendTask(
-      String agentName, MessageContent content) {
+  public CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content) {
     TaskRequest request =
         TaskRequest.builder()
             .agentName(agentName)
@@ -267,20 +297,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     return invocation.completion;
   }
 
-  private static void validateTaskExtension(AgentCard card, MessageContent content) {
-    String taskExtension = A2ATExtension.TASK_T.uri();
-    boolean activated = content.extensions().contains(taskExtension);
-    boolean supplied = content.metadata().containsKey(taskExtension);
-    if (!activated && !supplied) return;
-    if (!activated || !supplied) {
-      throw new IllegalArgumentException(
-          "Task-T content must contain matching extension activation and metadata");
-    }
-    if (!A2ATransport.extractExtensionUris(card).contains(taskExtension)) {
-      throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
-    }
-  }
-
   private void completeExceptionallyAfterCleanup(
       AgentCard card, Invocation invocation, Throwable error) {
     if (!invocation.finishing.compareAndSet(false, true)) {
@@ -292,7 +308,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
     Throwable primary = unwrap(error);
     cancelRemoteTask(card, invocation, primary)
-        .whenComplete((ignored, cleanupError) -> invocation.completion.completeExceptionally(primary));
+        .whenComplete(
+            (ignored, cleanupError) -> invocation.completion.completeExceptionally(primary));
   }
 
   private CompletableFuture<Void> cancelRemoteTask(
@@ -327,15 +344,6 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                   });
       return invocation.cleanup;
     }
-  }
-
-  private static Throwable unwrap(Throwable error) {
-    Throwable current = error;
-    while ((current instanceof CompletionException || current instanceof ExecutionException)
-        && current.getCause() != null) {
-      current = current.getCause();
-    }
-    return current;
   }
 
   private CompletableFuture<SendMessageResult> send(
@@ -412,6 +420,11 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     if (result.getTask() == null || result.getTask().id() == null) {
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("INPUT_REQUIRED has no remote task identity"));
+    }
+    if (!invocation.original.extensions().contains(A2ATExtension.NEGOTIATION_T.uri())) {
+      return CompletableFuture.failedFuture(
+          new IllegalArgumentException(
+              "Remote requested Negotiation-T although it was not activated by the host"));
     }
     String remoteTask = result.getTask().id();
     ReceivedMessage received = negotiationResponse(result);
@@ -666,6 +679,18 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     if (closeTransportOnClose) transport.close();
   }
 
+  private static final class PendingPoll {
+    final CompletableFuture<Void> completion = new CompletableFuture<>();
+    volatile ScheduledFuture<?> scheduled;
+
+    void cancel() {
+      ScheduledFuture<?> current = scheduled;
+      if (current != null) current.cancel(false);
+      completion.completeExceptionally(
+          new java.util.concurrent.CancellationException("Task wait ended"));
+    }
+  }
+
   private final class Invocation {
     final TaskRequest task;
     final MessageContent original;
@@ -687,10 +712,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     int exchanges;
 
     Invocation(
-        TaskRequest task,
-        MessageContent content,
-        ControlPoint callbacks,
-        EventCallback events) {
+        TaskRequest task, MessageContent content, ControlPoint callbacks, EventCallback events) {
       this.task = task;
       this.original = content;
       this.callbacks = callbacks;
@@ -702,27 +724,12 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     }
 
     boolean active() {
-      return !closed.get()
-          && !finishing.get()
-          && !completion.isDone()
-          && !remaining().isZero();
+      return !closed.get() && !finishing.get() && !completion.isDone() && !remaining().isZero();
     }
 
     void cancelPendingPoll() {
       PendingPoll pending = pendingPoll.getAndSet(null);
       if (pending != null) pending.cancel();
-    }
-  }
-
-  private static final class PendingPoll {
-    final CompletableFuture<Void> completion = new CompletableFuture<>();
-    volatile ScheduledFuture<?> scheduled;
-
-    void cancel() {
-      ScheduledFuture<?> current = scheduled;
-      if (current != null) current.cancel(false);
-      completion.completeExceptionally(
-          new java.util.concurrent.CancellationException("Task wait ended"));
     }
   }
 }

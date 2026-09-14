@@ -43,6 +43,8 @@ class A2ATransportHeaderTest {
 
   private static final String TASK_T_URI =
       "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1";
+  private static final String NEGOTIATION_T_URI =
+      "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Negotiation-T/v1";
 
   private static dev.openan.workflow.engine.model.MessageContent content(
       String text, Map<String, Object> metadata) {
@@ -62,6 +64,7 @@ class A2ATransportHeaderTest {
                   "capabilities": {
                     "streaming": false,
                     "extensions": [
+                      {"uri": "%s", "required": false},
                       {"uri": "%s", "required": false}
                     ]
                   },
@@ -78,7 +81,7 @@ class A2ATransportHeaderTest {
                   ]
                 }
                 """
-            .formatted(TASK_T_URI);
+            .formatted(TASK_T_URI, NEGOTIATION_T_URI);
     return new ObjectMapper()
         .registerModule(new AgentCardJacksonModule())
         .readValue(json, AgentCard.class);
@@ -143,6 +146,29 @@ class A2ATransportHeaderTest {
 
     assertEquals("Bearer test-token", capturedHeaders.get().get("Authorization"));
     assertEquals(TASK_T_URI, capturedHeaders.get().get("A2A-Extensions"));
+  }
+
+  @Test
+  void forwardsBusinessSelectedNegotiationActivationWithoutNegotiationMetadata() throws Exception {
+    AtomicReference<Map<String, String>> capturedHeaders = new AtomicReference<>();
+    A2AJavaClientRuntime runtime = new CapturingRuntime(capturedHeaders);
+    AgentCard card = agentCard();
+    var extensions = new java.util.LinkedHashSet<>(List.of(TASK_T_URI, NEGOTIATION_T_URI));
+    var message =
+        new dev.openan.workflow.engine.model.MessageContent(
+            List.of(new org.a2aproject.sdk.spec.TextPart("diagnose")),
+            Map.of(TASK_T_URI, "structured task"),
+            extensions);
+
+    try (A2ATransport transport =
+        new A2ATransport(
+            List.of(card), runtime, WorkflowEngineClientConfig.builder().build())) {
+      transport.send(card, card.name(), message, "context-1", null, null).join();
+    }
+
+    assertEquals(
+        TASK_T_URI + "," + NEGOTIATION_T_URI,
+        capturedHeaders.get().get("A2A-Extensions"));
   }
 
   @Test

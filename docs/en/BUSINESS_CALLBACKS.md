@@ -120,6 +120,13 @@ one. Sample initialization helpers are host-side examples, not engine dependenci
 
 ## 5. Negotiation
 
+The host business explicitly decides whether the current task allows negotiation. An AgentCard declaration only says
+that the target supports Negotiation-T. To allow it, call
+`withExtension(A2ATExtension.NEGOTIATION_T.uri())` on the initial Task-T content. The engine then writes both
+`message.extensions` and the `A2A-Extensions` request header without adding premature Negotiation-T metadata. Merely
+implementing `onNegotiation` or supplying a `NegotiationStrategy` does not activate negotiation; the target must not
+start Negotiation-T when it was not activated.
+
 NegotiationRequest(task, originalSubmission, received, previousExchanges, remainingWait):
 task is the original TaskRequest; originalSubmission is the exact initial content; received is the complete current
 response; previousExchanges contains only this session's completed Exchange (received, reply); remainingWait is the

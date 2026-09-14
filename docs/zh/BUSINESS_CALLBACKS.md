@@ -105,6 +105,11 @@ MessageContent outgoing = A2atMessages.from(generated, List.of(new TextPart("处
 
 ## 5. 协商
 
+是否允许本次任务协商由宿主业务显式决定。AgentCard 声明 Negotiation-T 只表示目标具备能力；需要允许协商时，宿主在首轮
+Task-T 内容上调用 `withExtension(A2ATExtension.NEGOTIATION_T.uri())`。引擎据此同时写入 `message.extensions` 和
+`A2A-Extensions` 请求头，但不添加首轮 Negotiation-T metadata。仅实现 `onNegotiation` 或传入 `NegotiationStrategy`
+不会自动激活协商；未激活时对端不得发起 Negotiation-T。
+
 NegotiationRequest(task, originalSubmission, received, previousExchanges, remainingWait)： task 是原始
 TaskRequest，originalSubmission 是首次最终提交， received 是当前完整响应，previousExchanges 只含该会话的 Exchange
 (received, reply)， remainingWait 是本次交互剩余时间。引擎不规定业务 proposal 分类或 schema。

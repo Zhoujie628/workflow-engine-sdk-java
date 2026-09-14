@@ -12,7 +12,7 @@ return final message content and own any A2A-T generation, schema, validation or
 
 ## Features
 
-- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (stateless auto negotiation loop),
+- **A2A-T Extension Support**: Task-T (structured task prompts), Negotiation-T (host-activated auto negotiation loop),
   Authorization-T (independent authorization operation), Notification-T (independent long-lived SSE subscription)
 - **Content-neutral callbacks**: final MessageContent, complete ReceivedMessage, local multi-output TaskResult and
   explicit NegotiationReply.Send/Stop

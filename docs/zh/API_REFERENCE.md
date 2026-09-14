@@ -89,6 +89,10 @@ A2A 标准动作名称 `sendMessage`。
 `onTask` 返回后由执行器内部调用 `sendTask`；`onTask` 不自行发送。内容是最终 parts/metadata/extensions，引擎只管理信封和交互，不创建 A2ATClient，不按
 AgentCard 声明生成内容。模板查询和生成接口请直接使用宿主 SDK。
 
+AgentCard 声明 Negotiation-T 不会激活协商。宿主业务需要允许当前任务协商时，在首轮 Task-T `MessageContent` 上调用
+`withExtension(A2ATExtension.NEGOTIATION_T.uri())`；引擎将业务选择同步到消息扩展和 `A2A-Extensions` 请求头。
+`onNegotiation` 或 `NegotiationStrategy` 只处理已收到的 Propose，不隐式修改首轮扩展。
+
 只有远端 `INPUT_REQUIRED` 携带有效 Negotiation-T Propose 才进入 `onNegotiation`。 终态不会重启协商，普通 INPUT_REQUIRED
 明确报告不支持的交互。 宿主自行校验、理解 Propose，并用自己的 A2A-T client 生成最终 Accept/Reject/Abort。 通过
 `A2atMessages.contextOf(request.received())` 取得收到的上下文； 结束回复保持相同 id、round、maxRounds，最后允许的一轮仍可回答，不自行
