@@ -71,6 +71,20 @@ class MessageContentTest {
   }
 
   @Test
+  void addsBusinessSelectedExtensionWithoutMutatingOriginalContent() {
+    MessageContent original =
+        new MessageContent(List.of(new TextPart("task")), Map.of("task", "body"), Set.of("task"));
+
+    MessageContent negotiationCapable = original.withExtension("negotiation");
+
+    assertEquals(Set.of("task"), original.extensions());
+    assertEquals(List.of("task", "negotiation"), List.copyOf(negotiationCapable.extensions()));
+    assertEquals(original.parts(), negotiationCapable.parts());
+    assertEquals(original.metadata(), negotiationCapable.metadata());
+    assertThrows(IllegalArgumentException.class, () -> original.withExtension(""));
+  }
+
+  @Test
   void keepsMetadataOnlyResponseAndAllArtifactFields() {
     List<Object> items = new ArrayList<>(List.of("a"));
     Artifact artifact =

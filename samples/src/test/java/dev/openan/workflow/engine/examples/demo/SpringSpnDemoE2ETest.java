@@ -137,7 +137,16 @@ class SpringSpnDemoE2ETest {
 
   private void assertNegotiationWireEvidence(String evidence) {
     String uri = dev.openan.workflow.engine.client.A2ATExtension.NEGOTIATION_T.uri();
+    String taskUri = dev.openan.workflow.engine.client.A2ATExtension.TASK_T.uri();
     var records = java.util.Arrays.asList(evidence.split("(?m)^.*? PROTOCOL - "));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        records.stream()
+            .anyMatch(
+                record ->
+                    record.startsWith("[" + negotiationWireBoundary() + "] REQUEST")
+                        && record.contains("A2A-Extensions: " + taskUri)
+                        && record.contains(uri)),
+        "Missing Negotiation-T activation on the initial Task-T request");
     String request =
         records.stream()
             .filter(record -> record.startsWith("[" + negotiationWireBoundary() + "] REQUEST"))

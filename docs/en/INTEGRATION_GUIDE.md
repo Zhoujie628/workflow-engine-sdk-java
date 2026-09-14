@@ -392,6 +392,19 @@ authentication.
 
 ## 7. A2A-T Extensions
 
+Declaring Negotiation-T in the AgentCard means the target supports it; it does not enable negotiation for every task.
+The host business selects it on the initial final content:
+
+```java
+MessageContent outgoing = A2atMessages.from(generatedTask, parts)
+    .withExtension(A2ATExtension.NEGOTIATION_T.uri());
+```
+
+The engine writes this extension set to both the A2A Message and the `A2A-Extensions` request header. Initial metadata
+still contains only the Task-T body; do not manufacture Negotiation-T metadata before receiving a Propose. Configuring
+a negotiation callback alone does not activate the extension, and tasks that disallow negotiation must not call
+`withExtension`.
+
 Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
 restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to

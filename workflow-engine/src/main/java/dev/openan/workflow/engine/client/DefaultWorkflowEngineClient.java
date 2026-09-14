@@ -149,15 +149,23 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
   private static void validateTaskExtension(AgentCard card, MessageContent content) {
     String taskExtension = A2ATExtension.TASK_T.uri();
+    List<String> declaredExtensions = A2ATransport.extractExtensionUris(card);
     boolean activated = content.extensions().contains(taskExtension);
     boolean supplied = content.metadata().containsKey(taskExtension);
-    if (!activated && !supplied) return;
-    if (!activated || !supplied) {
-      throw new IllegalArgumentException(
-          "Task-T content must contain matching extension activation and metadata");
+    if (activated || supplied) {
+      if (!activated || !supplied) {
+        throw new IllegalArgumentException(
+            "Task-T content must contain matching extension activation and metadata");
+      }
+      if (!declaredExtensions.contains(taskExtension)) {
+        throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
+      }
     }
-    if (!A2ATransport.extractExtensionUris(card).contains(taskExtension)) {
-      throw new IllegalArgumentException("Target agent does not declare Task-T: " + card.name());
+    String negotiationExtension = A2ATExtension.NEGOTIATION_T.uri();
+    if (content.extensions().contains(negotiationExtension)
+        && !declaredExtensions.contains(negotiationExtension)) {
+      throw new IllegalArgumentException(
+          "Target agent does not declare Negotiation-T: " + card.name());
     }
   }
 
@@ -412,6 +420,11 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
     if (result.getTask() == null || result.getTask().id() == null) {
       return CompletableFuture.failedFuture(
           new IllegalArgumentException("INPUT_REQUIRED has no remote task identity"));
+    }
+    if (!invocation.original.extensions().contains(A2ATExtension.NEGOTIATION_T.uri())) {
+      return CompletableFuture.failedFuture(
+          new IllegalArgumentException(
+              "Remote requested Negotiation-T although it was not activated by the host"));
     }
     String remoteTask = result.getTask().id();
     ReceivedMessage received = negotiationResponse(result);

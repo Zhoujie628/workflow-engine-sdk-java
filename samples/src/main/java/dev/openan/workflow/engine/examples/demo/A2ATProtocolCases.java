@@ -294,7 +294,8 @@ public class A2ATProtocolCases {
                     List.of(
                         new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT + "(参数缺失)")),
                     metadata,
-                    java.util.Set.of(A2ATExtension.TASK_T.uri())))
+                    java.util.Set.of(A2ATExtension.TASK_T.uri()))
+                    .withExtension(A2ATExtension.NEGOTIATION_T.uri()))
             .join();
     requireCompletedNegotiation("7.3", result, before);
     log.info(
@@ -320,7 +321,8 @@ public class A2ATProtocolCases {
                     List.of(
                         new org.a2aproject.sdk.spec.TextPart(SpnCasePrompts.TASK_TEXT + "(语义错误)")),
                     metadata,
-                    java.util.Set.of(A2ATExtension.TASK_T.uri())))
+                    java.util.Set.of(A2ATExtension.TASK_T.uri()))
+                    .withExtension(A2ATExtension.NEGOTIATION_T.uri()))
             .join();
     requireCompletedNegotiation("7.4", result, before);
     log.info(
