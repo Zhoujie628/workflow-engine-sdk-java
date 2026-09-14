@@ -405,8 +405,10 @@ still contains only the Task-T body; do not manufacture Negotiation-T metadata b
 a negotiation callback alone does not activate the extension, and tasks that disallow negotiation must not call
 `withExtension`.
 
-Only a remote `INPUT_REQUIRED` carrying valid Negotiation-T Propose enters `onNegotiation`. Terminal responses never
-restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. The host validates/interprets the proposal and
+Only a remote `INPUT_REQUIRED` or a taskless bare message carrying a valid Negotiation-T Propose enters
+`onNegotiation` (the latter is the A2A-T pre-task mode: correlated by contextId and negotiation id, with taskId-less
+follow-up sends). Terminal responses never restart negotiation; ordinary `INPUT_REQUIRED` fails explicitly. Invalid
+negotiation metadata on a bare message also fails explicitly instead of being treated as a normal response. The host validates/interprets the proposal and
 generates the final Accept/Reject/Abort with its own A2A-T client. Use `A2atMessages.contextOf(request.received())` to
 obtain the received context; reply with the same id, round and maxRounds. The last allowed round can still be answered.
 Do not call nextRound for an ending reply or return a new Propose.

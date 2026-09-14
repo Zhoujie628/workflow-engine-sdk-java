@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Accept Negotiation-T Propose carried on a taskless bare message (A2A-T pre-task negotiation, where the remote
+  proposes before creating any task): `onNegotiation` now also fires for a valid Propose without an
+  `INPUT_REQUIRED` task status. The exchange is correlated by contextId and negotiation id, and the follow-up send
+  carries no taskId. Invalid negotiation metadata on a bare message now fails explicitly instead of being silently
+  treated as a normal successful response.
+
 ## [0.0.8] — 2026-09-13
 
 - Scope task lifecycle callbacks to each `sendTask` invocation so concurrent workflow executions
