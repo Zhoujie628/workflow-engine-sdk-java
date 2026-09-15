@@ -29,10 +29,12 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.a2aproject.sdk.server.AgentCardCacheMetadata;
 import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
+import org.a2aproject.sdk.server.auth.TaskAuthorizationProvider;
 import org.a2aproject.sdk.server.config.A2AConfigProvider;
 import org.a2aproject.sdk.server.events.InMemoryQueueManager;
 import org.a2aproject.sdk.server.events.MainEventBus;
 import org.a2aproject.sdk.server.events.MainEventBusProcessor;
+import org.a2aproject.sdk.server.requesthandlers.AuthorizationRequestHandlerDecorator;
 import org.a2aproject.sdk.server.requesthandlers.DefaultRequestHandler;
 import org.a2aproject.sdk.server.requesthandlers.RequestHandler;
 import org.a2aproject.sdk.server.tasks.BasePushNotificationSender;
@@ -44,6 +46,7 @@ import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.transport.rest.handler.RestHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -69,6 +72,12 @@ import org.springframework.core.io.ResourceLoader;
  *       list, cancel, and subscribe endpoints)
  *   <li>Optional slash-style aliases for gateways that cannot publish colon-style action paths
  * </ul>
+ *
+ * <p>Optional host-side request validation: declare a {@link TaskAuthorizationProvider} bean and
+ * every A2A operation is offered to it before the agent executor runs. {@code checkCreate} guards
+ * message send/stream (new task creation), {@code checkRead}/{@code checkWrite} guard task
+ * query/cancel, and rejection returns a standard A2A error envelope to the caller. Without such a
+ * bean the server behaves exactly as before.
  *
  * <p>The partner only needs to provide an {@link AgentExecutor} implementation as a
  * {@code @Component} or {@code @Bean}. Set {@code a2at.server.enabled=true} to enable the
@@ -189,7 +198,8 @@ public class A2AAutoConfiguration {
       InMemoryQueueManager qm,
       PushNotificationConfigStore pushStore,
       MainEventBusProcessor proc,
-      ExecutorService pool) {
+      ExecutorService pool,
+      ObjectProvider<TaskAuthorizationProvider> authorizationProvider) {
     RequestHandler delegate =
         DefaultRequestHandler.builder()
             .agentExecutor(executor)
@@ -200,7 +210,19 @@ public class A2AAutoConfiguration {
             .executor(pool)
             .eventConsumerExecutor(pool)
             .build();
-    return new SpringCompatibleRequestHandler(delegate);
+    RequestHandler handler = new SpringCompatibleRequestHandler(delegate);
+    TaskAuthorizationProvider provider = authorizationProvider.getIfAvailable();
+    if (provider != null) {
+      // The decorator carries CDI Instance fields like the delegate, so it also stays behind the
+      // Spring-compatible facade. Every A2A operation (message send/stream, task query, cancel,
+      // subscribe, push-notification config) is offered to the host provider before the agent
+      // executor runs; a rejection surfaces as a standard A2A error to the caller.
+      handler =
+          new SpringCompatibleRequestHandler(
+              new AuthorizationRequestHandlerDecorator(handler, provider));
+      log.info("[A2A] TaskAuthorizationProvider detected; operation-level authorization enabled");
+    }
+    return handler;
   }
 
   @Bean

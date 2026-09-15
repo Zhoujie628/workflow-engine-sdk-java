@@ -684,10 +684,38 @@ a2at:
 | `pushStore`         | `PushNotificationConfigStore` | 推送通知配置存储                                       |
 | `agentExecutorPool` | `ExecutorService`             | 智能体执行线程池（8 线程，守护线程）                   |
 | `eventBusProcessor` | `MainEventBusProcessor`       | 事件总线处理器                                         |
-| `requestHandler`    | `RequestHandler`              | 默认请求处理器                                         |
+| `requestHandler`    | `RequestHandler`              | 默认请求处理器；存在 `TaskAuthorizationProvider` Bean 时自动启用操作级鉴权 |
 | `restHandler`       | `RestHandler`                 | REST 协议处理器                                        |
 | `a2aController`     | `A2AController`               | 消息和任务端点的 Spring MVC 控制器                    |
 | `a2aSlashActionAliasController` | `A2ASlashActionAliasController` | 可选的斜杠动作别名公共控制器                    |
+
+### 服务端请求鉴权（TaskAuthorizationProvider）
+
+宿主声明一个 `TaskAuthorizationProvider` Bean（`@Component` 或 `@Bean`），即可在每个 A2A 操作进入
+智能体执行器**之前**注入业务校验（调用方身份、请求合法性等）：
+
+```java
+@Component
+public class WorkbenchRequestGuard implements TaskAuthorizationProvider {
+  @Override
+  public boolean checkCreate(ServerCallContext ctx, TaskOperation op) throws A2AError {
+    // message:send / message:stream（新任务创建）走这里
+    return ctx.getUser().isAuthenticated();   // 返回 false 或抛 A2AError 即拒绝
+  }
+  @Override public boolean checkRead(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+  @Override public boolean checkWrite(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+  @Override public boolean isTaskRecorded(String taskId) { ... }
+  @Override public void recordOwnership(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+}
+```
+
+- `checkCreate` 守卫 `message:send` / `message:stream`；`checkRead` 守卫任务查询/列表；
+  `checkWrite` 守卫任务取消；`recordOwnership`/`isTaskRecorded` 用于任务归属跟踪。
+- `ServerCallContext` 提供 `getUser()`（认证用户）、`getRequestedExtensions()`（A2A-Extensions 请求头）
+  和 `getState()`（传输状态）。
+- 拒绝以标准 A2A 错误信封返回调用方（`checkCreate` 返回 false 时为任务不存在错误；
+  抛出更具体的 `A2AError` 子类可携带自定义原因）。
+- 未声明该 Bean 时行为与之前完全一致（不装配鉴权装饰器）。
 
 ### A2AController
 
