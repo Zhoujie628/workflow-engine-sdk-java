@@ -731,10 +731,38 @@ Auto-configures the following beans (all `@ConditionalOnMissingBean`, so you can
 | `pushStore`         | `PushNotificationConfigStore` | Push notification config storage                          |
 | `agentExecutorPool` | `ExecutorService`             | Thread pool for agent execution (8 threads, daemon)       |
 | `eventBusProcessor` | `MainEventBusProcessor`       | Event bus processor                                       |
-| `requestHandler`    | `RequestHandler`              | Default request handler                                   |
+| `requestHandler`    | `RequestHandler`              | Default request handler; operation-level authorization is enabled automatically when a `TaskAuthorizationProvider` bean exists |
 | `restHandler`       | `RestHandler`                 | REST protocol handler                                     |
 | `a2aController`     | `A2AController`               | Spring MVC controller for message and task endpoints     |
 | `a2aSlashActionAliasController` | `A2ASlashActionAliasController` | Optional public controller for slash-style action aliases |
+
+### Server-side request authorization (TaskAuthorizationProvider)
+
+Declare a `TaskAuthorizationProvider` bean (`@Component` or `@Bean`) to inject business validation
+(caller identity, request legality, ...) into every A2A operation **before** the agent executor runs:
+
+```java
+@Component
+public class WorkbenchRequestGuard implements TaskAuthorizationProvider {
+  @Override
+  public boolean checkCreate(ServerCallContext ctx, TaskOperation op) throws A2AError {
+    // message:send / message:stream (new task creation) arrive here
+    return ctx.getUser().isAuthenticated();   // false or an A2AError rejects the request
+  }
+  @Override public boolean checkRead(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+  @Override public boolean checkWrite(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+  @Override public boolean isTaskRecorded(String taskId) { ... }
+  @Override public void recordOwnership(ServerCallContext ctx, String taskId, TaskOperation op) { ... }
+}
+```
+
+- `checkCreate` guards `message:send` / `message:stream`; `checkRead` guards task query/list;
+  `checkWrite` guards task cancel; `recordOwnership`/`isTaskRecorded` track task ownership.
+- `ServerCallContext` exposes `getUser()` (authenticated user), `getRequestedExtensions()`
+  (the A2A-Extensions request header), and `getState()` (transport state).
+- Rejections return a standard A2A error envelope to the caller (`checkCreate` returning false maps
+  to a task-not-found error; throwing a more specific `A2AError` subclass carries a custom reason).
+- Without such a bean the server behaves exactly as before (no authorization decorator is wired).
 
 ### A2AController
 

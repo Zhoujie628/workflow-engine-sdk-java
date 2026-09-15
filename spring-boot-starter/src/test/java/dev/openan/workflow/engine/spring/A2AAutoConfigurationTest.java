@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -37,6 +38,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.lang.reflect.Modifier;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Flow;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -44,13 +48,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.a2aproject.sdk.server.ServerCallContext;
 import org.a2aproject.sdk.server.agentexecution.AgentExecutor;
+import org.a2aproject.sdk.server.auth.AuthenticatedUser;
+import org.a2aproject.sdk.server.auth.TaskAuthorizationProvider;
 import org.a2aproject.sdk.server.auth.TaskOperation;
 import org.a2aproject.sdk.server.config.A2AConfigProvider;
 import org.a2aproject.sdk.server.requesthandlers.RequestHandler;
 import org.a2aproject.sdk.spec.AgentCapabilities;
 import org.a2aproject.sdk.spec.AgentCard;
+import org.a2aproject.sdk.spec.Message;
+import org.a2aproject.sdk.spec.MessageSendParams;
 import org.a2aproject.sdk.spec.StreamingEventKind;
 import org.a2aproject.sdk.spec.TaskNotFoundError;
+import org.a2aproject.sdk.spec.TextPart;
 import org.a2aproject.sdk.transport.rest.handler.RestHandler;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -539,5 +548,78 @@ class A2AAutoConfigurationTest {
                       && context.getStartupFailure().getMessage() != null
                       && context.getStartupFailure().getMessage().contains("did not match"));
             });
+  }
+
+  @Test
+  void taskAuthorizationProviderRejectionRunsBeforeTheAgentExecutor() {
+    AtomicInteger executorRuns = new AtomicInteger();
+    AgentExecutor executor = mock(AgentExecutor.class);
+    doAnswer(
+            invocation -> {
+              executorRuns.incrementAndGet();
+              return null;
+            })
+        .when(executor)
+        .execute(any(), any());
+    TaskAuthorizationProvider guard =
+        new TaskAuthorizationProvider() {
+          @Override
+          public boolean checkRead(ServerCallContext ctx, String taskId, TaskOperation op) {
+            return true;
+          }
+
+          @Override
+          public boolean checkWrite(ServerCallContext ctx, String taskId, TaskOperation op) {
+            return true;
+          }
+
+          @Override
+          public boolean checkCreate(ServerCallContext ctx, TaskOperation op) {
+            return false;
+          }
+
+          @Override
+          public boolean isTaskRecorded(String taskId) {
+            return false;
+          }
+
+          @Override
+          public void recordOwnership(ServerCallContext ctx, String taskId, TaskOperation op) {}
+        };
+
+    new WebApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+        .withBean(AgentCard.class, () -> mock(AgentCard.class))
+        .withBean(AgentExecutor.class, () -> executor)
+        .withBean(TaskAuthorizationProvider.class, () -> guard)
+        .withPropertyValues("a2at.server.enabled=true")
+        .run(
+            context -> {
+              RequestHandler handler = context.getBean(RequestHandler.class);
+              MessageSendParams params =
+                  MessageSendParams.builder()
+                      .message(
+                          Message.builder()
+                              .messageId("m1")
+                              .role(Message.Role.ROLE_USER)
+                              .parts(List.of(new TextPart("diagnose")))
+                              .build())
+                      .build();
+              ServerCallContext callContext =
+                  new ServerCallContext(new AuthenticatedUser("waimo"), Map.of(), Set.of());
+              assertThrows(
+                  TaskNotFoundError.class, () -> handler.onMessageSend(params, callContext));
+              assertEquals(0, executorRuns.get());
+            });
+  }
+
+  @Test
+  void requestHandlerIsCreatedWithoutAnAuthorizationProvider() {
+    new WebApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(A2AAutoConfiguration.class))
+        .withBean(AgentCard.class, () -> mock(AgentCard.class))
+        .withBean(AgentExecutor.class, () -> mock(AgentExecutor.class))
+        .withPropertyValues("a2at.server.enabled=true")
+        .run(context -> assertTrue(context.containsBean("requestHandler")));
   }
 }
