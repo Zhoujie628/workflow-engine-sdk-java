@@ -110,7 +110,8 @@ class StaleTaskCleanerTest {
     }
 
     @Override
-    public CompletableFuture<SendMessageResult> sendTask(String agentName, MessageContent content) {
+    public CompletableFuture<SendMessageResult> sendTask(
+        String agentName, MessageContent content) {
       throw new UnsupportedOperationException();
     }
 

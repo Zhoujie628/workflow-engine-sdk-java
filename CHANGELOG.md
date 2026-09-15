@@ -36,12 +36,11 @@
 - Preserve the published `spring-boot-starter` artifact coordinate. The temporary, unpublished
   `spring-boot-a2a-starter` name is not a consumable Maven Central coordinate.
 
-- Add `WorkflowEngineClient.sendTask(...)` for task execution outside a DAG. It reuses the normal task state machine,
-  keeps one task/context through Negotiation-T, and supports a per-call
-  `NegotiationStrategy`. Local interaction failures cancel a known non-final remote task before releasing the
-  conversation. The internal workflow dispatch operation and the former
+- Add `WorkflowEngineClient.sendTask(...)` for task execution outside a DAG. It reuses the normal
+  task state machine, keeps one task/context through Negotiation-T, and supports a per-call
+  `NegotiationStrategy`. Local interaction failures cancel a known non-final remote task before
+  releasing the conversation. The internal workflow dispatch operation and the former
   `sendMessage(...)` alias are no longer part of the public `WorkflowEngineClient` contract.
-
 - Upgrade the dev Order adapter to `order-shaded-client:1.1.19` and use its default long-lived SSE implementation;
   keep the request-buffer ownership workaround only for the still-bridged blocking HTTP path.
 - Increase the default Notification-T acknowledgement timeout from 5 seconds to 5 minutes and expose the sample Spring
@@ -80,6 +79,8 @@
 - Release streaming resources when publisher subscription setup throws synchronously.
 - Align published dependency examples with 0.0.2 and refresh neutral architecture terminology.
 - Update GitHub Actions to Node 24-compatible action versions.
+- Add optional slash-style alias endpoints for A2A actions, disabled unless
+  `a2at.server.slash-action-aliases-enabled=true`.
 
 ## [0.0.2] — 2026-09-07
 
@@ -98,8 +99,8 @@
 - Separate authorization/notification lifecycle from workflow outcomes; never synthesize a subscription ACK.
 - Observe serialized HTTP/JSON-RPC, real gRPC metadata/protobuf and dev vendor SDK traffic with mandatory redaction and
   bounded SSE.
-- Add local missing-port SpringSpnDemo negotiation tests for direct and dev Order; real LLM/platform/OMC validation
-  remains separate.
+- Add missing-input negotiation and independent transport-path regression tests; live model and production endpoint
+  validation remains separate.
 - Refresh bilingual callback, architecture and integration contracts. No older SDK compatibility layer.
 
 ### Release hardening
