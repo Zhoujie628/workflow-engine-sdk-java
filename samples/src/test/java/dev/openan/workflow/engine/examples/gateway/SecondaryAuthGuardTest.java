@@ -267,4 +267,37 @@ class SecondaryAuthGuardTest {
                         TaskOperation.MESSAGE_SEND_STREAM))
             .getMessage());
   }
+
+  @Test
+  void unprotectedOperationSkipsValidation() {
+    // Only MESSAGE_SEND_STREAM is protected; other operations pass without auth headers.
+    SecondaryAuthProperties properties = properties();
+    properties.setProtectedOperations(Set.of(TaskOperation.MESSAGE_SEND_STREAM));
+    SecondaryAuthGuard guard = guard(properties);
+
+    // No auth headers at all — would be rejected if this operation were protected.
+    assertTrue(guard.checkRead(contextWith(Map.of()), "task-1", TaskOperation.GET_TASK));
+    assertTrue(guard.checkWrite(contextWith(Map.of()), "task-1", TaskOperation.CANCEL_TASK));
+    assertTrue(guard.checkCreate(contextWith(Map.of()), TaskOperation.MESSAGE_SEND));
+
+    // Protected operation still rejected without headers.
+    assertEquals(
+        "未携带合法签名头",
+        assertThrows(
+                InvalidRequestError.class,
+                () ->
+                    guard.checkCreate(
+                        contextWith(Map.of()), TaskOperation.MESSAGE_SEND_STREAM))
+            .getMessage());
+  }
+
+  @Test
+  void emptyProtectedOperationsAuthenticatesAll() {
+    // Default: empty set = all operations protected.
+    SecondaryAuthProperties properties = properties();
+    assertTrue(properties.protects(TaskOperation.MESSAGE_SEND_STREAM));
+    assertTrue(properties.protects(TaskOperation.GET_TASK));
+    assertTrue(properties.protects(TaskOperation.CANCEL_TASK));
+    assertTrue(properties.protects(TaskOperation.SUBSCRIBE_TO_TASK));
+  }
 }

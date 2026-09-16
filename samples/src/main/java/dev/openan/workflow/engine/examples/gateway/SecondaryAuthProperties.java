@@ -20,6 +20,8 @@ package dev.openan.workflow.engine.examples.gateway;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+import org.a2aproject.sdk.server.auth.TaskOperation;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -39,12 +41,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>The specification requires the provider to support both MD5 and SHA256WITHRSA; the signed
  * string is always {@code app-id,timestamp,secret} (comma-joined) for both algorithms, so
  * {@code secret} is mandatory; {@code publicKey} is only needed for RSA verification.
+ *
+ * <p>{@code protected-operations} controls which A2A operations are subject to secondary
+ * authentication. Empty (default) means <b>all</b> operations are protected; list specific
+ * operations to authenticate only those (e.g. {@code MESSAGE_SEND_STREAM} for streaming task
+ * creation only, leaving task queries and push-notification config endpoints open).
  */
 @ConfigurationProperties(prefix = "secondary-auth")
 public class SecondaryAuthProperties {
 
   private boolean enabled = false;
   private long clockSkewMillis = 300_000L;
+  private Set<TaskOperation> protectedOperations = Set.of();
   private Credential msb = new Credential();
   private Map<String, Credential> consumers = new LinkedHashMap<>();
 
@@ -62,6 +70,20 @@ public class SecondaryAuthProperties {
 
   public void setClockSkewMillis(long clockSkewMillis) {
     this.clockSkewMillis = clockSkewMillis;
+  }
+
+  public Set<TaskOperation> getProtectedOperations() {
+    return protectedOperations;
+  }
+
+  public void setProtectedOperations(Set<TaskOperation> protectedOperations) {
+    this.protectedOperations =
+        protectedOperations == null ? Set.of() : protectedOperations;
+  }
+
+  /** Whether the given operation should be authenticated. Empty set means all operations. */
+  public boolean protects(TaskOperation operation) {
+    return protectedOperations.isEmpty() || protectedOperations.contains(operation);
   }
 
   public Credential getMsb() {

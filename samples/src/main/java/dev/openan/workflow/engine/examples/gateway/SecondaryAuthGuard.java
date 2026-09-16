@@ -57,19 +57,19 @@ public class SecondaryAuthGuard implements TaskAuthorizationProvider {
 
   @Override
   public boolean checkCreate(ServerCallContext ctx, TaskOperation op) throws A2AError {
-    validate(ctx, op);
+    if (properties.protects(op)) validate(ctx, op);
     return true;
   }
 
   @Override
   public boolean checkRead(ServerCallContext ctx, String taskId, TaskOperation op) throws A2AError {
-    validate(ctx, op);
+    if (properties.protects(op)) validate(ctx, op);
     return true;
   }
 
   @Override
   public boolean checkWrite(ServerCallContext ctx, String taskId, TaskOperation op) throws A2AError {
-    validate(ctx, op);
+    if (properties.protects(op)) validate(ctx, op);
     return true;
   }
 
