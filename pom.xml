@@ -55,7 +55,7 @@
         <!-- Keep protobuf JSON runtime aligned with the A2A Java SDK REST transport. -->
         <protobuf.java.util.version>4.35.0</protobuf.java.util.version>
         <!-- Published A2A-T SDK release from Maven Central. -->
-        <a2a.t.sdk.version>1.1.0</a2a.t.sdk.version>
+        <a2a.t.sdk.version>1.1.1</a2a.t.sdk.version>
         <lombok.version>1.18.38</lombok.version>
         <jackson.version>2.22.0</jackson.version>
         <slf4j.version>2.0.18</slf4j.version>
