@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.10] — 2026-09-16
+
+- Upgrade the A2A-T SDK dependency to 1.1.1 (patch release, no breaking API changes).
+- Make the fallback task poll interval configurable via `WorkflowEngineClientConfig.taskPollIntervalMillis`
+  (default 20 seconds). Polling only triggers when a streaming response is interrupted before the task
+  reaches a terminal state; while SSE is alive, polling does not start.
+- Wire host-declared `TaskAuthorizationProvider` beans into the starter's autoconfigured request handler.
+  Every A2A operation (message send/stream, task query, cancel, subscribe) is offered to the provider
+  before the agent executor runs; rejections surface as standard A2A error envelopes.
+
 ## [0.0.9] — 2026-09-14
 
 - Make Negotiation-T activation host-owned. The business activates Negotiation-T per send via the new
