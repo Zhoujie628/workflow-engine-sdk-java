@@ -137,6 +137,7 @@ handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。
 | `crlPath`                       | `String`       | null   | HTTP/JSON-RPC 的 X.509 CRL 路径；默认 gRPC runtime 暂不支持并会拒绝启动                                   |
 | `sendTimeoutSeconds`            | `long`         | `600`  | SSE 流超时（默认 10 分钟）                                                                                |
 | `notificationAckTimeoutSeconds` | `long`         | `300`  | Notification-T 首个 ACK/事件等待时间（默认 5 分钟）                                                       |
+| `taskPollIntervalMillis`        | `long`         | `20000`| SSE 流中途断开（如网关空闲超时掐流）后的兜底任务轮询间隔（默认 20 秒）。SSE 流存活期间（心跳仍在推送时）不会启动轮询 |
 | `sendExecutorCoreSize`          | `int`          | `4`    | 发送线程池核心线程数                                                                                      |
 | `sendExecutorMaxSize`           | `int`          | `16`   | 发送线程池最大线程数                                                                                      |
 | `sendExecutorQueueCapacity`     | `int`          | `256`  | 发送线程池有界队列容量                                                                                    |

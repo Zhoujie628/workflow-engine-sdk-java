@@ -165,7 +165,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                           MessageContent.text("task-done")));
                 }),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       assertEquals(
           "TASK_STATE_COMPLETED",
@@ -197,7 +199,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                                 ? negotiation("standalone", 1, NegotiationPerformative.PROPOSE)
                                 : MessageContent.text("done")))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       var result =
           client
@@ -252,7 +256,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
         };
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       assertThrows(
           CompletionException.class,
@@ -338,7 +344,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
         };
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       CompletionException error =
           assertThrows(
@@ -363,7 +371,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                           params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
                 }),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       client.sendTask("test", MessageContent.text("plain task")).join();
       MessageContent taskT =
@@ -392,7 +402,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                           params, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")));
                 }),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       MessageContent content =
           new MessageContent(
               List.of(new TextPart("negotiation-capable task")),
@@ -438,7 +450,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
         };
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
 
       CompletionException error =
           assertThrows(
@@ -472,7 +486,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
     AtomicReference<NegotiationRequest> seen = new AtomicReference<>();
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -510,7 +526,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                             TaskState.TASK_STATE_COMPLETED,
                             negotiation("old", 1, NegotiationPerformative.PROPOSE)))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -545,7 +563,10 @@ class DefaultWorkflowEngineClientNegotiationTest {
                             negotiation("city1", 1, NegotiationPerformative.PROPOSE)));
                   }),
               WorkflowEngineClientConfig.builder().build())) {
-        var client = new DefaultWorkflowEngineClient(transport);
+        var client =
+            new DefaultWorkflowEngineClient(
+                transport,
+                WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
         client.setControlPoint(
             ControlPoint.builder()
                 .onNegotiation(q -> CompletableFuture.completedFuture(reply))
@@ -571,7 +592,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                             TaskState.TASK_STATE_INPUT_REQUIRED,
                             MessageContent.text("question")))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       assertThrows(
           CompletionException.class,
           () -> client.sendTask("test", negotiationTask("start")).join());
@@ -593,7 +616,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
             });
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -643,7 +668,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
             });
     try (var transport =
         new A2ATransport(List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -681,7 +708,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                       p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE));
                 }),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       CompletionException error =
           assertThrows(
               CompletionException.class,
@@ -703,7 +732,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
             List.of(card()),
             runtime(p -> messageResponse(p, malformed)),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       CompletionException error =
           assertThrows(
               CompletionException.class,
@@ -721,7 +752,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
             runtime(
                 p -> messageResponse(p, negotiation("pre", 1, 5, NegotiationPerformative.PROPOSE))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -754,7 +787,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
             List.of(card()),
             runtime(p -> messageResponse(p, MessageContent.text("plain final"))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -786,7 +821,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
                                 : TaskState.TASK_STATE_COMPLETED,
                             negotiation("city1", 1, NegotiationPerformative.PROPOSE)))),
             WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       client.setControlPoint(
           ControlPoint.builder()
               .onNegotiation(
@@ -844,7 +881,10 @@ class DefaultWorkflowEngineClientNegotiationTest {
       try (var transport =
           new A2ATransport(
               List.of(card()), runtime, WorkflowEngineClientConfig.builder().build())) {
-        var client = new DefaultWorkflowEngineClient(transport);
+        var client =
+            new DefaultWorkflowEngineClient(
+                transport,
+                WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
         client.setControlPoint(
             ControlPoint.builder()
                 .onNegotiation(
@@ -887,7 +927,10 @@ class DefaultWorkflowEngineClientNegotiationTest {
                             negotiation("city1", 1, NegotiationPerformative.PROPOSE)));
                   }),
               WorkflowEngineClientConfig.builder().sendTimeoutSeconds(1).build())) {
-        var client = new DefaultWorkflowEngineClient(transport);
+        var client =
+            new DefaultWorkflowEngineClient(
+                transport,
+                WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
         client.setControlPoint(
             ControlPoint.builder()
                 .onNegotiation(
@@ -917,14 +960,18 @@ class DefaultWorkflowEngineClientNegotiationTest {
                     List.of(
                         response(p, TaskState.TASK_STATE_COMPLETED, MessageContent.text("done")))),
             WorkflowEngineClientConfig.builder().build())) {
-      var closedClient = new DefaultWorkflowEngineClient(transport);
+      var closedClient =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       closedClient.close();
       assertThrows(
           CompletionException.class,
           () -> closedClient.sendTask("test", MessageContent.text("no")).join());
       assertEquals(
           "TASK_STATE_COMPLETED",
-          new DefaultWorkflowEngineClient(transport)
+          new DefaultWorkflowEngineClient(
+                  transport,
+                  WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build())
               .sendTask("test", MessageContent.text("yes"))
               .join()
               .getTaskState());
@@ -950,7 +997,9 @@ class DefaultWorkflowEngineClientNegotiationTest {
     try (var transport =
         new A2ATransport(
             List.of(card()), concurrentRuntime, WorkflowEngineClientConfig.builder().build())) {
-      var client = new DefaultWorkflowEngineClient(transport);
+      var client =
+          new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
       List<String> firstEvents = new CopyOnWriteArrayList<>();
       List<String> secondEvents = new CopyOnWriteArrayList<>();
       List<MessageContent> firstRequests = new CopyOnWriteArrayList<>();
