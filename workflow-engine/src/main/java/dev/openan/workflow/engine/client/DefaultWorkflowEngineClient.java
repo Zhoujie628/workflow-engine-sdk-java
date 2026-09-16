@@ -57,6 +57,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   private final A2ATransport transport;
   private final int maxNegotiationExchanges;
   private final boolean closeTransportOnClose;
+  private final long taskPollIntervalMillis;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final Set<Invocation> invocations = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private final ScheduledExecutorService timeoutScheduler =
@@ -76,15 +77,27 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
 
   /** Uses the configured resource exchange budget, not an SDK protocol round counter. */
   public DefaultWorkflowEngineClient(A2ATransport transport, WorkflowEngineClientConfig config) {
-    this(transport, config.getMaxNegotiationExchanges(), false);
+    this(transport, config.getMaxNegotiationExchanges(), false, config.getTaskPollIntervalMillis());
   }
 
   private DefaultWorkflowEngineClient(A2ATransport transport, int maxExchanges, boolean owning) {
+    this(
+        transport,
+        maxExchanges,
+        owning,
+        WorkflowEngineClientConfig.DEFAULT_TASK_POLL_INTERVAL_MILLIS);
+  }
+
+  private DefaultWorkflowEngineClient(
+      A2ATransport transport, int maxExchanges, boolean owning, long taskPollIntervalMillis) {
     this.transport = Objects.requireNonNull(transport, "transport");
     if (maxExchanges < 1)
       throw new IllegalArgumentException("Negotiation exchange budget must be positive");
+    if (taskPollIntervalMillis < 100)
+      throw new IllegalArgumentException("Task poll interval must be at least 100ms");
     this.maxNegotiationExchanges = maxExchanges;
     this.closeTransportOnClose = owning;
+    this.taskPollIntervalMillis = taskPollIntervalMillis;
   }
 
   /** Creates a facade owning the supplied transport. */
@@ -95,7 +108,8 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
   /** Creates an owning facade with explicit resource settings. */
   public static DefaultWorkflowEngineClient owning(
       A2ATransport transport, WorkflowEngineClientConfig config) {
-    return new DefaultWorkflowEngineClient(transport, config.getMaxNegotiationExchanges(), true);
+    return new DefaultWorkflowEngineClient(
+        transport, config.getMaxNegotiationExchanges(), true, config.getTaskPollIntervalMillis());
   }
 
   private static ReceivedMessage negotiationResponse(SendMessageResult result) {
@@ -580,7 +594,7 @@ public class DefaultWorkflowEngineClient implements WorkflowEngineClient, AutoCl
                 pending.completion.complete(null);
               }
             },
-            250,
+            taskPollIntervalMillis,
             TimeUnit.MILLISECONDS);
     if (pending.completion.isDone()) pending.scheduled.cancel(false);
     return pending.completion;

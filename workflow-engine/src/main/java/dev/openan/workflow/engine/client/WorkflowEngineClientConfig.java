@@ -38,6 +38,16 @@ public class WorkflowEngineClientConfig {
   /** Default wait for the first Notification-T acknowledgement: five minutes. */
   public static final long DEFAULT_NOTIFICATION_ACK_TIMEOUT_SECONDS = 300;
 
+  /**
+   * Default interval for fallback task polling (when an SSE stream ends before a terminal state):
+   * 20 seconds. This polling only triggers when a streaming response is interrupted before the task
+   * reaches a terminal state (e.g. a gateway closes the SSE channel mid-stream). While SSE is alive
+   * (heartbeats still arriving), polling does not start; it only begins after the stream returns a
+   * non-terminal state. The 20-second interval avoids hammering the remote endpoint during
+   * long-running agent executions.
+   */
+  public static final long DEFAULT_TASK_POLL_INTERVAL_MILLIS = 20_000;
+
   private final boolean sslVerify;
   private final String caCertsPath;
   private final String clientCertPath;
@@ -55,6 +65,7 @@ public class WorkflowEngineClientConfig {
   private final Map<String, Map<String, Map<String, Object>>> credentialsConfig;
   private final int maxNegotiationExchanges;
   private final String preferredProtocol;
+  private final long taskPollIntervalMillis;
 
   private WorkflowEngineClientConfig(Builder b) {
     this.sslVerify = b.sslVerify;
@@ -75,6 +86,7 @@ public class WorkflowEngineClientConfig {
         b.credentialsConfig != null ? copyCredentials(b.credentialsConfig) : null;
     this.maxNegotiationExchanges = b.maxNegotiationExchanges;
     this.preferredProtocol = b.preferredProtocol;
+    this.taskPollIntervalMillis = b.taskPollIntervalMillis;
   }
 
   private static Map<String, Map<String, Map<String, Object>>> copyCredentials(
@@ -136,6 +148,7 @@ public class WorkflowEngineClientConfig {
     private Map<String, Map<String, Map<String, Object>>> credentialsConfig = null;
     private int maxNegotiationExchanges = 3;
     private String preferredProtocol = null;
+    private long taskPollIntervalMillis = DEFAULT_TASK_POLL_INTERVAL_MILLIS;
 
     public Builder sslVerify(boolean v) {
       this.sslVerify = v;
@@ -220,6 +233,15 @@ public class WorkflowEngineClientConfig {
 
     public Builder preferredProtocol(String v) {
       this.preferredProtocol = v;
+      return this;
+    }
+
+    /**
+     * Interval (milliseconds) for fallback task polling when the SSE stream ends before a terminal
+     * state. Defaults to {@value #DEFAULT_TASK_POLL_INTERVAL_MILLIS}ms (20 seconds).
+     */
+    public Builder taskPollIntervalMillis(long v) {
+      this.taskPollIntervalMillis = v;
       return this;
     }
 
