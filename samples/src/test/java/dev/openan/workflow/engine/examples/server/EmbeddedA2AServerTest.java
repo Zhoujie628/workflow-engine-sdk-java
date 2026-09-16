@@ -171,7 +171,7 @@ class EmbeddedA2AServerTest {
             null,
             WorkflowEngineClientConfig.builder().sslVerify(false).build());
 
-    client = new DefaultWorkflowEngineClient(transport);
+    client = new DefaultWorkflowEngineClient(transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build());
     client.setControlPoint(new WorkbenchControlPoint(sdkEnvPath));
   }
 

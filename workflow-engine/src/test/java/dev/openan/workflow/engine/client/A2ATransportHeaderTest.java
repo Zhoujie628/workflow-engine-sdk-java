@@ -279,7 +279,8 @@ class A2ATransportHeaderTest {
             .build();
 
     try (A2ATransport transport = new A2ATransport(List.of(card), runtime, config)) {
-      new DefaultWorkflowEngineClient(transport)
+      new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build())
           .listTasks(card.name(), ListTasksParams.builder().pageSize(10).build())
           .join();
     }
@@ -353,7 +354,9 @@ class A2ATransportHeaderTest {
             new CountingRuntime(closeCalls),
             WorkflowEngineClientConfig.builder().build());
 
-    new DefaultWorkflowEngineClient(transport).close();
+    new DefaultWorkflowEngineClient(
+            transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build())
+        .close();
     assertEquals(0, closeCalls.get());
 
     transport.close();
@@ -393,7 +396,10 @@ class A2ATransportHeaderTest {
               List.of(new org.a2aproject.sdk.spec.DataPart(Map.of("any", List.of(1, 2)))),
               Map.of("contextId", "business-only"),
               java.util.Set.of("urn:optional:custom"));
-      new DefaultWorkflowEngineClient(transport).sendTask("Test Agent", content).join();
+      new DefaultWorkflowEngineClient(
+              transport, WorkflowEngineClientConfig.builder().taskPollIntervalMillis(100).build())
+          .sendTask("Test Agent", content)
+          .join();
       assertEquals(content.parts(), captured.get().message().parts());
       assertEquals(content.metadata(), captured.get().message().metadata());
       assertFalse("business-only".equals(captured.get().message().contextId()));
