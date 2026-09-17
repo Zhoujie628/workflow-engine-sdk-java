@@ -26,7 +26,10 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -95,12 +98,40 @@ public class A2AController {
   private final AgentCard agentCard;
   private final AtomicInteger activeStreams = new AtomicInteger();
   private final Object streamCompletionMonitor = new Object();
+  private final long heartbeatIntervalMillis;
+  private final ScheduledExecutorService heartbeatScheduler;
 
   public A2AController(
       RestHandler restHandler, RequestHandler requestHandler, AgentCard agentCard) {
+    this(restHandler, requestHandler, agentCard, 0L);
+  }
+
+  public A2AController(
+      RestHandler restHandler,
+      RequestHandler requestHandler,
+      AgentCard agentCard,
+      long heartbeatIntervalMillis) {
     this.restHandler = restHandler;
     this.requestHandler = requestHandler;
     this.agentCard = agentCard;
+    this.heartbeatIntervalMillis = heartbeatIntervalMillis;
+    this.heartbeatScheduler =
+        heartbeatIntervalMillis > 0
+            ? Executors.newSingleThreadScheduledExecutor(
+                runnable -> {
+                  Thread thread = new Thread(runnable, "a2a-sse-heartbeat");
+                  thread.setDaemon(true);
+                  return thread;
+                })
+            : null;
+  }
+
+  /** Releases the heartbeat scheduler; called by Spring on context shutdown. */
+  @jakarta.annotation.PreDestroy
+  public void shutdown() {
+    if (heartbeatScheduler != null) {
+      heartbeatScheduler.shutdownNow();
+    }
   }
 
   @PostMapping("${a2at.server.path-prefix}/message:send")
@@ -158,9 +189,14 @@ public class A2AController {
       Flow.Publisher<StreamingEventKind> publisher, ServerCallContext context) {
     AtomicReference<Flow.Subscription> subscription = new AtomicReference<>();
     AtomicBoolean released = new AtomicBoolean();
+    AtomicReference<ScheduledFuture<?>> heartbeat = new AtomicReference<>();
     Runnable release =
         () -> {
           if (released.compareAndSet(false, true)) {
+            ScheduledFuture<?> activeHeartbeat = heartbeat.get();
+            if (activeHeartbeat != null) {
+              activeHeartbeat.cancel(false);
+            }
             Flow.Subscription active = subscription.get();
             if (active != null) {
               try {
@@ -179,6 +215,20 @@ public class A2AController {
         };
     SseEmitter emitter = new SseEmitter(0L);
     Runnable finish = track(emitter, release);
+    if (heartbeatIntervalMillis > 0 && heartbeatScheduler != null) {
+      heartbeat.set(
+          heartbeatScheduler.scheduleAtFixedRate(
+              () -> {
+                try {
+                  emitter.send(SseEmitter.event().comment("heartbeat"));
+                } catch (Exception e) {
+                  release.run();
+                }
+              },
+              heartbeatIntervalMillis,
+              heartbeatIntervalMillis,
+              TimeUnit.MILLISECONDS));
+    }
     final AtomicLong seq = new AtomicLong(0);
     Flow.Subscriber<StreamingEventKind> subscriber =
         new Flow.Subscriber<>() {
