@@ -20,8 +20,8 @@
 package dev.openan.workflow.engine.model;
 
 import dev.openan.workflow.engine.registry.LoadPsop;
+import java.util.Collections;
 import java.util.List;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -35,7 +35,6 @@ import lombok.NoArgsConstructor;
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class WorkflowSearchResult {
   private String workflowId;
@@ -48,4 +47,38 @@ public class WorkflowSearchResult {
   private String userIntent;
   private String relatedPreflow;
   private String tasksSummary;
+
+  /** All-args constructor with defensive copies; Lombok's builder routes through it. */
+  public WorkflowSearchResult(
+      String workflowId,
+      String workflowType,
+      String name,
+      String description,
+      List<String> tags,
+      String createdAt,
+      double score,
+      String userIntent,
+      String relatedPreflow,
+      String tasksSummary) {
+    this.workflowId = workflowId;
+    this.workflowType = workflowType;
+    this.name = name;
+    this.description = description;
+    this.tags = tags == null ? List.of() : List.copyOf(tags);
+    this.createdAt = createdAt;
+    this.score = score;
+    this.userIntent = userIntent;
+    this.relatedPreflow = relatedPreflow;
+    this.tasksSummary = tasksSummary;
+  }
+
+  /** Unmodifiable view; tags are snapshots. */
+  public List<String> getTags() {
+    return tags == null ? null : Collections.unmodifiableList(tags);
+  }
+
+  /** Stores a defensive copy of the supplied tag list. */
+  public void setTags(List<String> tags) {
+    this.tags = tags == null ? List.of() : List.copyOf(tags);
+  }
 }

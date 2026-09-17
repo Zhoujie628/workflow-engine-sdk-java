@@ -79,4 +79,14 @@ public class TaskResult {
   public static TaskResult failure(String code, String message) {
     return builder().success(false).errorCode(code).error(message).build();
   }
+
+  /** Unmodifiable view; outputs are defensive snapshots. */
+  public List<Object> getOutputs() {
+    return java.util.Collections.unmodifiableList(outputs);
+  }
+
+  /** Unmodifiable view; error details are defensive snapshots. */
+  public java.util.Map<String, Object> getErrorDetails() {
+    return java.util.Collections.unmodifiableMap(errorDetails);
+  }
 }

@@ -19,8 +19,9 @@
 
 package dev.openan.workflow.engine.model;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -28,10 +29,11 @@ import lombok.NoArgsConstructor;
 /**
  * One node of a {@link Workflow}: the subtasks to dispatch, the outgoing jumps, and the upstream
  * window its callbacks receive.
+ *
+ * <p>Collection fields are copied on write and exposed unmodifiable.
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class WorkflowStep {
   /**
@@ -65,4 +67,52 @@ public class WorkflowStep {
    * through {@code onSelfTask} with no agent network calls.
    */
   @Builder.Default private StepType stepType = StepType.ALL_SUCCESS;
+
+  /** All-args constructor with defensive copies; Lombok's builder routes through it. */
+  public WorkflowStep(
+      String name,
+      List<Task> subtasks,
+      List<JumpCondition> next,
+      int layer,
+      List<String> contextFrom,
+      StepType stepType) {
+    this.name = name;
+    // Null-tolerant copies: null edge/task entries are reported by graph validation,
+    // not silently rejected at construction.
+    this.subtasks = subtasks == null ? List.of() : new ArrayList<>(subtasks);
+    this.next = next == null ? List.of() : new ArrayList<>(next);
+    this.layer = layer;
+    this.contextFrom = contextFrom == null ? null : new ArrayList<>(contextFrom);
+    this.stepType = stepType;
+  }
+
+  /** Unmodifiable view; subtasks are snapshots. */
+  public List<Task> getSubtasks() {
+    return subtasks == null ? null : Collections.unmodifiableList(subtasks);
+  }
+
+  /** Stores a null-tolerant defensive copy of the supplied subtask list. */
+  public void setSubtasks(List<Task> subtasks) {
+    this.subtasks = subtasks == null ? List.of() : new ArrayList<>(subtasks);
+  }
+
+  /** Unmodifiable view; edges are snapshots. */
+  public List<JumpCondition> getNext() {
+    return next == null ? null : Collections.unmodifiableList(next);
+  }
+
+  /** Stores a null-tolerant defensive copy; invalid entries are caught by graph validation. */
+  public void setNext(List<JumpCondition> next) {
+    this.next = next == null ? List.of() : new ArrayList<>(next);
+  }
+
+  /** Unmodifiable view; {@code null} selects direct predecessors. */
+  public List<String> getContextFrom() {
+    return contextFrom == null ? null : Collections.unmodifiableList(contextFrom);
+  }
+
+  /** Stores a defensive copy; {@code null} selects direct predecessors. */
+  public void setContextFrom(List<String> contextFrom) {
+    this.contextFrom = contextFrom == null ? null : new ArrayList<>(contextFrom);
+  }
 }

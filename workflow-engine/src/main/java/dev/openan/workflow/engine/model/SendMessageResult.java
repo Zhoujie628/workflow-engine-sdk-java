@@ -78,8 +78,23 @@ public class SendMessageResult {
         .toList();
   }
 
+  /** Unmodifiable view; stored via a defensive JSON snapshot. */
+  public Map<String, Object> getMetadata() {
+    return metadata == null ? null : java.util.Collections.unmodifiableMap(metadata);
+  }
+
+  /** Stores a defensive JSON snapshot of the supplied metadata. */
+  public void setMetadata(Map<String, Object> metadata) {
+    this.metadata = metadata == null ? Map.of() : BusinessValues.map(metadata);
+  }
+
+  /** Unmodifiable view of the structured response projection. */
+  public List<ReceivedMessage> getReceivedMessages() {
+    return java.util.Collections.unmodifiableList(receivedMessages);
+  }
+
   /** Snapshots the list supplied by transport adapters. */
   public void setReceivedMessages(List<ReceivedMessage> messages) {
-    this.receivedMessages = List.copyOf(messages);
+    this.receivedMessages = messages == null ? List.of() : List.copyOf(messages);
   }
 }

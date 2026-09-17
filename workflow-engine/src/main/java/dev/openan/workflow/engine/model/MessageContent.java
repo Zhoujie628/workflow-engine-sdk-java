@@ -56,6 +56,24 @@ public record MessageContent(
     extensions = Collections.unmodifiableSet(active);
   }
 
+  /** Unmodifiable view; the underlying snapshot is immutable by construction. */
+  @Override
+  public List<Part<?>> parts() {
+    return Collections.unmodifiableList(parts);
+  }
+
+  /** Unmodifiable view; the underlying snapshot is immutable by construction. */
+  @Override
+  public Map<String, Object> metadata() {
+    return Collections.unmodifiableMap(metadata);
+  }
+
+  /** Unmodifiable view; the underlying set is immutable by construction. */
+  @Override
+  public Set<String> extensions() {
+    return Collections.unmodifiableSet(extensions);
+  }
+
   /** Plain A2A text, without implicit extension activation or generation. */
   public static MessageContent text(String text) {
     return parts(List.of(new TextPart(Objects.requireNonNull(text, "text"))));

@@ -20,9 +20,9 @@
 package dev.openan.workflow.engine.model;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -35,13 +35,30 @@ import lombok.NoArgsConstructor;
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class Workflow {
   @Builder.Default private String id = "";
   @Builder.Default private String name = "";
   @Builder.Default private String description = "";
   @Builder.Default private List<WorkflowStep> steps = List.of();
+
+  /** All-args constructor with defensive copies; Lombok's builder routes through it. */
+  public Workflow(String id, String name, String description, List<WorkflowStep> steps) {
+    this.id = id == null ? "" : id;
+    this.name = name == null ? "" : name;
+    this.description = description == null ? "" : description;
+    this.steps = steps == null ? List.of() : new ArrayList<>(steps);
+  }
+
+  /** Unmodifiable view; steps are snapshots of the loaded definition. */
+  public List<WorkflowStep> getSteps() {
+    return steps == null ? null : Collections.unmodifiableList(steps);
+  }
+
+  /** Stores a defensive copy of the supplied step list. */
+  public void setSteps(List<WorkflowStep> steps) {
+    this.steps = steps == null ? List.of() : new ArrayList<>(steps);
+  }
 
   /**
    * Builds a workflow from a PSOP-style map (as returned by the orchestration center).
