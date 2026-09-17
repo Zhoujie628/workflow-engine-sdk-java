@@ -174,8 +174,12 @@
                 <version>2.46.1</version>
                 <configuration>
                     <java>
+                        <excludes>
+                            <!-- google-java-format cannot parse package-info.java -->
+                            <exclude>**/package-info.java</exclude>
+                        </excludes>
                         <googleJavaFormat>
-                            <version>1.22.0</version>
+                            <version>1.24.0</version>
                             <style>GOOGLE</style>
                         </googleJavaFormat>
                         <removeUnusedImports/>
