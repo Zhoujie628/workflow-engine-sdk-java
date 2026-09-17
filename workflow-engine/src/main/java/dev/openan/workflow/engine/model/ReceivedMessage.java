@@ -49,6 +49,18 @@ public record ReceivedMessage(
                 .toList();
   }
 
+  /** Unmodifiable view; artifacts are defensive snapshots. */
+  @Override
+  public Map<String, Object> taskMetadata() {
+    return java.util.Collections.unmodifiableMap(taskMetadata);
+  }
+
+  /** Unmodifiable view; artifacts are defensive snapshots. */
+  @Override
+  public List<Artifact> artifacts() {
+    return java.util.Collections.unmodifiableList(artifacts);
+  }
+
   private static void project(List<Part<?>> parts, List<Object> values) {
     for (Part<?> part : parts) {
       if (part instanceof TextPart text) {

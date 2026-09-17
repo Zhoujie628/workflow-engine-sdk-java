@@ -50,4 +50,16 @@ public record TaskExecutionResult(
             : receivedMessages.stream().flatMap(message -> message.outputs().stream()).toList();
     errorDetails = errorDetails == null ? java.util.Map.of() : BusinessValues.map(errorDetails);
   }
+
+  /** Unmodifiable view; outputs are defensive snapshots. */
+  @Override
+  public List<Object> outputs() {
+    return java.util.Collections.unmodifiableList(outputs);
+  }
+
+  /** Unmodifiable view; error details are defensive snapshots. */
+  @Override
+  public java.util.Map<String, Object> errorDetails() {
+    return java.util.Collections.unmodifiableMap(errorDetails);
+  }
 }

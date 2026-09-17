@@ -39,8 +39,8 @@ public final class BusinessFailure extends RuntimeException {
     return code;
   }
 
-  /** Safe business facts selected by the host. */
+  /** Safe business facts selected by the host; unmodifiable. */
   public Map<String, Object> details() {
-    return details;
+    return java.util.Collections.unmodifiableMap(details);
   }
 }
