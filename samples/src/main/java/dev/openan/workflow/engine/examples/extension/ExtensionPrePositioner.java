@@ -11,7 +11,7 @@
  *         http://www.apache.org/licenses/LICENSE-2.0
  *
  *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ *    distributed under the License is distributed on an AS IS BASIS, WITHOUT
  *    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
  *    License for the specific language governing permissions and limitations
  *    under the License.
@@ -23,8 +23,12 @@ import dev.openan.workflow.engine.client.ExtensionSender;
 import dev.openan.workflow.engine.client.NotificationSubscription;
 import dev.openan.workflow.engine.examples.demo.SpnCasePrompts;
 import dev.openan.workflow.engine.model.SendMessageResult;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import net.openan.a2at.sdk.core.model.StandardTemplates;
@@ -38,11 +42,17 @@ import org.slf4j.LoggerFactory;
  * <p>Single responsibility: send a one-shot whitelist operation and open a long-lived result
  * subscription for each non-workbench agent on separate channels. Individual workflow tasks do not
  * own these operations.
+ *
+ * <p>Agents are pre-positioned in parallel: each agent's Authorization-T + Notification-T sequence
+ * runs on its own worker, because every operation is LLM-bound (prompt generation plus
+ * agent-side validation) and the sequences of different agents are independent. Per-agent failures
+ * are counted and skipped exactly as before; they never abort other agents.
  */
 public class ExtensionPrePositioner {
 
   private static final Logger log = LoggerFactory.getLogger(ExtensionPrePositioner.class);
   private static final int AUTHORIZATION_VALIDATION_ATTEMPTS = 3;
+  private static final int MAX_PARALLEL_AGENTS = 4;
 
   private final net.openan.a2at.sdk.client.A2ATClient contentClient;
   private final Map<String, Object> authData;
@@ -92,6 +102,12 @@ public class ExtensionPrePositioner {
     }
   }
 
+  /** Per-agent result of one parallel pre-positioning run. */
+  private record AgentOutcome(
+      List<NotificationSubscription> subscriptions,
+      int authorizationFailures,
+      int notificationFailures) {}
+
   /**
    * Pre-position Authorization-T + Notification-T to every non-workbench agent.
    *
@@ -123,104 +139,152 @@ public class ExtensionPrePositioner {
           notificationCallback,
       Consumer<NotificationSubscription> subscriptionOpened) {
     long allStarted = System.nanoTime();
-    int targetCount = 0;
-    for (AgentCard card : agentCards) {
-      if (!card.name().contains("Workbench")) {
-        targetCount++;
-      }
-    }
+    List<AgentCard> targets =
+        agentCards.stream().filter(card -> !card.name().contains("Workbench")).toList();
     log.info(
-        "[PrePosition] START targetAgents={}, notificationCallback={}",
-        targetCount,
+        "[PrePosition] START targetAgents={}, parallel={}, notificationCallback={}",
+        targets.size(),
+        targets.size() > 1,
         notificationCallback != null);
-    java.util.ArrayList<NotificationSubscription> subscriptions = new java.util.ArrayList<>();
+    if (targets.isEmpty()) {
+      log.info(
+          "[PrePosition] DONE targetAgents=0, activeSubscriptions=0, "
+              + "authorizationFailures=0, notificationFailures=0, elapsedMs={}",
+          elapsedMillis(allStarted));
+      return List.of();
+    }
+
+    ExecutorService executor =
+        Executors.newFixedThreadPool(
+            Math.min(targets.size(), MAX_PARALLEL_AGENTS),
+            runnable -> {
+              Thread thread = new Thread(runnable, "preposition");
+              thread.setDaemon(true);
+              return thread;
+            });
+    try {
+      List<CompletableFuture<AgentOutcome>> futures =
+          targets.stream()
+              .map(
+                  card ->
+                      CompletableFuture.supplyAsync(
+                          () ->
+                              prePositionAgent(
+                                  card,
+                                  authorizationSender,
+                                  notificationSender,
+                                  notificationCallback,
+                                  subscriptionOpened),
+                          executor))
+              .toList();
+      CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+      ArrayList<NotificationSubscription> subscriptions = new ArrayList<>();
+      int authorizationFailures = 0;
+      int notificationFailures = 0;
+      for (CompletableFuture<AgentOutcome> future : futures) {
+        AgentOutcome outcome = future.join();
+        subscriptions.addAll(outcome.subscriptions());
+        authorizationFailures += outcome.authorizationFailures();
+        notificationFailures += outcome.notificationFailures();
+      }
+      log.info(
+          "[PrePosition] DONE targetAgents={}, activeSubscriptions={}, "
+              + "authorizationFailures={}, notificationFailures={}, elapsedMs={}",
+          targets.size(),
+          subscriptions.size(),
+          authorizationFailures,
+          notificationFailures,
+          elapsedMillis(allStarted));
+      return List.copyOf(subscriptions);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  /** Runs one agent's Authorization-T + Notification-T sequence; failures are counted, not thrown. */
+  private AgentOutcome prePositionAgent(
+      AgentCard card,
+      ExtensionSender authorizationSender,
+      ExtensionSender notificationSender,
+      java.util.function.BiConsumer<
+              NotificationSubscription, dev.openan.workflow.engine.model.ReceivedMessage>
+          notificationCallback,
+      Consumer<NotificationSubscription> subscriptionOpened) {
+    String name = card.name();
+    long agentStarted = System.nanoTime();
+    ArrayList<NotificationSubscription> subscriptions = new ArrayList<>();
     int authorizationFailures = 0;
     int notificationFailures = 0;
-    for (AgentCard card : agentCards) {
-      String name = card.name();
-      if (name.contains("Workbench")) {
-        continue;
-      }
-      long agentStarted = System.nanoTime();
-      long operationStarted = System.nanoTime();
-      try {
-        log.info("[PrePosition] SEND extension=Authorization-T, agent={}", name);
-        SendMessageResult authResult = sendAuthorization(authorizationSender, name);
-        log.info(
-            "[PrePosition] ACK extension=Authorization-T, agent={}, state={}, "
-                + "responseChars={}, elapsedMs={}",
-            name,
-            authResult.getTaskState(),
-            authResult.getText() != null ? authResult.getText().length() : 0,
-            elapsedMillis(operationStarted));
-        requireState(authResult, "Authorization-T", name, "TASK_STATE_COMPLETED");
-      } catch (RuntimeException e) {
-        authorizationFailures++;
-        log.warn(
-            "[PrePosition] OPERATION_FAILED extension=Authorization-T, agent={}, "
-                + "elapsedMs={}, errorType={}, message={}, action=continue",
-            name,
-            elapsedMillis(operationStarted),
-            e.getClass().getSimpleName(),
-            e.getMessage());
-      }
-
-      operationStarted = System.nanoTime();
-      NotificationSubscription subscription = null;
-      try {
-        log.info("[PrePosition] SEND extension=Notification-T, agent={}", name);
-        var notificationContent =
-            contentClient.generateNotificationPromptFromDataWithSchema(
-                notifData, notifSchema, StandardTemplates.SERVICE_RECOVERY.uri());
-        subscription =
-            notificationSender.openNotification(
-                name,
-                dev.openan.workflow.engine.client.A2atMessages.from(
-                    notificationContent, List.of(new org.a2aproject.sdk.spec.TextPart("订阅业务抢通事件"))),
-                notificationCallback == null ? (handle, event) -> {} : notificationCallback);
-        if (subscriptionOpened != null && subscription.isActive()) {
-          subscriptionOpened.accept(subscription);
-        }
-        var notificationResult = subscription.acknowledgement().join();
-        requireState(
-            notificationResult,
-            "Notification-T",
-            name,
-            "TASK_STATE_WORKING",
-            "TASK_STATE_COMPLETED");
-        subscriptions.add(subscription);
-        log.info(
-            "[PrePosition] ACK extension=Notification-T, agent={}, state={}, "
-                + "responseChars={}, elapsedMs={}",
-            name,
-            notificationResult.getTaskState(),
-            notificationResult.getText() != null ? notificationResult.getText().length() : 0,
-            elapsedMillis(operationStarted));
-        log.info(
-            "[PrePosition] AGENT_DONE agent={}, elapsedMs={}", name, elapsedMillis(agentStarted));
-      } catch (RuntimeException e) {
-        notificationFailures++;
-        if (subscription != null) {
-          subscription.close();
-        }
-        log.warn(
-            "[PrePosition] OPERATION_FAILED extension=Notification-T, agent={}, "
-                + "elapsedMs={}, errorType={}, message={}, action=continue",
-            name,
-            elapsedMillis(operationStarted),
-            e.getClass().getSimpleName(),
-            e.getMessage());
-      }
+    long operationStarted = System.nanoTime();
+    try {
+      log.info("[PrePosition] SEND extension=Authorization-T, agent={}", name);
+      SendMessageResult authResult = sendAuthorization(authorizationSender, name);
+      log.info(
+          "[PrePosition] ACK extension=Authorization-T, agent={}, state={}, "
+              + "responseChars={}, elapsedMs={}",
+          name,
+          authResult.getTaskState(),
+          authResult.getText() != null ? authResult.getText().length() : 0,
+          elapsedMillis(operationStarted));
+      requireState(authResult, "Authorization-T", name, "TASK_STATE_COMPLETED");
+    } catch (RuntimeException e) {
+      authorizationFailures++;
+      log.warn(
+          "[PrePosition] OPERATION_FAILED extension=Authorization-T, agent={}, "
+              + "elapsedMs={}, errorType={}, message={}, action=continue",
+          name,
+          elapsedMillis(operationStarted),
+          e.getClass().getSimpleName(),
+          e.getMessage());
     }
-    log.info(
-        "[PrePosition] DONE targetAgents={}, activeSubscriptions={}, "
-            + "authorizationFailures={}, notificationFailures={}, elapsedMs={}",
-        targetCount,
-        subscriptions.size(),
-        authorizationFailures,
-        notificationFailures,
-        elapsedMillis(allStarted));
-    return List.copyOf(subscriptions);
+
+    operationStarted = System.nanoTime();
+    NotificationSubscription subscription = null;
+    try {
+      log.info("[PrePosition] SEND extension=Notification-T, agent={}", name);
+      var notificationContent =
+          contentClient.generateNotificationPromptFromDataWithSchema(
+              notifData, notifSchema, StandardTemplates.SERVICE_RECOVERY.uri());
+      subscription =
+          notificationSender.openNotification(
+              name,
+              dev.openan.workflow.engine.client.A2atMessages.from(
+                  notificationContent, List.of(new org.a2aproject.sdk.spec.TextPart("订阅业务抢通事件"))),
+              notificationCallback == null ? (handle, event) -> {} : notificationCallback);
+      if (subscriptionOpened != null && subscription.isActive()) {
+        subscriptionOpened.accept(subscription);
+      }
+      var notificationResult = subscription.acknowledgement().join();
+      requireState(
+          notificationResult,
+          "Notification-T",
+          name,
+          "TASK_STATE_WORKING",
+          "TASK_STATE_COMPLETED");
+      subscriptions.add(subscription);
+      log.info(
+          "[PrePosition] ACK extension=Notification-T, agent={}, state={}, "
+              + "responseChars={}, elapsedMs={}",
+          name,
+          notificationResult.getTaskState(),
+          notificationResult.getText() != null ? notificationResult.getText().length() : 0,
+          elapsedMillis(operationStarted));
+      log.info("[PrePosition] AGENT_DONE agent={}, elapsedMs={}", name, elapsedMillis(agentStarted));
+    } catch (RuntimeException e) {
+      notificationFailures++;
+      if (subscription != null) {
+        subscription.close();
+      }
+      log.warn(
+          "[PrePosition] OPERATION_FAILED extension=Notification-T, agent={}, "
+              + "elapsedMs={}, errorType={}, message={}, action=continue",
+          name,
+          elapsedMillis(operationStarted),
+          e.getClass().getSimpleName(),
+          e.getMessage());
+    }
+    return new AgentOutcome(subscriptions, authorizationFailures, notificationFailures);
   }
 
   private SendMessageResult sendAuthorization(ExtensionSender sender, String agentName) {

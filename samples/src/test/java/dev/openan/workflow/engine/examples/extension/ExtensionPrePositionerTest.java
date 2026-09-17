@@ -47,6 +47,14 @@ class ExtensionPrePositionerTest {
             .orElseThrow();
   }
 
+  private static org.a2aproject.sdk.spec.AgentCard city2Card() {
+    return new WorkbenchAgentCatalog()
+        .load().stream()
+            .filter(card -> "SPN Domain Agent City2".equals(card.name()))
+            .findFirst()
+            .orElseThrow();
+  }
+
   private static NotificationSubscription newSubscription(String agentName) throws Exception {
     Constructor<NotificationSubscription> constructor =
         NotificationSubscription.class.getDeclaredConstructor(
@@ -168,6 +176,56 @@ class ExtensionPrePositionerTest {
     assertEquals(List.of(subscription), result.get(5, TimeUnit.SECONDS));
     assertTrue(notificationAttempted.get());
     assertSame(subscription, registeredSubscription.get());
+  }
+
+  @Test
+  void agentsArePositionedInParallel() throws Exception {
+    // Both agents must be inside openNotification concurrently: each call waits on the
+    // barrier, so a serial implementation can never satisfy it and fails via the
+    // resulting IllegalStateException (counted as a notification failure).
+    CountDownLatch bothEntered = new CountDownLatch(2);
+    NotificationSubscription city1Subscription = newSubscription("SPN Domain Agent City1");
+    NotificationSubscription city2Subscription = newSubscription("SPN Domain Agent City2");
+    ExtensionSender authorizationSender =
+        sender(
+            (method, args) -> {
+              if ("sendAuthorization".equals(method.getName())) {
+                return CompletableFuture.completedFuture(
+                    SendMessageResult.builder()
+                        .taskState("TASK_STATE_COMPLETED")
+                        .text("authorized")
+                        .build());
+              }
+              throw new UnsupportedOperationException(method.getName());
+            });
+    ExtensionSender notificationSender =
+        sender(
+            (method, args) -> {
+              if ("openNotification".equals(method.getName())) {
+                bothEntered.countDown();
+                if (!bothEntered.await(5, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException(
+                      "agents are not pre-positioned in parallel: only one entered openNotification");
+                }
+                NotificationSubscription sub =
+                    "SPN Domain Agent City1".equals(args[0])
+                        ? city1Subscription
+                        : city2Subscription;
+                acknowledge(sub, "TASK_STATE_WORKING");
+                return sub;
+              }
+              throw new UnsupportedOperationException(method.getName());
+            });
+
+    List<NotificationSubscription> subscriptions =
+        new ExtensionPrePositioner()
+            .prePosition(
+                authorizationSender,
+                notificationSender,
+                List.of(city1Card(), city2Card()),
+                (handle, received) -> {});
+
+    assertEquals(2, subscriptions.size());
   }
 
   @FunctionalInterface
