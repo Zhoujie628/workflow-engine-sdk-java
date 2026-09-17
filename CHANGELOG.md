@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- Send SSE heartbeat comments on streaming endpoints (`message:stream`, `tasks/{id}:subscribe`) at a configurable
+  interval (`a2at.server.heartbeat-interval-seconds`, default 15 seconds, `0` disables). Keeps intermediaries
+  from idle-timing-out long-running SSE connections during agent execution; the heartbeat integrates with the
+  emitter lifecycle and stops on stream completion, error, timeout, or client disconnect.
+
 ## [0.0.10] — 2026-09-16
 
 - Upgrade the A2A-T SDK dependency to 1.1.1 (patch release, no breaking API changes).
