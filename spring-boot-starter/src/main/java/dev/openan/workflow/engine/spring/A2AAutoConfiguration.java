@@ -234,8 +234,12 @@ public class A2AAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean
   public A2AController a2aController(
-      RestHandler restHandler, RequestHandler requestHandler, AgentCard agentCard) {
-    return new A2AController(restHandler, requestHandler, agentCard);
+      RestHandler restHandler,
+      RequestHandler requestHandler,
+      AgentCard agentCard,
+      A2AProperties properties) {
+    return new A2AController(
+        restHandler, requestHandler, agentCard, properties.getHeartbeatIntervalSeconds() * 1000L);
   }
 
   /**
