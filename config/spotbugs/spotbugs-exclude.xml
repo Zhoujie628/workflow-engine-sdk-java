@@ -5,14 +5,41 @@
   for this codebase's patterns. Clean up over time; new findings still block verify.
 -->
 <FindBugsFilter>
-    <!-- Returning/storing mutable collections in builders, records and config accessors is
-         the intended API surface; defensive copies are made at trust boundaries. -->
+    <!-- Lombok-generated builder fluent setters store the caller's reference into the transient
+         builder; build() routes through constructors that perform the defensive copies. -->
     <Match>
+        <Class name="~.*\$.*Builder"/>
         <Or>
             <Bug pattern="EI_EXPOSE_REP"/>
             <Bug pattern="EI_EXPOSE_REP2"/>
-            <Bug pattern="EI_EXPOSE_REP2_EI_EXPOSE_REP2"/>
         </Or>
+    </Match>
+
+    <!-- Engine-internal mutable-exposure acceptances (review on next touch):
+         - NotificationSubscription: the live completion/acknowledgement futures ARE the API
+         - RemoteA2AErrorException: error envelope headers, exception is terminal
+         - WireLog.Entry: internal observability record, hot path
+         - WorkflowEngineClientConfig: credentialsConfig already deep-copied/unmodifiable
+         - WorkflowExecutor: stores collaborator references during assembly
+         - A2AController: stores collaborator references during assembly -->
+    <Match>
+        <Or>
+            <Class name="~.*NotificationSubscription"/>
+            <Class name="~.*RemoteA2AErrorException"/>
+            <Class name="~.*WireLog\$Entry"/>
+            <Class name="~.*WorkflowEngineClientConfig"/>
+            <Class name="~.*WorkflowExecutor"/>
+            <Class name="~.*A2AController"/>
+        </Or>
+        <Or>
+            <Bug pattern="EI_EXPOSE_REP"/>
+            <Bug pattern="EI_EXPOSE_REP2"/>
+        </Or>
+    </Match>
+
+    <!-- Lombok-generated equals/hashCode re-check fields the compiler knows are non-null. -->
+    <Match>
+        <Bug pattern="RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"/>
     </Match>
 
     <!-- Java serialization is not used by this project. -->
@@ -69,13 +96,19 @@
          - NegotiationStrategy intentionally shadows the control interface name (sample mirror)
          - Boolean-returning booleanParam helper may return null to signal "unset"
          - handleLogin catches Exception broadly as the demo login boundary
-         - doPrivileged warning: SecurityManager is not used by this project -->
+         - doPrivileged warning: SecurityManager is not used by this project
+         - OmcAgentLauncher.servers(): demo server registry, iterated by the demo only
+         - SpringWorkbenchExecutor/SpringWorkbenchExtensionLifecycle: storing the Spring
+           properties bean reference is the standard Spring configuration pattern -->
     <Match>
         <Or>
             <Class name="~.*NegotiationBaseAgentExecutor.*"/>
             <Class name="~.*NotificationPolicy.*"/>
             <Class name="~.*examples.negotiation.NegotiationStrategy"/>
             <Class name="~.*JdkHttpA2AServer.*"/>
+            <Class name="~.*OmcAgentLauncher.*"/>
+            <Class name="~.*SpringWorkbenchExecutor.*"/>
+            <Class name="~.*SpringWorkbenchExtensionLifecycle.*"/>
             <Class name="~.*A2ATInitialization.*"/>
         </Or>
         <Bug pattern="DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED"/>
@@ -86,6 +119,9 @@
             <Class name="~.*NotificationPolicy.*"/>
             <Class name="~.*examples.negotiation.NegotiationStrategy"/>
             <Class name="~.*JdkHttpA2AServer.*"/>
+            <Class name="~.*OmcAgentLauncher.*"/>
+            <Class name="~.*SpringWorkbenchExecutor.*"/>
+            <Class name="~.*SpringWorkbenchExtensionLifecycle.*"/>
         </Or>
     </Match>
 </FindBugsFilter>

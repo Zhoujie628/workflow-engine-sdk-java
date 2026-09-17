@@ -6,6 +6,11 @@
   interval (`a2at.server.heartbeat-interval-seconds`, default 15 seconds, `0` disables). Keeps intermediaries
   from idle-timing-out long-running SSE connections during agent execution; the heartbeat integrates with the
   emitter lifecycle and stops on stream completion, error, timeout, or client disconnect.
+- Make collection fields on model types defensively copied and expose them through unmodifiable
+  views (`Workflow`, `WorkflowStep`, `WorkflowSearchResult`, `ExecutionResult`, `SendMessageResult`,
+  `TaskResult`, `BusinessFailure`, and the message records). Source- and binary-compatible; callers
+  that mutate the collections returned by these getters now receive `UnsupportedOperationException`
+  instead of silently corrupting engine-owned snapshots.
 
 ## [0.0.10] — 2026-09-16
 
