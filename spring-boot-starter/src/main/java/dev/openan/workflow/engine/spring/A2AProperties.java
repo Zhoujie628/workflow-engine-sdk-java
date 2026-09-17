@@ -66,8 +66,20 @@ public class A2AProperties {
   /** Idle timeout for server executor threads above the core size. */
   private int executorKeepAliveSeconds = 60;
 
+  /**
+   * Interval in seconds for SSE heartbeat comments on streaming endpoints. Keeps intermediaries
+   * (gateways, load balancers) from idle-timing-out long-running SSE connections during agent
+   * execution. Set to 0 to disable. Default: 15 seconds.
+   */
+  private int heartbeatIntervalSeconds = 15;
+
   private static int positive(int value, String name) {
     if (value <= 0) throw new IllegalArgumentException(name + " must be positive");
+    return value;
+  }
+
+  private static int nonNegative(int value, String name) {
+    if (value < 0) throw new IllegalArgumentException(name + " must be non-negative");
     return value;
   }
 
@@ -159,5 +171,14 @@ public class A2AProperties {
 
   public void setExecutorKeepAliveSeconds(int executorKeepAliveSeconds) {
     this.executorKeepAliveSeconds = positive(executorKeepAliveSeconds, "executorKeepAliveSeconds");
+  }
+
+  public int getHeartbeatIntervalSeconds() {
+    return heartbeatIntervalSeconds;
+  }
+
+  public void setHeartbeatIntervalSeconds(int heartbeatIntervalSeconds) {
+    this.heartbeatIntervalSeconds =
+        nonNegative(heartbeatIntervalSeconds, "heartbeatIntervalSeconds");
   }
 }

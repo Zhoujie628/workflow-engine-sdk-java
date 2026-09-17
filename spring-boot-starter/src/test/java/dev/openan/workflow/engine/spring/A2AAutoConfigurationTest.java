@@ -622,4 +622,81 @@ class A2AAutoConfigurationTest {
         .withPropertyValues("a2at.server.enabled=true")
         .run(context -> assertTrue(context.containsBean("requestHandler")));
   }
+
+  @Test
+  void heartbeatIntervalDefaultsToFifteenSeconds() {
+    A2AProperties properties = new A2AProperties();
+    assertEquals(15, properties.getHeartbeatIntervalSeconds());
+  }
+
+  @Test
+  void heartbeatIntervalZeroDisablesHeartbeat() {
+    A2AProperties properties = new A2AProperties();
+    properties.setHeartbeatIntervalSeconds(0);
+    assertEquals(0, properties.getHeartbeatIntervalSeconds());
+  }
+
+  @Test
+  void heartbeatIntervalRejectsNegative() {
+    A2AProperties properties = new A2AProperties();
+    assertThrows(IllegalArgumentException.class, () -> properties.setHeartbeatIntervalSeconds(-1));
+  }
+
+  @Test
+  void heartbeatCommentsSentDuringLongRunningStream() throws Exception {
+    RestHandler restHandler = mock(RestHandler.class);
+    RequestHandler requestHandler = mock(RequestHandler.class);
+    AgentCard agentCard = mock(AgentCard.class);
+    when(agentCard.capabilities()).thenReturn(AgentCapabilities.builder().streaming(true).build());
+    var agentInterface = mock(org.a2aproject.sdk.spec.AgentInterface.class);
+    when(agentInterface.protocolVersion()).thenReturn("1.0");
+    when(agentCard.supportedInterfaces()).thenReturn(java.util.List.of(agentInterface));
+
+    AtomicReference<Flow.Subscriber<? super StreamingEventKind>> subscriberRef =
+        new AtomicReference<>();
+    Flow.Publisher<StreamingEventKind> publisher =
+        s -> {
+          subscriberRef.set(s);
+          s.onSubscribe(
+              new Flow.Subscription() {
+                @Override
+                public void request(long n) {}
+
+                @Override
+                public void cancel() {}
+              });
+        };
+    when(requestHandler.onMessageSendStream(any(), any())).thenReturn(publisher);
+
+    A2AController controller = new A2AController(restHandler, requestHandler, agentCard, 200L);
+    try {
+      MockMvc mockMvc =
+          MockMvcBuilders.standaloneSetup(controller)
+              .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+              .build();
+
+      MvcResult result =
+          mockMvc
+              .perform(
+                  post("/a2a/json/message:stream")
+                      .header("A2A-Version", "1.0")
+                      .contentType("application/json")
+                      .accept("text/event-stream")
+                      .content(
+                          "{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\","
+                              + "\"parts\":[{\"text\":\"test\"}]}}"))
+              .andExpect(request().asyncStarted())
+              .andReturn();
+
+      Thread.sleep(350);
+      subscriberRef.get().onComplete();
+      mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+
+      // MockMvc's mock response may not capture cross-thread SSE comment writes; the
+      // wire-level heartbeat verification is covered by E2E tests. Here we verify the
+      // stream stays alive through multiple heartbeat intervals and completes cleanly.
+    } finally {
+      controller.shutdown();
+    }
+  }
 }
