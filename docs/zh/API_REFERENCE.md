@@ -657,6 +657,7 @@ getReceivedMessages() 是保留层级的响应来源，getOutputs() 为便利投
 | `a2at.server.executor-max-size`              | `8`                        | 服务端执行器最大线程数                                   |
 | `a2at.server.executor-queue-capacity`        | `100`                      | 服务端执行器有界队列容量                                 |
 | `a2at.server.executor-keep-alive-seconds`    | `60`                       | 非核心线程存活时间（秒）                                 |
+| `a2at.server.heartbeat-interval-seconds`     | `15`                       | SSE 心跳注释间隔（秒）。防止网关在 Agent 长时间执行期间因空闲超时掐断流式连接。设为 `0` 禁用 |
 
 ```yaml
 a2at:
@@ -669,6 +670,7 @@ a2at:
     executor-core-size: 8
     executor-max-size: 16
     executor-queue-capacity: 200
+    heartbeat-interval-seconds: 15
 ```
 
 ### A2AAutoConfiguration

@@ -704,6 +704,7 @@ Configuration properties prefixed with `a2at.server`:
 | `a2at.server.executor-max-size`              | `8`                        | Server executor maximum threads                                        |
 | `a2at.server.executor-queue-capacity`        | `100`                      | Bounded server executor queue capacity                                 |
 | `a2at.server.executor-keep-alive-seconds`    | `60`                       | Non-core thread keep-alive in seconds                                  |
+| `a2at.server.heartbeat-interval-seconds`     | `15`                       | SSE heartbeat comment interval on streaming endpoints. Keeps intermediaries from idle-timing-out long-running SSE connections. `0` disables |
 
 ```yaml
 a2at:
@@ -716,6 +717,7 @@ a2at:
     executor-core-size: 8
     executor-max-size: 16
     executor-queue-capacity: 200
+    heartbeat-interval-seconds: 15
 ```
 
 ### A2AAutoConfiguration
