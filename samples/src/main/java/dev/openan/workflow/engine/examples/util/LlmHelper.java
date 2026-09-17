@@ -197,7 +197,7 @@ public final class LlmHelper {
       log.warn("[LlmHelper] Missing LLM config in .env (need API_KEY, BASE_URL, MODEL)");
       return null;
     }
-    int maxTokens = getIntProperty(properties, "A2AT_LLM_MAX_TOKENS", 2000);
+    int maxTokens = getIntProperty(properties, "A2AT_LLM_MAX_TOKENS", 4000);
     double temperature = getDoubleProperty(properties, "A2AT_LLM_TEMPERATURE", 0.0);
     int timeout = getIntProperty(properties, "A2AT_LLM_TIMEOUT_SECONDS", 60);
     return new Config(envFile.toString(), apiKey, baseUrl, model, maxTokens, temperature, timeout);
