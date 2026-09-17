@@ -18,8 +18,7 @@
  */
 
 /**
- * Protocol adaptation: transport runtimes, authentication, negotiation correlation, independent
- * subscriptions, and wire observability. Content generation stays with the host.
+ * Spring Boot auto-configuration for the A2A server side.
  */
 @org.jspecify.annotations.NullMarked
-package dev.openan.workflow.engine.client;
+package dev.openan.workflow.engine.spring;

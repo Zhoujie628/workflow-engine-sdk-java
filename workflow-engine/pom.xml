@@ -140,6 +140,13 @@
             <version>${slf4j.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- Null-safety annotations matching the A2A SDK's JSpecify contract -->
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+            <version>1.0.0</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>
