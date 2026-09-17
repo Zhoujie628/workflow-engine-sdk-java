@@ -195,6 +195,81 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- Checkstyle: naming, complexity, structural checks (formatting is Spotless) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.6.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.puppycrawl.tools</groupId>
+                        <artifactId>checkstyle</artifactId>
+                        <version>10.20.0</version>
+                    </dependency>
+                </dependencies>
+                <configuration>
+                    <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml</configLocation>
+                    <propertyExpansion>config_loc=${maven.multiModuleProjectDirectory}/config/checkstyle</propertyExpansion>
+                    <includeTestSourceDirectory>false</includeTestSourceDirectory>
+                    <consoleOutput>true</consoleOutput>
+                    <failOnViolation>true</failOnViolation>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>checkstyle-check</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- SpotBugs: bug pattern detection (null dereference, resource leaks, concurrency) -->
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>4.8.6.4</version>
+                <configuration>
+                    <effort>Max</effort>
+                    <threshold>Medium</threshold>
+                    <excludeFilterFile>${maven.multiModuleProjectDirectory}/config/spotbugs/spotbugs-exclude.xml</excludeFilterFile>
+                    <xmlOutput>true</xmlOutput>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- JaCoCo: test coverage reporting (no threshold enforcement) -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <id>jacoco-prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>

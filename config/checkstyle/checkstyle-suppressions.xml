@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<!-- Existing-code suppressions; new code must pass. Clean these up over time. -->
+<suppressions>
+    <!-- WireLogFormatter: deeply nested if-chains from protocol formatting -->
+    <suppress checks="NestedIfDepth"
+              files="WireLogFormatter\.java"/>
+
+    <!-- ExecutePsop builder-facing constructor carries the full option set -->
+    <suppress checks="ParameterNumber"
+              files="ExecutePsop\.java"/>
+
+    <!-- Utility classes with intentional public constructors (builder/entry-point API surface) -->
+    <suppress checks="HideUtilityClassConstructor"
+              files="FailureMapping\.java|LoadPsop\.java|ExecutePsop\.java"/>
+    <!-- Spring Boot entry-point class: implicit constructor is the standard pattern -->
+    <suppress checks="HideUtilityClassConstructor"
+              files="SpringWorkbenchApplication\.java"/>
+</suppressions>
