@@ -67,6 +67,15 @@ For Spring Boot server-side integration:
 </dependency>
 ```
 
+### Agent credentials for the samples
+
+The sample demos read `samples/src/main/resources/spn_agent_credentials.json`, which is
+git-ignored. Copy `spn_agent_credentials.example.json` to that name to run against the bundled
+demo OMC — the checked-in defaults pair with the demo's embedded OMC server. When targeting a
+real OMC, replace the endpoint and user name, and encrypt the password with `CredentialCrypto`
+(set `A2AT_CRED_KEY`, then use the `enc:`-prefixed output). Tests use the tracked test resource
+and need no setup.
+
 ### 2. Execute a workflow
 
 The complete, compiled example is [HostQuickStart.java](samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
