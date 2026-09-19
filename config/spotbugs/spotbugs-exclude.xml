@@ -90,6 +90,18 @@
         </Or>
     </Match>
 
+    <!-- Dev-only gateway simulator and secondary-auth classes (Eastcom integration):
+         the simulator and token service use catch-and-continue request loops, and the
+         secondary-auth guard/properties share mutable Spring configuration objects. -->
+    <Match>
+        <Or>
+            <Class name="~.*EastcomOrderSimulatorServer.*"/>
+            <Class name="~.*EastcomTokenService.*"/>
+            <Class name="~.*SecondaryAuthGuard.*"/>
+            <Class name="~.*SecondaryAuthProperties.*"/>
+        </Or>
+    </Match>
+
     <!-- Samples/demo code: accepted demo-quality items; review on next touch.
          - Dead store in parseNegotiationContext (leftover context map)
          - Vacuous instanceof in NotificationPolicy (defensive String check)
