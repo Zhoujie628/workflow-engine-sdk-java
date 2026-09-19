@@ -39,7 +39,7 @@
   carries no taskId. Invalid negotiation metadata on a bare message now fails explicitly instead of being silently
   treated as a normal successful response.
 - Converge non-functional formatting and javadoc drift between `main` and `dev` so the branches differ only in the
-  Eastcom platform integration.
+  instruction-platform integration.
 
 ## [0.0.8] — 2026-09-13
 
