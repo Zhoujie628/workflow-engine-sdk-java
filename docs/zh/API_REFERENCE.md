@@ -363,6 +363,10 @@ static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -378,6 +382,11 @@ static List<WorkflowSearchResult> search(
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls,
+        LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -393,6 +402,15 @@ LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验�
 
 ### RegistryClient
 
+认证与 TLS 独立。HttpAuthProvider.bearer(tokenSupplier) 每次请求读取当前凭据；
+OAuth2 获取/刷新由应用负责。LoadPsop 的 accessToken 改用 Authorization: Bearer，不进入查询参数。
+HttpServiceException 提供 getStatusCode()、isAuthenticationFailure()，异常内容经过脱敏。
+成功 HTTP 状态的 JSON/模型转换失败抛 HttpResponseException，提供 getStatusCode()；
+不携带原始正文或解析 cause，避免异常链泄露凭据。
+TlsPolicy.strict()/trustedCa() 校验证书链与主机名，insecure() 对当前客户端关闭两项校验，
+mutualTls() 配置客户端身份。旧匿名 boolean 构造的 false 仍只关闭证书链校验；
+新集成优先使用显式认证/TLS 构造。
+
 双参数构造默认使用 30 秒完整响应截止时间。可通过
 `new RegistryClient(url, sslVerify, Duration.ofSeconds(15))` 设置正值预算，包含响应正文读取；线程中断会取消待处理请求。
 注册中心方法返回 JSON Map，使用 AgentCardJacksonModule 转换为 AgentCard，详见集成指南。
@@ -401,7 +419,9 @@ LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验�
 从注册中心获取和注册 AgentCard。
 
 ```java
-new RegistryClient("https://127.0.0.1:5000",false)
+new RegistryClient(url, HttpAuthProvider.bearer(tokenSupplier))
+new RegistryClient(url, auth, TlsPolicy.strict())
+new RegistryClient(url, auth, TlsPolicy.insecure(), Duration.ofSeconds(15))
 
 List<Map<String, Object>> fetchAgentCards()
 
