@@ -46,6 +46,7 @@ class SpringSpnDemoFailureE2ETest {
         "--a2a.transport-mode=direct",
         "--a2a.embedded-omc-enabled=false",
         "--a2a.orch-url=http://127.0.0.1:1",
+        "--a2a.local-workflow-enabled=true",
         "--a2a.a2at-env-path=" + OfflineA2ATLlmClient.envPath()
     };
   }
