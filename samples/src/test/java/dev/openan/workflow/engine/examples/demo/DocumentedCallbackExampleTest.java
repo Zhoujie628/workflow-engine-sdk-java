@@ -91,6 +91,7 @@ class DocumentedCallbackExampleTest {
       assertTrue(development.contains("orchAuth, orchTls"));
       assertFalse(development.contains("psopId, token, false"));
       assertTrue(development.contains("subscribeOn(Schedulers.boundedElastic())"));
+      assertTrue(development.contains("produces = MediaType.TEXT_EVENT_STREAM_VALUE"));
       String developmentSource =
           "import dev.openan.workflow.engine.registry.*; import dev.openan.workflow.engine.model.*; "
               + "class DocumentedDevelopment { String baseUrl = \"https://orchestration.example\";\n"

@@ -269,7 +269,7 @@ private final HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
 
 ```java
 
-@GetMapping("/execute/{psopId}")
+@GetMapping(value = "/execute/{psopId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public Flux<String> execute(@PathVariable String psopId) {
     // LoadPsop is blocking; keep login/retrieval off the reactive event loop.
     return Mono.fromCallable(() -> LoadPsop.load(baseUrl, psopId, orchAuth, orchTls))
@@ -295,7 +295,7 @@ public Flux<String> execute(@PathVariable String psopId) {
 }
 ```
 
-Imports for the reactive adapter: `reactor.core.publisher.Mono/Flux` and `reactor.core.scheduler.Schedulers`; expose it with the host's SSE response media type/serialization. The framework owns SSE framing. For explicit machine Bearer mode, `HttpAuthProvider.bearer(tokenSupplier)` remains supported, with host-owned token lifecycle. Account PSOP reads have at most one 401 renewal/retry; writes are not replayed. See [account integration](INTEGRATION_GUIDE.md).
+Imports for the reactive adapter: `reactor.core.publisher.Mono/Flux` and `reactor.core.scheduler.Schedulers` and `org.springframework.http.MediaType`; expose it with the host's SSE response media type/serialization. The framework owns SSE framing. For explicit machine Bearer mode, `HttpAuthProvider.bearer(tokenSupplier)` remains supported, with host-owned token lifecycle. Account PSOP reads have at most one 401 renewal/retry; writes are not replayed. See [account integration](INTEGRATION_GUIDE.md).
 
 ### Cancellation
 

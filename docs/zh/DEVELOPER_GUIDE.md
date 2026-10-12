@@ -254,7 +254,7 @@ private final HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
 
 
 ```java
-@GetMapping("/execute/{psopId}")
+@GetMapping(value = "/execute/{psopId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public Flux<String> execute(@PathVariable String psopId) {
     // LoadPsop is blocking; keep login/retrieval off the reactive event loop.
     return Mono.fromCallable(() -> LoadPsop.load(baseUrl, psopId, orchAuth, orchTls))
@@ -280,7 +280,7 @@ public Flux<String> execute(@PathVariable String psopId) {
 }
 ```
 
-响应式适配使用 `reactor.core.publisher.Mono/Flux` 和 `reactor.core.scheduler.Schedulers`，由宿主设置 SSE 媒体类型及序列化，框架负责 SSE 帧格式。显式机器 Bearer 模式仍可用 `HttpAuthProvider.bearer(tokenSupplier)`，Token 生命周期由宿主负责。账号 PSOP 读取最多一次 401 续期/重试，不重放写请求。详见[账号接入](INTEGRATION_GUIDE.md)。
+响应式适配使用 `reactor.core.publisher.Mono/Flux`、`reactor.core.scheduler.Schedulers` 和 `org.springframework.http.MediaType`，由宿主设置 SSE 媒体类型及序列化，框架负责 SSE 帧格式。显式机器 Bearer 模式仍可用 `HttpAuthProvider.bearer(tokenSupplier)`，Token 生命周期由宿主负责。账号 PSOP 读取最多一次 401 续期/重试，不重放写请求。详见[账号接入](INTEGRATION_GUIDE.md)。
 
 ### 取消
 
