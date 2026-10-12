@@ -26,13 +26,23 @@ import java.util.function.Supplier;
 
 /**
  * Supplies management HTTP credentials immediately before each request. Independent of A2A
- * authentication: applications own token acquisition, caching and refresh, including OAuth2.
- * Implementations shared across threads must be thread-safe and must not log credentials.
+ * authentication: applications own OAuth2 acquisition/refresh; OrchestrationAccountAuth provides
+ * optional first-party account sessions for PSOP APIs. Implementations shared across threads must
+ * be thread-safe and must not log credentials.
  */
 @FunctionalInterface
 public interface HttpAuthProvider {
   /** Returns authentication headers for this request; never null. */
   Map<String, String> headers(URI requestUri);
+
+  /**
+   * Allows one credential refresh after a rejected PSOP read/search. The headers are those actually
+   * sent, so implementations can avoid invalidating a newer token acquired by another thread.
+   * Defaults to no retry; this hook is never used to replay business writes.
+   */
+  default boolean onUnauthorized(URI requestUri, Map<String, String> rejectedHeaders) {
+    return false;
+  }
 
   /** Explicit anonymous access, only for a service configured to allow it. */
   static HttpAuthProvider none() {

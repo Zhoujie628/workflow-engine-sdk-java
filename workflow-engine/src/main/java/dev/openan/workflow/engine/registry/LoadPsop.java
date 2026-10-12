@@ -22,16 +22,12 @@ package dev.openan.workflow.engine.registry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import javax.net.ssl.HttpsURLConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,7 +86,7 @@ public class LoadPsop {
             + "/api/v1/orchestrate/psop/"
             + URLEncoder.encode(psopId, StandardCharsets.UTF_8).replace("+", "%20");
     log.info("[Registry] Loading PSOP from {}", url);
-    HttpResult resp = execute("GET", url, null, auth, tls, timeouts);
+    CenterHttpClient.Response resp = execute("GET", url, null, auth, tls, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
@@ -156,7 +152,7 @@ public class LoadPsop {
     String url = HttpAuthentication.baseUrl(baseUrl) + "/api/v1/orchestrate/search";
     log.info("[Registry] Searching PSOP at {} (top_n={})", url, topN);
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
-    HttpResult resp = execute("POST", url, jsonBody, auth, tls, timeouts);
+    CenterHttpClient.Response resp = execute("POST", url, jsonBody, auth, tls, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
@@ -199,12 +195,12 @@ public class LoadPsop {
         : HttpAuthProvider.bearer(token);
   }
 
-  private static HttpServiceException requestFailure(HttpResult response) {
+  private static HttpServiceException requestFailure(CenterHttpClient.Response response) {
     return new HttpServiceException(
         "Orchestration center", response.statusCode(), response.body(), response.credentials());
   }
 
-  private static HttpResult execute(
+  private static CenterHttpClient.Response execute(
       String method,
       String url,
       String jsonBody,
@@ -216,32 +212,13 @@ public class LoadPsop {
     java.util.Objects.requireNonNull(auth, "auth");
     java.util.Objects.requireNonNull(tls, "tls");
     URI uri = URI.create(url);
-    Map<String, String> headers = HttpAuthentication.headers(auth, uri);
-    HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
-    try {
-      if (connection instanceof HttpsURLConnection https) tls.configure(https);
-      connection.setInstanceFollowRedirects(false);
-      connection.setConnectTimeout(timeouts.connectTimeoutMillis());
-      connection.setReadTimeout(timeouts.readTimeoutMillis());
-      connection.setRequestMethod(method);
-      headers.forEach(connection::setRequestProperty);
-      if (jsonBody != null) {
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json");
-        try (OutputStream output = connection.getOutputStream()) {
-          output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-        }
-      }
-      int status = connection.getResponseCode();
-      InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-      String body = input == null ? "" : new String(input.readAllBytes(), StandardCharsets.UTF_8);
-      if (input != null) {
-        input.close();
-      }
-      return new HttpResult(status, body, headers);
-    } finally {
-      connection.disconnect();
+    var response = CenterHttpClient.execute(method, uri, jsonBody, auth, tls, timeouts, 0);
+    // Both operations are read-only (search uses POST); no business execution/write is replayed.
+    if (response.statusCode() == 401
+        && HttpAuthentication.onUnauthorized(auth, uri, response.credentials())) {
+      return CenterHttpClient.execute(method, uri, jsonBody, auth, tls, timeouts, 0);
     }
+    return response;
   }
 
   /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
@@ -282,6 +259,4 @@ public class LoadPsop {
       return Math.toIntExact(readTimeout.toMillis());
     }
   }
-
-  private record HttpResult(int statusCode, String body, Map<String, String> credentials) {}
 }

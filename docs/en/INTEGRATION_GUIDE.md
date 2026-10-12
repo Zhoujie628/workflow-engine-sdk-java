@@ -550,8 +550,10 @@ Common event types: `START`, `STEP_START`, `TASK_REQUEST`,
 
 ```java
 // Center credentials are independent of A2A AuthProvider and agent credentials.
-HttpAuthProvider orchAuth = HttpAuthProvider.bearer(() -> System.getenv("ORCH_API_TOKEN"));
 TlsPolicy orchTls = TlsPolicy.strict(); // Or trustedCa("/external/certs/ca.pem").
+HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        "https://orchestration.example.com", System.getenv("ORCH_USERNAME"),
+        System.getenv("ORCH_PASSWORD"), orchTls);
 // Search by intent
 List<WorkflowSearchResult> results = LoadPsop.search(
                 "https://orchestration.example.com", "analyze service request", 5, orchAuth, orchTls);
@@ -595,8 +597,25 @@ Custom authentication implements `headers(URI)` and returns business-defined hea
 Duplicate case-insensitive or reserved transport headers are rejected. Use `HttpAuthProvider.none()`
 only when the service deliberately allows anonymous access or uses mTLS identity instead.
 
-SpringSpnDemo uses `ORCH_API_TOKEN`, `ORCH_VERIFY_SERVER` (default true), and optional
-`ORCH_CA_CERTS_PATH`, independently of `A2A_SSL_VERIFY` and agent/Order credentials.
+SpringSpnDemo uses `ORCH_USERNAME` and `ORCH_PASSWORD` (the login-page account),
+`ORCH_VERIFY_SERVER` (default true), and optional `ORCH_CA_CERTS_PATH`, independently
+of `A2A_SSL_VERIFY` and agent/Order credentials. Supply the password through an external
+secret, never in committed YAML or command-line arguments. The shared account provider
+logs in lazily at `POST /api/v1/auth/token`, sends `{username, password}` as JSON, and
+caches `access_token` according to `expires_in`. Expiry is handled by logging in again;
+this first-party endpoint is not an OAuth2 password grant or refresh-token server.
+
+Only PSOP load/search may retry once after 401 with refreshed account credentials.
+403, 429, service errors, TLS/network failures and rejected logins are not retried.
+Credentials are scoped to the configured center's PSOP API, never query strings/cookies
+or another origin. Login and PSOP calls must use the same center TLS policy; skipping
+server verification does not skip account authentication. HTTP is supported for isolated
+development, but exposes the login password; prefer verified HTTPS in deployments.
+Share one `OrchestrationAccountAuth` instance across executions to reuse its thread-safe
+session cache. No center credentials affect Task-T or Notification-T streams.
+
+Alternatively set `ORCH_API_TOKEN` alone for an externally managed Bearer; do not combine
+it with account credentials. Static/supplier Bearer providers do not opt into retries.
 For dynamic/custom credentials, provide a bean named `orchestrationHttpAuthProvider`.
 For mTLS or an application-owned TLS policy, provide a `TlsPolicy` bean named `orchestrationTlsPolicy`.
 HostQuickStart requires `REGISTRY_API_TOKEN` for registry discovery.
