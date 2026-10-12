@@ -87,7 +87,17 @@ class DocumentedCallbackExampleTest {
             void run() throws Exception {
           """
           + block(integration, "TlsPolicy orchTls =") + "\n}}";
-      for (String source : List.of(callbackSource, quickStartSource, centerSource)) {
+      String development = Files.readString(root.resolve("docs/" + language + "/DEVELOPER_GUIDE.md"));
+      assertTrue(development.contains("orchAuth, orchTls"));
+      assertFalse(development.contains("psopId, token, false"));
+      assertTrue(development.contains("subscribeOn(Schedulers.boundedElastic())"));
+      String developmentSource =
+          "import dev.openan.workflow.engine.registry.*; import dev.openan.workflow.engine.model.*; "
+              + "class DocumentedDevelopment { String baseUrl = \"https://orchestration.example\";\n"
+              + block(development, "private final TlsPolicy orchTls =") + "\n"
+              + "Workflow load(String psopId) throws Exception { "
+              + "return LoadPsop.load(baseUrl, psopId, orchAuth, orchTls); }}";
+      for (String source : List.of(callbackSource, quickStartSource, centerSource, developmentSource)) {
       JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
       assertNotNull(compiler, "Tests require a JDK, not a JRE");
       DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
