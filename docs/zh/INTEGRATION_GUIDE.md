@@ -513,8 +513,10 @@ ExecutePsop.builder()
 
 ```java
 // 中心凭据与 A2A AuthProvider、智能体凭据独立。
-HttpAuthProvider orchAuth = HttpAuthProvider.bearer(() -> System.getenv("ORCH_API_TOKEN"));
 TlsPolicy orchTls = TlsPolicy.strict(); // 私有 CA 可用 trustedCa("/external/certs/ca.pem")。
+HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        "https://orchestration.example.com", System.getenv("ORCH_USERNAME"),
+        System.getenv("ORCH_PASSWORD"), orchTls);
 // 按意图搜索
 List<WorkflowSearchResult> results = LoadPsop.search(
                 "https://orchestration.example.com", "分析服务请求", 5, orchAuth, orchTls);
@@ -556,8 +558,22 @@ LoadPsop 不修改 JVM 全局 SSLContext、默认 SocketFactory 或 HostnameVeri
 `headers(URI)`，返回自定义请求头；大小写重复及保留的传输请求头会被拒绝。
 `HttpAuthProvider.none()` 只用于服务明确允许匿名访问或使用 mTLS 身份的场景。
 
-SpringSpnDemo 使用 `ORCH_API_TOKEN`、`ORCH_VERIFY_SERVER`（默认 true）和可选
-`ORCH_CA_CERTS_PATH`，不复用 `A2A_SSL_VERIFY` 或智能体/Order 凭据。
+SpringSpnDemo 使用 `ORCH_USERNAME`、`ORCH_PASSWORD`（与登录页面相同的账号）、
+`ORCH_VERIFY_SERVER`（默认 true）及可选 `ORCH_CA_CERTS_PATH`，不复用
+`A2A_SSL_VERIFY` 或智能体/Order 凭据。密码通过外部 Secret 注入，不写入提交的
+YAML 或命令行参数。共享账号提供器首次调用时向 `POST /api/v1/auth/token`
+发送 `{username, password}` JSON，按 `expires_in` 缓存 `access_token`；到期后
+重新登录。该第一方接口不是 OAuth2 密码授权或 refresh-token 服务。
+
+只有 PSOP 加载/搜索在 401 后允许刷新凭据并最多重试一次；403、429、服务错误、
+TLS/网络失败和登录拒绝均不重试。凭据限定在配置的编排中心 PSOP API，不进入
+查询参数或 Cookie，不发往其他来源。登录和 PSOP 使用相同的中心 TLS 策略；
+关闭服务端证书校验不关闭账号鉴权。HTTP 用于隔离联调，但会明文传输密码，
+部署应优先使用校验对端的 HTTPS。多个执行共享同一 `OrchestrationAccountAuth`
+实例，复用线程安全的会话缓存；中心账号不影响 Task-T 或 Notification-T 流。
+
+外部管理的 Bearer 可单独设置 `ORCH_API_TOKEN`，不能与账号密码混用；
+静态 Token/supplier 提供器默认不参与 401 自动重试。
 动态或自定义认证可提供名为 `orchestrationHttpAuthProvider` 的 Spring bean；
 mTLS 或应用自管 TLS 策略可提供名为 `orchestrationTlsPolicy` 的 TlsPolicy bean。
 HostQuickStart 使用 `REGISTRY_API_TOKEN` 完成注册中心发现认证。

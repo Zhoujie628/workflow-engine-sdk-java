@@ -112,7 +112,7 @@ class DocumentedCallbackExampleTest {
           class DocumentedCenters {
             void run() throws Exception {
           """
-          + block(integration, "HttpAuthProvider orchAuth =") + "\n}}";
+          + block(integration, "TlsPolicy orchTls =") + "\n}}";
       for (String source : List.of(callbackSource, quickStartSource, centerSource)) {
       JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
       assertNotNull(compiler, "Tests require a JDK, not a JRE");

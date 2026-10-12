@@ -67,12 +67,13 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
       org.springframework.beans.factory.ObjectProvider<TlsPolicy> centerTlsProvider) {
     this.runtimeFactory = runtimeFactory;
     this.properties = properties;
-    this.centerAuth = centerAuthProvider.getIfAvailable(
-        () -> HttpAuthProvider.bearer(properties::getOrchApiToken));
     this.centerTls = centerTlsProvider.getIfAvailable(() ->
         !properties.isOrchVerifyServer() ? TlsPolicy.insecure()
         : properties.getOrchCaCertsPath() == null || properties.getOrchCaCertsPath().isBlank()
             ? TlsPolicy.strict() : TlsPolicy.trustedCa(properties.getOrchCaCertsPath()));
+    this.centerAuth = centerAuthProvider.getIfAvailable(
+        () -> dev.openan.workflow.engine.examples.config.OrchestrationAccess.authentication(
+            properties, centerTls));
   }
 
   private static long elapsedMillis(long startedNanos) {

@@ -66,6 +66,8 @@ final class HttpAuthentication {
     Map<String, String> supplied;
     try {
       supplied = Objects.requireNonNull(auth.headers(uri), "authentication headers");
+    } catch (HttpServiceException | HttpResponseException safeFailure) {
+      throw safeFailure;
     } catch (RuntimeException providerFailure) {
       // IAM clients may include credentials or response bodies in their exception messages.
       throw new IllegalStateException(
@@ -90,5 +92,16 @@ final class HttpAuthentication {
           result.put(name, value);
         });
     return Map.copyOf(result);
+  }
+
+  static boolean onUnauthorized(HttpAuthProvider auth, URI uri, Map<String, String> headers) {
+    try {
+      return auth.onUnauthorized(uri, headers);
+    } catch (RuntimeException providerFailure) {
+      throw new IllegalStateException(
+          "HTTP authentication refresh failed ("
+              + providerFailure.getClass().getSimpleName()
+              + ")");
+    }
   }
 }

@@ -28,6 +28,8 @@ import org.springframework.stereotype.Component;
 public class WorkbenchClientProperties {
   private String orchUrl = "https://127.0.0.1:5001";
   private String orchApiToken = "";
+  private String orchUsername = "";
+  private String orchPassword = "";
   private boolean orchVerifyServer = true;
   private String orchCaCertsPath = "";
   private boolean localWorkflowEnabled;
@@ -64,6 +66,12 @@ public class WorkbenchClientProperties {
   /** Center-only token; never reused for agent or Order authentication. */
   public String getOrchApiToken() { return orchApiToken; }
   public void setOrchApiToken(String value) { orchApiToken = value; }
+  /** Login-page account; never reused for dispatched agents. */
+  public String getOrchUsername() { return orchUsername; }
+  public void setOrchUsername(String value) { orchUsername = value; }
+  /** External secret used only to acquire the center's account Bearer token. */
+  public String getOrchPassword() { return orchPassword; }
+  public void setOrchPassword(String value) { orchPassword = value; }
   public boolean isOrchVerifyServer() { return orchVerifyServer; }
   public void setOrchVerifyServer(boolean value) { orchVerifyServer = value; }
   public String getOrchCaCertsPath() { return orchCaCertsPath; }
