@@ -27,6 +27,32 @@ import javax.tools.*;
 import org.junit.jupiter.api.Test;
 
 class DocumentedCallbackExampleTest {
+  @Test
+  void offlineLaunchContractIsExplicitAndScenarioDocsDoNotPromiseAutomaticFallback() throws Exception {
+    Path root = Path.of("").toAbsolutePath();
+    if (!Files.isDirectory(root.resolve("docs"))) root = root.getParent();
+    String script = Files.readString(root.resolve("run_order.bat"));
+    assertTrue(script.contains("set EASTCOM_ORDER_SIMULATOR_ENABLED=true"));
+    assertTrue(script.contains("--a2a.transport-mode=order --a2a.local-workflow-enabled=true"));
+    assertTrue(script.contains("--a2a.order.omc-credentials-path=classpath:spn_agent_credentials.example.json"));
+    assertTrue(script.contains("--a2a.order.host=127.0.0.1"));
+    assertTrue(script.contains("--a2a.order.simulator-enabled=true"));
+    for (String path : List.of("docs/zh/指令平台适配指南.md", "docs/en/EASTCOM_ORDER_INTEGRATION.md")) {
+      String doc = Files.readString(root.resolve(path));
+      assertTrue(doc.contains("--a2a.transport-mode=direct --a2a.local-workflow-enabled=true"));
+      assertTrue(doc.contains("A2A_LOCAL_WORKFLOW_ENABLED=true"));
+      assertTrue(doc.contains("ORCH_API_TOKEN"));
+      assertTrue(doc.contains("ORCH_VERIFY_SERVER"));
+    }
+    for (String path : List.of("docs/zh/scenario/集成方场景接入指南.md", "docs/zh/scenario/SpringSpnDemo调用链路.md")) {
+      String doc = Files.readString(root.resolve(path));
+      assertTrue(doc.contains("--a2a.local-workflow-enabled=true"));
+      assertTrue(doc.contains("ORCH_VERIFY_SERVER"));
+      assertFalse(doc.contains("PSOP_FALLBACK"));
+      assertFalse(doc.contains("在编排中心不可用时使用本地 PSOP fallback"));
+    }
+  }
+
   private static String block(String doc, String marker) {
     int begin = doc.indexOf(marker);
     assertTrue(begin >= 0, marker);

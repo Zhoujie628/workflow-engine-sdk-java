@@ -78,10 +78,12 @@ exact-once。`WorkbenchControlPoint.onSelfTask`
 对两个 OMC 返回做本地汇总；`WorkbenchOrchestrator.buildResultText` 优先取
 `merge_analysis`/`merge` 输出，不用假的“成功”文本代替业务结果。
 
-示例首先从编排中心搜索并加载 PSOP。设置 `A2A_SSL_VERIFY=false` 时，这两个 HTTPS 请求免配本地 CA，并跳过证书链和主机名校验，
-只用于受控联调；不会改变其他客户端的 TLS 校验。若编排中心不可用，或在开启验证时其证书/主机名校验失败，示例会明确记录 `PSOP_FALLBACK`
-并装载等价的三节点内存工作流；不会再拿到 fallback 标识后继续调用失败的远端加载接口。生产集成应配置含正确 SAN 的证书并使用远端
-PSOP，不应把示例 fallback 当作编排中心的容灾实现。
+在线模式先搜索并加载编排中心 PSOP，独立使用 `ORCH_API_TOKEN` 和默认开启的
+`ORCH_VERIFY_SERVER`，私有 CA 可设置 `ORCH_CA_CERTS_PATH`。`ORCH_VERIFY_SERVER=false`
+只用于受控联调，按连接关闭两项对端校验；不复用南向 `A2A_SSL_VERIFY`，也不绕过 Token 或服务端 mTLS。
+中心鉴权、网络、TLS、解析错误或无候选结果均导致任务失败，不切换到另一条工作流。
+离线演示显式设置 `--a2a.local-workflow-enabled=true`，记录 `LOCAL_DEMO_WORKFLOW`，
+直接使用三节点内存工作流且不访问中心。生产容灾必须独立设计，不能把该演示模式当作自动兜底。
 
 ## 5. 南向传输分支
 

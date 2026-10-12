@@ -32,25 +32,25 @@ class SpringSpnDemoOrderE2ETest extends SpringSpnDemoE2ETest {
 
   @Override
   protected String[] arguments() {
-    return new String[] {
-      "--a2a.transport-mode=order",
-      "--a2a.embedded-omc-enabled=true",
-      "--a2a.orch-url=http://127.0.0.1:1",
-      "--a2a.a2at-env-path=" + OfflineA2ATLlmClient.envPath(),
-      "--a2a.order.simulator-enabled=true",
-      "--a2a.order.host=127.0.0.1",
-      "--a2a.order.port=26401",
-      "--a2a.order.username=sim-user",
-      "--a2a.order.password=sim-password",
-      "--a2a.order.client-id=sim-client",
-      "--a2a.order.client-secret=sim-secret",
-      "--a2a.order.city1-ne=sim-city1",
-      "--a2a.order.city2-ne=sim-city2",
-      "--a2a.order.simulator-city1-target-url=https://127.0.0.1:26335",
-      "--a2a.order.simulator-city2-target-url=https://127.0.0.1:26336",
-      "--a2a.order.omc-auth-enabled=true",
-      "--a2a.order.omc-credentials-path=classpath:spn_agent_credentials.json",
-      "--a2a.order.timeout-seconds=90"
-    };
+    // Run the published script's actual arguments, changing only isolated test resources.
+    java.nio.file.Path root = java.nio.file.Path.of("").toAbsolutePath();
+    if (!java.nio.file.Files.isDirectory(root.resolve("docs"))) root = root.getParent();
+    String script;
+    try { script = java.nio.file.Files.readString(root.resolve("run_order.bat")); }
+    catch (java.io.IOException error) { throw new java.io.UncheckedIOException(error); }
+    var argumentBlock = java.util.regex.Pattern.compile("\"-Dspring-boot.run.arguments=([^\"]+)\"").matcher(script);
+    if (!argumentBlock.find()) throw new AssertionError("Published Order demo arguments missing");
+    var overrides = new java.util.LinkedHashMap<String, String>();
+    overrides.put("--a2a.orch-url", "http://127.0.0.1:1");
+    overrides.put("--a2a.a2at-env-path", OfflineA2ATLlmClient.envPath());
+    overrides.put("--a2a.order.simulator-city1-target-url", cityTarget(1));
+    overrides.put("--a2a.order.simulator-city2-target-url", cityTarget(2));
+    overrides.put("--a2a.order.omc-credentials-path", demoCredentialsPath());
+    overrides.put("--a2a.order.timeout-seconds", "90");
+    var arguments = new java.util.ArrayList<>(java.util.Arrays.stream(argumentBlock.group(1).split("\\s+"))
+        .filter(arg -> !overrides.containsKey(arg.substring(0, arg.indexOf('='))))
+        .toList());
+    overrides.forEach((key, value) -> arguments.add(key + "=" + value));
+    return arguments.toArray(String[]::new);
   }
 }

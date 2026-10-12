@@ -102,7 +102,7 @@ come from the platform administrator.
 
 ## Starting the demo
 
-Direct baseline:
+Offline direct baseline (does not contact the orchestration center):
 
 ```powershell
 $env:A2A_TRANSPORT_MODE = 'direct'
@@ -110,10 +110,15 @@ $env:EASTCOM_ORDER_SIMULATOR_ENABLED = 'false'
 mvn -B -pl samples -am -DskipTests install
 mvn -B -f samples/pom.xml spring-boot:run `
   "-Dspring-boot.run.main-class=dev.openan.workflow.engine.examples.demo.SpringSpnDemo" `
-  "-Dspring-boot.run.arguments=--a2a.transport-mode=direct"
+  "-Dspring-boot.run.arguments=--a2a.transport-mode=direct --a2a.local-workflow-enabled=true --a2a.credentials-path=classpath:spn_agent_credentials.example.json"
 ```
 
 Live Eastcom platform (the default dev path):
+
+Online center access requires `ORCH_API_TOKEN`, with independent `ORCH_VERIFY_SERVER=true`
+(default) and optional `ORCH_CA_CERTS_PATH`. It does not reuse OMC tokens or `A2A_SSL_VERIFY`.
+An explicit `ORCH_VERIFY_SERVER=false` is a controlled development opt-out, not an authentication
+or server-side mTLS bypass. Center failures never trigger a different workflow.
 
 ```powershell
 mvn -B -pl samples -am -DskipTests install
@@ -130,6 +135,8 @@ For an offline protocol-level run:
 
 ```dotenv
 A2A_TRANSPORT_MODE=order
+A2A_LOCAL_WORKFLOW_ENABLED=true
+EASTCOM_ORDER_OMC_CREDENTIALS_PATH=classpath:spn_agent_credentials.example.json
 EASTCOM_ORDER_SIMULATOR_ENABLED=true
 EASTCOM_ORDER_HOST=127.0.0.1
 EASTCOM_ORDER_PORT=26401
@@ -144,6 +151,10 @@ EASTCOM_ORDER_SIMULATOR_CITY2_TARGET_URL=https://127.0.0.1:26336
 EASTCOM_ORDER_SIMULATOR_CONNECT_TIMEOUT_SECONDS=30
 EASTCOM_ORDER_SIMULATOR_READ_TIMEOUT_SECONDS=30
 ```
+
+On Windows, `run_order.bat` explicitly selects the local workflow, public example OMC credentials,
+and local Order simulator parameters. To use a real
+center, disable local workflow mode and configure its separate authentication/TLS settings.
 
 To validate the adapter against a remote OMC while retaining the local platform simulator, disable embedded OMCs and
 set the two simulator target URLs to the real A2A service base URLs. Simulator-managed NE credentials are independently

@@ -103,6 +103,13 @@ class OrderSseTerminalCancelTest {
             .timeoutSeconds(30)
             .build();
     var runtime = new OrderGatewayClientRuntime(config);
+    // Production intentionally silences this vendor logger. Enable it only while observing
+    // the cancellation marker, then restore the original policy (do not weaken assertions).
+    String vendorLogger = "com.eastcom.apollo.orders.internal.shaded.v11x.com.eastcom.apollo.orders.client.http.internal.RequestBodyUriSpec";
+    var logging = (org.apache.logging.log4j.core.LoggerContext)
+        org.apache.logging.log4j.LogManager.getContext(false);
+    var previousLevel = logging.getConfiguration().getLoggerConfig(vendorLogger).getLevel();
+    org.apache.logging.log4j.core.config.Configurator.setLevel(vendorLogger, org.apache.logging.log4j.Level.WARN);
     try (var captured = new CapturedLogs();
         var platform =
             new EastcomOrderSimulatorServer(
@@ -160,6 +167,7 @@ class OrderSseTerminalCancelTest {
           "adapter completion log must carry the same request id as the vendor warning");
       release.countDown();
     } finally {
+      org.apache.logging.log4j.core.config.Configurator.setLevel(vendorLogger, previousLevel);
       release.countDown();
       runtime.close();
       omc.stop(0);
