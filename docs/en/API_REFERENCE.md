@@ -388,6 +388,10 @@ static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -403,6 +407,11 @@ static List<WorkflowSearchResult> search(
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls,
+        LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -420,6 +429,16 @@ default to 30 seconds. Supply
 
 ### RegistryClient
 
+Authentication is independent of TLS. HttpAuthProvider.bearer(tokenSupplier) reads credentials for
+every request; OAuth2 token acquisition/refresh belongs to the application. LoadPsop accessToken
+is transmitted in Authorization: Bearer, never in query parameters.
+HttpServiceException exposes getStatusCode() and isAuthenticationFailure(); errors are sanitized.
+HttpResponseException exposes getStatusCode() for JSON/model decoding failures after a successful
+HTTP response, without retaining the raw body or parser cause that may echo credentials.
+TlsPolicy.strict()/trustedCa() verify trust and hostname, insecure() skips both checks per client,
+and mutualTls() configures client identity. Old anonymous boolean constructors retain their
+chain-only false semantics; prefer the explicit authentication/TLS constructors.
+
 The two-argument constructor uses a 30-second complete-response deadline. Override it with
 `new RegistryClient(url, sslVerify, Duration.ofSeconds(15))`; the duration must be positive.
 The deadline includes response-body consumption, and interruption cancels the pending request.
@@ -429,7 +448,9 @@ Registry methods return JSON maps; convert them to AgentCard with AgentCardJacks
 Fetch and register AgentCards from the Registry Center.
 
 ```java
-new RegistryClient("https://127.0.0.1:5000",false)
+new RegistryClient(url, HttpAuthProvider.bearer(tokenSupplier))
+new RegistryClient(url, auth, TlsPolicy.strict())
+new RegistryClient(url, auth, TlsPolicy.insecure(), Duration.ofSeconds(15))
 
 List<Map<String, Object>> fetchAgentCards()
 
