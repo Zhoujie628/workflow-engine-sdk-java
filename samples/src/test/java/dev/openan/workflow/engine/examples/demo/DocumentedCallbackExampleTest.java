@@ -76,10 +76,18 @@ class DocumentedCallbackExampleTest {
             void run() throws Exception {
           """
           + block(integration, "Workflow workflow =") + "\n"
-          + block(integration, "RegistryClient registry =") + "\n"
+          + block(integration, "HttpAuthProvider registryAuth =") + "\n"
           + block(integration, "ControlPoint callbacks =") + "\n"
           + block(integration, "CompletableFuture<ExecutionResult> execution =") + "\n}}";
-      for (String source : List.of(callbackSource, quickStartSource)) {
+      String centerSource = """
+          import java.util.*;
+          import dev.openan.workflow.engine.registry.*;
+          import dev.openan.workflow.engine.model.*;
+          class DocumentedCenters {
+            void run() throws Exception {
+          """
+          + block(integration, "HttpAuthProvider orchAuth =") + "\n}}";
+      for (String source : List.of(callbackSource, quickStartSource, centerSource)) {
       JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
       assertNotNull(compiler, "Tests require a JDK, not a JRE");
       DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();

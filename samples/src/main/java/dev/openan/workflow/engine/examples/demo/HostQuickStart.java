@@ -27,6 +27,7 @@ import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
 import dev.openan.workflow.engine.control.ControlPoint;
 import dev.openan.workflow.engine.model.*;
 import dev.openan.workflow.engine.registry.RegistryClient;
+import dev.openan.workflow.engine.registry.HttpAuthProvider;
 import dev.openan.workflow.engine.runner.ExecutePsop;
 import java.util.List;
 import java.util.Map;
@@ -38,12 +39,13 @@ import org.a2aproject.sdk.spec.AgentCard;
 public final class HostQuickStart {
   private HostQuickStart() {}
 
-  /** Arguments: registry URL, target agent name, credentials JSON path. */
+  /** Arguments: registry URL, target agent name, credentials JSON path. REGISTRY_API_TOKEN authenticates discovery. */
   public static void main(String[] args) throws Exception {
     if (args.length != 3) {
       throw new IllegalArgumentException("Expected: registry-url agent-name credentials-json");
     }
-    List<AgentCard> cards = loadCards(new RegistryClient(args[0], true));
+    List<AgentCard> cards = loadCards(new RegistryClient(
+        args[0], HttpAuthProvider.bearer(() -> System.getenv("REGISTRY_API_TOKEN"))));
     try (A2ATransport transport = new A2ATransport(cards, null,
         WorkflowEngineClientConfig.builder().sslVerify(true).credentialsConfigPath(args[2]).build())) {
       ExecutionResult result = execute(workflow(args[1]), cards, new DefaultWorkflowEngineClient(transport));
@@ -80,8 +82,13 @@ public final class HostQuickStart {
         .onNegotiation(request -> CompletableFuture.completedFuture(
             new NegotiationReply.Stop("manual.required", "Host review required")))
         .build();
-    CompletableFuture<ExecutionResult> execution = ExecutePsop.builder().psop(workflow)
-        .engineClient(client).controlPoint(callbacks).runtimeIntent("Diagnose the supplied issue").execute();
+    CompletableFuture<ExecutionResult> execution =
+        ExecutePsop.builder()
+            .psop(workflow)
+            .engineClient(client)
+            .controlPoint(callbacks)
+            .runtimeIntent("Diagnose the supplied issue")
+            .execute();
     try {
       return execution.get(10, TimeUnit.MINUTES);
     } finally {

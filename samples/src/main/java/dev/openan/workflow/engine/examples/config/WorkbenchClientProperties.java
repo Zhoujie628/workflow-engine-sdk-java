@@ -27,6 +27,10 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "a2a")
 public class WorkbenchClientProperties {
   private String orchUrl = "https://127.0.0.1:5001";
+  private String orchApiToken = "";
+  private boolean orchVerifyServer = true;
+  private String orchCaCertsPath = "";
+  private boolean localWorkflowEnabled;
   private String credentialsPath = "";
   private boolean sslVerify;
   private String a2atEnvPath = "";
@@ -54,6 +58,16 @@ public class WorkbenchClientProperties {
   public String getOrchUrl() {
     return orchUrl;
   }
+
+  /** Center-only token; never reused for agent or Order authentication. */
+  public String getOrchApiToken() { return orchApiToken; }
+  public void setOrchApiToken(String value) { orchApiToken = value; }
+  public boolean isOrchVerifyServer() { return orchVerifyServer; }
+  public void setOrchVerifyServer(boolean value) { orchVerifyServer = value; }
+  public String getOrchCaCertsPath() { return orchCaCertsPath; }
+  public void setOrchCaCertsPath(String value) { orchCaCertsPath = value; }
+  public boolean isLocalWorkflowEnabled() { return localWorkflowEnabled; }
+  public void setLocalWorkflowEnabled(boolean value) { localWorkflowEnabled = value; }
 
   public void setOrchUrl(String orchUrl) {
     this.orchUrl = orchUrl;

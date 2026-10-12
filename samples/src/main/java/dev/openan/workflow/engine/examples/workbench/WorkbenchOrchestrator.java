@@ -21,6 +21,7 @@ package dev.openan.workflow.engine.examples.workbench;
 
 import dev.openan.workflow.engine.client.A2AJavaClientRuntime;
 import dev.openan.workflow.engine.client.A2ATransport;
+import dev.openan.workflow.engine.client.AuthProvider;
 import dev.openan.workflow.engine.client.DefaultWorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClient;
 import dev.openan.workflow.engine.client.WorkflowEngineClientConfig;
@@ -34,7 +35,9 @@ import dev.openan.workflow.engine.model.Task;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
 import dev.openan.workflow.engine.model.WorkflowStep;
+import dev.openan.workflow.engine.registry.HttpAuthProvider;
 import dev.openan.workflow.engine.registry.LoadPsop;
+import dev.openan.workflow.engine.registry.TlsPolicy;
 import dev.openan.workflow.engine.runner.ExecutePsop;
 import java.util.List;
 import java.util.Map;
@@ -70,10 +73,12 @@ public class WorkbenchOrchestrator {
   private final boolean sslVerify;
   private final String a2atEnvPath;
   private final A2AJavaClientRuntime clientRuntime;
+  private final AuthProvider authProvider;
+  private final CenterAccess centerAccess;
 
   public WorkbenchOrchestrator(
       String orchUrl, String credentialsPath, boolean sslVerify, String a2atEnvPath) {
-    this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, null);
+    this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, null, null);
   }
 
   public WorkbenchOrchestrator(
@@ -82,11 +87,45 @@ public class WorkbenchOrchestrator {
       boolean sslVerify,
       String a2atEnvPath,
       A2AJavaClientRuntime clientRuntime) {
+    this(orchUrl, credentialsPath, sslVerify, a2atEnvPath, clientRuntime, null);
+  }
+
+  public WorkbenchOrchestrator(
+      String orchUrl,
+      String credentialsPath,
+      boolean sslVerify,
+      String a2atEnvPath,
+      A2AJavaClientRuntime clientRuntime,
+      AuthProvider authProvider) {
+    this(
+        orchUrl,
+        credentialsPath,
+        sslVerify,
+        a2atEnvPath,
+        clientRuntime,
+        authProvider,
+        new CenterAccess(HttpAuthProvider.none(), TlsPolicy.strict(), false));
+  }
+
+  /**
+   * Configures center access independently of agent transport credentials and TLS. A supplied
+   * runtime is owned by this single execution, including preparation failures.
+   */
+  public WorkbenchOrchestrator(
+      String orchUrl,
+      String credentialsPath,
+      boolean sslVerify,
+      String a2atEnvPath,
+      A2AJavaClientRuntime clientRuntime,
+      AuthProvider authProvider,
+      CenterAccess centerAccess) {
     this.orchUrl = orchUrl;
     this.credentialsPath = credentialsPath;
     this.sslVerify = sslVerify;
     this.a2atEnvPath = a2atEnvPath;
     this.clientRuntime = clientRuntime;
+    this.authProvider = authProvider;
+    this.centerAccess = java.util.Objects.requireNonNull(centerAccess, "centerAccess");
   }
 
   static String buildResultText(ExecutionResult result) {
@@ -246,122 +285,137 @@ public class WorkbenchOrchestrator {
 
   String run(String messageText, boolean demoNegotiationEnabled, ExecutionCancellation cancellation)
       throws Exception {
-    cancellation.check();
-    long runStarted = System.nanoTime();
-    String runtimeName =
-        clientRuntime != null
-            ? clientRuntime.getClass().getSimpleName()
-            : "DefaultA2AJavaClientRuntime";
-    log.info(
-        "[Orchestrator] START orchUrl={}, runtime={}, sslVerify={}, inputChars={}",
-        orchUrl,
-        runtimeName,
-        sslVerify,
-        messageText != null ? messageText.length() : 0);
-
-    long stageStarted = System.nanoTime();
-    log.info("[Orchestrator] STAGE_START stage=load-agent-cards");
-    List<AgentCard> agentCards = loadAgentCards();
-    cancellation.check();
-    log.info(
-        "[Orchestrator] STAGE_DONE stage=load-agent-cards, count={}, agents={}, elapsedMs={}",
-        agentCards.size(),
-        agentCards.stream().map(AgentCard::name).toList(),
-        elapsedMillis(stageStarted));
-
-    stageStarted = System.nanoTime();
-    log.info("[Orchestrator] STAGE_START stage=search-load-psop");
-    ResolvedWorkflow resolvedWorkflow = resolveWorkflow(messageText);
-    cancellation.check();
-    String psopId = resolvedWorkflow.psopId();
-    Workflow workflow = resolvedWorkflow.workflow();
-    log.info(
-        "[Orchestrator] STAGE_DONE stage=search-load-psop, psopId={}, workflow={}, "
-            + "steps={}, elapsedMs={}",
-        psopId,
-        workflow.getName(),
-        workflow.getSteps().size(),
-        elapsedMillis(stageStarted));
-
-    stageStarted = System.nanoTime();
-    log.info("[Orchestrator] STAGE_START stage=create-engine-client, runtime={}", runtimeName);
-    A2ATransport transport =
-        new A2ATransport(
-            agentCards,
-            clientRuntime,
-            WorkflowEngineClientConfig.builder()
-                .sslVerify(sslVerify)
-                .credentialsConfigPath(credentialsPath)
-                .build());
-    log.info(
-        "[Orchestrator] STAGE_DONE stage=create-engine-client, contextId={}, elapsedMs={}",
-        transport.getContextId(),
-        elapsedMillis(stageStarted));
+    A2ATransport transport = null;
     try {
-      WorkflowEngineClient engineClient = new DefaultWorkflowEngineClient(transport);
+      cancellation.check();
+      long runStarted = System.nanoTime();
+      String runtimeName =
+          clientRuntime != null
+              ? clientRuntime.getClass().getSimpleName()
+              : "DefaultA2AJavaClientRuntime";
+      log.info(
+          "[Orchestrator] START orchUrl={}, runtime={}, sslVerify={}, inputChars={}",
+          orchUrl,
+          runtimeName,
+          sslVerify,
+          messageText != null ? messageText.length() : 0);
+
+      long stageStarted = System.nanoTime();
+      log.info("[Orchestrator] STAGE_START stage=load-agent-cards");
+      List<AgentCard> agentCards = loadAgentCards();
+      cancellation.check();
+      log.info(
+          "[Orchestrator] STAGE_DONE stage=load-agent-cards, count={}, agents={}, elapsedMs={}",
+          agentCards.size(),
+          agentCards.stream().map(AgentCard::name).toList(),
+          elapsedMillis(stageStarted));
 
       stageStarted = System.nanoTime();
+      log.info("[Orchestrator] STAGE_START stage=search-load-psop");
+      ResolvedWorkflow resolvedWorkflow = resolveWorkflow(messageText);
+      cancellation.check();
+      String psopId = resolvedWorkflow.psopId();
+      Workflow workflow = resolvedWorkflow.workflow();
       log.info(
-          "[Orchestrator] STAGE_START stage=execute-workflow, contextId={}, "
-              + "psopId={}, workflow={}",
-          transport.getContextId(),
+          "[Orchestrator] STAGE_DONE stage=search-load-psop, psopId={}, workflow={}, "
+              + "steps={}, elapsedMs={}",
           psopId,
-          workflow.getName());
-      WorkbenchControlPoint controlPoint =
-          new WorkbenchControlPoint(
-              a2atEnvPath, new NegotiationStrategy(a2atEnvPath), demoNegotiationEnabled);
-      cancellation.check();
-      CompletableFuture<ExecutionResult> execution =
-          ExecutePsop.builder()
-              .psop(workflow)
-              .controlPoint(controlPoint)
-              .engineClient(engineClient)
-              .runtimeIntent(messageText)
-              .lang("zh")
-              .eventCallback(createLogCallback(transport.getContextId()))
-              .onFinish(
-                  (r, events) -> {
-                    log.info(
-                        "[Orchestrator] WORKFLOW_FINISH success={}, history={}, events={}",
-                        r.isSuccess(),
-                        r.getHistory() != null ? r.getHistory().size() : 0,
-                        events.size());
-                    return CompletableFuture.completedFuture(null);
-                  })
-              .execute();
-      cancellation.bind(execution);
-      ExecutionResult result = execution.join();
-      cancellation.check();
-      log.info(
-          "[Orchestrator] STAGE_DONE stage=execute-workflow, contextId={}, success={}, "
-              + "history={}, elapsedMs={}",
-          transport.getContextId(),
-          result.isSuccess(),
-          result.getHistory() != null ? result.getHistory().size() : 0,
+          workflow.getName(),
+          workflow.getSteps().size(),
           elapsedMillis(stageStarted));
-      String resultText = buildResultText(result, workflow);
+
+      stageStarted = System.nanoTime();
+      log.info("[Orchestrator] STAGE_START stage=create-engine-client, runtime={}", runtimeName);
+      transport =
+          new A2ATransport(
+              agentCards,
+              clientRuntime,
+              WorkflowEngineClientConfig.builder()
+                  .sslVerify(sslVerify)
+                  .credentialsConfigPath(credentialsPath)
+                  .authProvider(authProvider)
+                  .build());
       log.info(
-          "[Orchestrator] DONE contextId={}, success={}, resultChars={}, elapsedMs={}",
+          "[Orchestrator] STAGE_DONE stage=create-engine-client, contextId={}, elapsedMs={}",
           transport.getContextId(),
-          result.isSuccess(),
-          resultText.length(),
-          elapsedMillis(runStarted));
-      if (!result.isSuccess()) {
-        throw new IllegalStateException(resultText);
+          elapsedMillis(stageStarted));
+      try {
+        WorkflowEngineClient engineClient = new DefaultWorkflowEngineClient(transport);
+
+        stageStarted = System.nanoTime();
+        log.info(
+            "[Orchestrator] STAGE_START stage=execute-workflow, contextId={}, "
+                + "psopId={}, workflow={}",
+            transport.getContextId(),
+            psopId,
+            workflow.getName());
+        WorkbenchControlPoint controlPoint =
+            new WorkbenchControlPoint(
+                a2atEnvPath, new NegotiationStrategy(a2atEnvPath), demoNegotiationEnabled);
+        cancellation.check();
+        CompletableFuture<ExecutionResult> execution =
+            ExecutePsop.builder()
+                .psop(workflow)
+                .controlPoint(controlPoint)
+                .engineClient(engineClient)
+                .runtimeIntent(messageText)
+                .lang("zh")
+                .eventCallback(createLogCallback(transport.getContextId()))
+                .onFinish(
+                    (r, events) -> {
+                      log.info(
+                          "[Orchestrator] WORKFLOW_FINISH success={}, history={}, events={}",
+                          r.isSuccess(),
+                          r.getHistory() != null ? r.getHistory().size() : 0,
+                          events.size());
+                      return CompletableFuture.completedFuture(null);
+                    })
+                .execute();
+        cancellation.bind(execution);
+        ExecutionResult result = execution.join();
+        cancellation.check();
+        log.info(
+            "[Orchestrator] STAGE_DONE stage=execute-workflow, contextId={}, success={}, "
+                + "history={}, elapsedMs={}",
+            transport.getContextId(),
+            result.isSuccess(),
+            result.getHistory() != null ? result.getHistory().size() : 0,
+            elapsedMillis(stageStarted));
+        String resultText = buildResultText(result, workflow);
+        log.info(
+            "[Orchestrator] DONE contextId={}, success={}, resultChars={}, elapsedMs={}",
+            transport.getContextId(),
+            result.isSuccess(),
+            resultText.length(),
+            elapsedMillis(runStarted));
+        if (!result.isSuccess()) {
+          throw new IllegalStateException(resultText);
+        }
+        return resultText;
+      } catch (Exception e) {
+        log.error(
+            "[Orchestrator] FAILED contextId={}, elapsedMs={}, errorType={}, message={}",
+            transport.getContextId(),
+            elapsedMillis(runStarted),
+            e.getClass().getSimpleName(),
+            e.getMessage(),
+            e);
+        throw e;
       }
-      return resultText;
-    } catch (Exception e) {
-      log.error(
-          "[Orchestrator] FAILED contextId={}, elapsedMs={}, errorType={}, message={}",
-          transport.getContextId(),
-          elapsedMillis(runStarted),
-          e.getClass().getSimpleName(),
-          e.getMessage(),
-          e);
-      throw e;
     } finally {
-      log.info("[Orchestrator] TRANSPORT_CLOSE contextId={}", transport.getContextId());
-      transport.close();
+      if (transport != null) {
+        log.info("[Orchestrator] TRANSPORT_CLOSE contextId={}", transport.getContextId());
+        transport.close();
+      } else if (clientRuntime != null) {
+        // Preparation/cancellation/constructor failure: transport never took ownership.
+        try {
+          clientRuntime.close();
+        } catch (RuntimeException closeError) {
+          log.warn(
+              "[Orchestrator] RUNTIME_CLOSE_FAILED errorType={}",
+              closeError.getClass().getSimpleName());
+        }
+      }
     }
   }
 
@@ -369,21 +423,21 @@ public class WorkbenchOrchestrator {
     return new WorkbenchAgentCatalog().load();
   }
 
-  private ResolvedWorkflow resolveWorkflow(String messageText) {
-    try {
-      List<WorkflowSearchResult> results =
-          LoadPsop.search(orchUrl, messageText, 3, null, sslVerify);
-      if (!results.isEmpty()) {
-        String psopId = results.get(0).getWorkflowId();
-        log.info("[Orchestrator] Found PSOP: {} (score={})", psopId, results.get(0).getScore());
-        return new ResolvedWorkflow(psopId, LoadPsop.load(orchUrl, psopId, null, sslVerify));
-      }
-      log.warn("[Orchestrator] PSOP search returned no candidates");
-    } catch (Exception e) {
-      log.warn("[Orchestrator] PSOP search failed, using fallback: {}", e.getMessage());
+  ResolvedWorkflow resolveWorkflow(String messageText) throws Exception {
+    if (centerAccess.localWorkflowEnabled()) {
+      log.warn(
+          "[Orchestrator] LOCAL_DEMO_WORKFLOW psopId={} (center access explicitly disabled)",
+          FALLBACK_PSOP_ID);
+      return new ResolvedWorkflow(FALLBACK_PSOP_ID, fallbackWorkflow());
     }
-    log.warn("[Orchestrator] PSOP_FALLBACK psopId={}", FALLBACK_PSOP_ID);
-    return new ResolvedWorkflow(FALLBACK_PSOP_ID, fallbackWorkflow());
+    List<WorkflowSearchResult> results =
+        LoadPsop.search(orchUrl, messageText, 3, centerAccess.auth(), centerAccess.tls());
+    if (results.isEmpty())
+      throw new IllegalStateException("Orchestration center returned no matching workflow");
+    String psopId = results.get(0).getWorkflowId();
+    log.info("[Orchestrator] Found PSOP: {} (score={})", psopId, results.get(0).getScore());
+    return new ResolvedWorkflow(
+        psopId, LoadPsop.load(orchUrl, psopId, centerAccess.auth(), centerAccess.tls()));
   }
 
   private EventCallback createLogCallback(String contextId) {
@@ -445,5 +499,13 @@ public class WorkbenchOrchestrator {
     };
   }
 
-  private record ResolvedWorkflow(String psopId, Workflow workflow) {}
+  record ResolvedWorkflow(String psopId, Workflow workflow) {}
+
+  /** Local workflow mode is an explicit offline demo, never a response to center failures. */
+  public record CenterAccess(HttpAuthProvider auth, TlsPolicy tls, boolean localWorkflowEnabled) {
+    public CenterAccess {
+      java.util.Objects.requireNonNull(auth, "auth");
+      java.util.Objects.requireNonNull(tls, "tls");
+    }
+  }
 }
