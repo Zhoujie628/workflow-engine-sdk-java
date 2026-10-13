@@ -203,6 +203,8 @@ ExtensionSender.openNotification(agentName, finalContent, (handle, received) -> 
 acknowledgement() 代表真实 ACK 或失败；超时不伪造成功。 close() 请求关闭，completion() 在流实际退出后完成。
 任务或通知结果终态不关闭订阅，单次工作流结束也不关闭订阅。有传输活动时持续保持；显式取消、宿主退出、流退出或异常、配置的空闲超时才结束订阅。
 
+随附 SPN 样例另有业务策略：`WorkbenchExtensionLifecycle.handleNotification` 在校验完整抢通结果后显式关闭自己的 handle。这是样例业务主动取消，不是 SDK 随 Task-T/Notification-T 结果状态自动终止。生产宿主需要持续订阅时，应替换该样例回调，跨抢通结果保留 handle，直到显式取消订阅或宿主退出。
+
 任务、授权、通知使用独立 transport/runtime/context。授权和订阅成功与否均不作为工作流执行前提；授权策略只控制与该策略关联的宿主自定义业务操作。
 
 ## 8. 验证和日志
