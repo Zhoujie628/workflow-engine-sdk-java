@@ -29,6 +29,25 @@ import org.springframework.core.env.StandardEnvironment;
 
 class WorkbenchClientPropertiesTest {
   @Test
+  void centerCredentialsAndTlsAreConfiguredIndependentlyOfAgentTransport() {
+    WorkbenchClientProperties defaults = new WorkbenchClientProperties();
+    org.junit.jupiter.api.Assertions.assertTrue(defaults.isOrchVerifyServer());
+    org.junit.jupiter.api.Assertions.assertFalse(defaults.isLocalWorkflowEnabled());
+    StandardEnvironment environment = new StandardEnvironment();
+    environment.getPropertySources().addFirst(new MapPropertySource("centers", Map.of(
+        "a2a.orch-api-token", "synthetic-center-token",
+        "a2a.orch-verify-server", "false",
+        "a2a.ssl-verify", "true",
+        "a2a.local-workflow-enabled", "true")));
+    WorkbenchClientProperties properties = Binder.get(environment)
+        .bind("a2a", Bindable.of(WorkbenchClientProperties.class)).orElseThrow(AssertionError::new);
+    assertEquals("synthetic-center-token", properties.getOrchApiToken());
+    org.junit.jupiter.api.Assertions.assertFalse(properties.isOrchVerifyServer());
+    org.junit.jupiter.api.Assertions.assertTrue(properties.isSslVerify());
+    org.junit.jupiter.api.Assertions.assertTrue(properties.isLocalWorkflowEnabled());
+  }
+
+  @Test
   void notificationAcknowledgementTimeoutIsExternallyConfigurable() {
     StandardEnvironment environment = new StandardEnvironment();
     environment

@@ -256,31 +256,46 @@ provider, not template overrides or production fallbacks.
 
 ### SSE Server (Spring WebFlux)
 
+Create one shared account provider per host/base URL, not per request. Login and retrieval use the same TLS policy; credentials belong in the secret environment. Complete initial password change in the web UI first. Fetch cards independently with `RegistryClient(registryUrl, registryAuth, registryTls)`; do not reuse the orchestration token for registry or Agents.
+
+```java
+// Host-owned fields, constructed once; imports are in dev.openan.workflow.engine.registry.
+private final TlsPolicy orchTls = TlsPolicy.strict();
+private final HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        baseUrl, System.getenv("ORCH_USERNAME"), System.getenv("ORCH_PASSWORD"), orchTls);
+```
+
+
+
 ```java
 
-@GetMapping("/execute/{psopId}")
+@GetMapping(value = "/execute/{psopId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public Flux<String> execute(@PathVariable String psopId) {
-    Workflow workflow = LoadPsop.load(baseUrl, psopId, token, false);
-
-    return Flux.create(sink -> {
-        ExecutePsop.builder()
-                .psop(workflow)
-                .agentCards(cards)
-                .controlPoint(cp)
-                .eventCallback(new EventCallback() {
-                    @Override
-                    public void onEvent(String type, Map<String, Object> data) {
-                        sink.next("data: " + toJson(type, data) + "\n\n");
-                    }
-                })
-                .onFinish((r, e) -> {
-                    sink.complete();
-                    return CompletableFuture.completedFuture(null);
-                })
-                .execute();
-    });
+    // LoadPsop is blocking; keep login/retrieval off the reactive event loop.
+    return Mono.fromCallable(() -> LoadPsop.load(baseUrl, psopId, orchAuth, orchTls))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapMany(workflow -> Flux.create(sink -> {
+                CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
+                        .psop(workflow)
+                        .agentCards(cards)
+                        .controlPoint(cp)
+                        .eventCallback(new EventCallback() {
+                            @Override
+                            public void onEvent(String type, Map<String, Object> data) {
+                                sink.next(toJson(type, data));
+                            }
+                        })
+                        .execute();
+                execution.whenComplete((result, error) -> {
+                    if (error != null) sink.error(error);
+                    else sink.complete();
+                });
+                sink.onCancel(() -> execution.cancel(true));
+            }));
 }
 ```
+
+Imports for the reactive adapter: `reactor.core.publisher.Mono/Flux` and `reactor.core.scheduler.Schedulers` and `org.springframework.http.MediaType`; expose it with the host's SSE response media type/serialization. The framework owns SSE framing. For explicit machine Bearer mode, `HttpAuthProvider.bearer(tokenSupplier)` remains supported, with host-owned token lifecycle. Account PSOP reads have at most one 401 renewal/retry; writes are not replayed. See [account integration](INTEGRATION_GUIDE.md).
 
 ### Cancellation
 

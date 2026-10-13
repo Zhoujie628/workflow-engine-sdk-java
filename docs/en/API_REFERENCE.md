@@ -388,6 +388,10 @@ static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -403,6 +407,11 @@ static List<WorkflowSearchResult> search(
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls,
+        LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -418,7 +427,38 @@ This is distinct from the engine's southbound HTTP/JSON-RPC verification policy.
 default to 30 seconds. Supply
 `new LoadPsop.Timeouts(connectTimeout, readTimeout)` to set positive per-call values.
 
+### OrchestrationAccountAuth
+
+```java
+new OrchestrationAccountAuth(baseUrl, username, password, tls)
+new OrchestrationAccountAuth(baseUrl, username, password, tls, loginTimeouts)
+```
+
+Implements HttpAuthProvider for PSOP loading/search. Uses the same account as the browser
+login through POST /api/v1/auth/token (JSON username/password). A shared instance lazily
+acquires and caches the opaque Bearer with a monotonic expiry budget; expiry renews by
+login, not an OAuth2 refresh grant. Login responses must have a non-empty access_token,
+Bearer token_type and positive integral expires_in. Login responses are size-bounded;
+rejected/malformed responses never expose their body or parser cause.
+
+LoadPsop read/search calls can invoke HttpAuthProvider.onUnauthorized(uri, rejectedHeaders)
+once after 401. The account implementation invalidates only the rejected cached session;
+the default hook returns false for external Bearer/custom providers. No 403/service-error
+retry, business-write replay or anonymous/local-workflow fallback. Scope is restricted to
+this center's PSOP API; redirects are not followed. Pass the same TLS policy to account
+login and LoadPsop; HTTP exposes the password, so prefer verified HTTPS.
+
 ### RegistryClient
+
+Authentication is independent of TLS. HttpAuthProvider.bearer(tokenSupplier) reads credentials for
+every request; OAuth2 token acquisition/refresh belongs to the application. LoadPsop accessToken
+is transmitted in Authorization: Bearer, never in query parameters.
+HttpServiceException exposes getStatusCode() and isAuthenticationFailure(); errors are sanitized.
+HttpResponseException exposes getStatusCode() for JSON/model decoding failures after a successful
+HTTP response, without retaining the raw body or parser cause that may echo credentials.
+TlsPolicy.strict()/trustedCa() verify trust and hostname, insecure() skips both checks per client,
+and mutualTls() configures client identity. Old anonymous boolean constructors retain their
+chain-only false semantics; prefer the explicit authentication/TLS constructors.
 
 The two-argument constructor uses a 30-second complete-response deadline. Override it with
 `new RegistryClient(url, sslVerify, Duration.ofSeconds(15))`; the duration must be positive.
@@ -429,7 +469,9 @@ Registry methods return JSON maps; convert them to AgentCard with AgentCardJacks
 Fetch and register AgentCards from the Registry Center.
 
 ```java
-new RegistryClient("https://127.0.0.1:5000",false)
+new RegistryClient(url, HttpAuthProvider.bearer(tokenSupplier))
+new RegistryClient(url, auth, TlsPolicy.strict())
+new RegistryClient(url, auth, TlsPolicy.insecure(), Duration.ofSeconds(15))
 
 List<Map<String, Object>> fetchAgentCards()
 

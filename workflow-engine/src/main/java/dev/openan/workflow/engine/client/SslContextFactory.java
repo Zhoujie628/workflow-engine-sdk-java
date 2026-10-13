@@ -243,6 +243,56 @@ public final class SslContextFactory {
     }
   }
 
+  /**
+   * Builds a connection-local management TLS opt-out, including hostname verification. Existing A2A
+   * trust-all methods retain their hostname-verification contract. Client identity is still loaded
+   * even when remote identity is not verified.
+   */
+  public static SSLContext createInsecure(String certPath, String keyPath, String keyPassword) {
+    try {
+      SSLContext context = SSLContext.getInstance("TLS");
+      context.init(
+          loadKeyManagers(certPath, keyPath, keyPassword),
+          new TrustManager[] {new InsecureExtendedTrustManager()},
+          null);
+      return context;
+    } catch (Exception error) {
+      throw new IllegalStateException("Failed to build insecure management TLS context", error);
+    }
+  }
+
+  // JDK HttpClient forces HTTPS endpoint identification. An extended manager is necessary:
+  // an ordinary trust-all manager is wrapped by JSSE, which re-enables hostname checking.
+  private static final class InsecureExtendedTrustManager
+      extends javax.net.ssl.X509ExtendedTrustManager {
+    @Override
+    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+
+    @Override
+    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+
+    @Override
+    public void checkClientTrusted(
+        X509Certificate[] chain, String authType, java.net.Socket socket) {}
+
+    @Override
+    public void checkServerTrusted(
+        X509Certificate[] chain, String authType, java.net.Socket socket) {}
+
+    @Override
+    public void checkClientTrusted(
+        X509Certificate[] chain, String authType, javax.net.ssl.SSLEngine engine) {}
+
+    @Override
+    public void checkServerTrusted(
+        X509Certificate[] chain, String authType, javax.net.ssl.SSLEngine engine) {}
+
+    @Override
+    public X509Certificate[] getAcceptedIssuers() {
+      return new X509Certificate[0];
+    }
+  }
+
   private static X509TrustManager trustAllManager() {
     return new X509TrustManager() {
       public void checkClientTrusted(X509Certificate[] chain, String authType) {}

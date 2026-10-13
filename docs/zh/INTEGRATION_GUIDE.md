@@ -87,7 +87,8 @@ AgentCard card = mapper.readValue(
         new File("agentcard/my_agent.json"), AgentCard.class);
 
 // 方式二：从注册中心拉取
-RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
+HttpAuthProvider registryAuth = HttpAuthProvider.bearer(() -> System.getenv("REGISTRY_API_TOKEN"));
+RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", registryAuth, TlsPolicy.strict());
 ObjectMapper cardMapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
 List<AgentCard> cards = registry.fetchAgentCards().stream()
         .map(raw -> cardMapper.convertValue(raw, AgentCard.class)).toList();
@@ -96,8 +97,8 @@ List<AgentCard> cards = registry.fetchAgentCards().stream()
 
 
 RegistryClient 默认设置覆盖正文读取的 30 秒截止时间；可使用
-`new RegistryClient(url, true, Duration.ofSeconds(15))` 设置正值预算。编排中心 query token 日志仅显示 `<anonymous>`，
-集成方也不要自行打印带凭据的原始 URL。
+`new RegistryClient(url, registryAuth, TlsPolicy.strict(), Duration.ofSeconds(15))` 设置正值预算。
+列表、单卡查询和注册均在发送前应用认证；凭据只放请求头，不放 URL。缺失或非法 Bearer Token 在本地拒绝。
 
 ### 4.3 实现 ControlPoint
 
@@ -511,13 +512,18 @@ ExecutePsop.builder()
 ## 11. 从编排中心加载工作流
 
 ```java
+// 中心凭据与 A2A AuthProvider、智能体凭据独立。
+TlsPolicy orchTls = TlsPolicy.strict(); // 私有 CA 可用 trustedCa("/external/certs/ca.pem")。
+HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        "https://orchestration.example.com", System.getenv("ORCH_USERNAME"),
+        System.getenv("ORCH_PASSWORD"), orchTls);
 // 按意图搜索
 List<WorkflowSearchResult> results = LoadPsop.search(
-                "https://orchestration.example.com", "分析服务请求", 5, null, true);
+                "https://orchestration.example.com", "分析服务请求", 5, orchAuth, orchTls);
 
 // 按 ID 加载完整工作流
 Workflow workflow = LoadPsop.load(
-        "https://orchestration.example.com", results.get(0).getWorkflowId(), null, true);
+        "https://orchestration.example.com", results.get(0).getWorkflowId(), orchAuth, orchTls);
 ```
 
 ## 12. 自定义扩展
@@ -530,14 +536,49 @@ Workflow workflow = LoadPsop.load(
 
 ### 13.1 编排中心 HTTPS 联调
 
-`LoadPsop.search/load` 显式接收 `sslVerify` 参数。生产环境保持 `true`。受控开发环境可传入 `false`，仅对当前连接跳过证书链和主机名校验，并打印 `[Registry] INSECURE_TLS` 警告；不修改 JVM 全局 TLS 默认值。
+`TlsPolicy.strict()` 默认校验证书链和主机名；私有或自签 CA 使用 `TlsPolicy.trustedCa(caPemPath)`。
+`TlsPolicy.insecure()` 显式对当前管理面客户端关闭两项校验，等同 Python 的 `verify=False`，
+打印 `INSECURE_TLS` 警告，不修改 JVM 全局默认值，也不关闭 Bearer 鉴权。
 
 “免配本地证书”不表示 HTTPS 服务端不需要证书，也不能绕过要求客户端证书的 mTLS。
 该非验证模式不能确认服务端身份，存在中间人风险，仅用于受控联调。
 生产保持 `true`，给服务端配置匹配实际 URL 的 SAN，并让运行 JVM 信任其 CA；
+mTLS 使用 `TlsPolicy.mutualTls(ca, clientCert, pkcs8Key, password)`；
+`TlsPolicy.insecure(clientCert, pkcs8Key, password)` 关闭对端校验但仍携带客户端身份。
 被调度智能体的 `caCertsPath` 不会自动传给 LoadPsop。
 LoadPsop 不修改 JVM 全局 SSLContext、默认 SocketFactory 或 HostnameVerifier；
 被调度智能体 HTTP/JSON-RPC 的 `false` 仍仅跳过证书链校验。
+
+原 LoadPsop 方法签名保留，但 accessToken 改用 Bearer 请求头，不再进入 URL。
+原 RegistryClient boolean 构造仍为匿名调用，false 仍只关闭证书链校验；
+新接入应使用显式的认证/TLS 构造，不要混淆两种语义。
+
+`HttpAuthProvider.bearer(tokenSupplier)` 每次请求读取一次当前 Token。OAuth2 获取、缓存、刷新
+由应用接入的 IAM 客户端负责，SDK 不会因 401 自动重放业务写请求。业务自定义认证实现
+`headers(URI)`，返回自定义请求头；大小写重复及保留的传输请求头会被拒绝。
+`HttpAuthProvider.none()` 只用于服务明确允许匿名访问或使用 mTLS 身份的场景。
+
+SpringSpnDemo 使用 `ORCH_USERNAME`、`ORCH_PASSWORD`（与登录页面相同的账号）、
+`ORCH_VERIFY_SERVER`（默认 true）及可选 `ORCH_CA_CERTS_PATH`，不复用
+`A2A_SSL_VERIFY` 或智能体/Order 凭据。密码通过外部 Secret 注入，不写入提交的
+YAML 或命令行参数。共享账号提供器首次调用时向 `POST /api/v1/auth/token`
+发送 `{username, password}` JSON，按 `expires_in` 缓存 `access_token`；到期后
+重新登录。该第一方接口不是 OAuth2 密码授权或 refresh-token 服务。
+
+只有 PSOP 加载/搜索在 401 后允许刷新凭据并最多重试一次；403、429、服务错误、
+TLS/网络失败和登录拒绝均不重试。凭据限定在配置的编排中心 PSOP API，不进入
+查询参数或 Cookie，不发往其他来源。登录和 PSOP 使用相同的中心 TLS 策略；
+关闭服务端证书校验不关闭账号鉴权。HTTP 用于隔离联调，但会明文传输密码，
+部署应优先使用校验对端的 HTTPS。多个执行共享同一 `OrchestrationAccountAuth`
+实例，复用线程安全的会话缓存；中心账号不影响 Task-T 或 Notification-T 流。
+
+外部管理的 Bearer 可单独设置 `ORCH_API_TOKEN`，不能与账号密码混用；
+静态 Token/supplier 提供器默认不参与 401 自动重试。
+动态或自定义认证可提供名为 `orchestrationHttpAuthProvider` 的 Spring bean；
+mTLS 或应用自管 TLS 策略可提供名为 `orchestrationTlsPolicy` 的 TlsPolicy bean。
+HostQuickStart 使用 `REGISTRY_API_TOKEN` 完成注册中心发现认证。
+中心的 401/403、TLS/网络错误、无候选结果均不会改为执行另一条工作流。
+`--a2a.local-workflow-enabled=true` 明确选择离线示例工作流，不访问中心，默认关闭，不作为生产兜底。
 
 ### 13.2 被调度智能体端点
 

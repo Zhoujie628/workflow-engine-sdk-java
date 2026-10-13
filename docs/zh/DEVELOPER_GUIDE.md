@@ -242,30 +242,45 @@ provider，不覆盖模板，也不是生产失败兜底。
 
 ### SSE Server（Spring WebFlux）
 
-```java
-@GetMapping("/execute/{psopId}")
-public Flux<String> execute(@PathVariable String psopId) {
-    Workflow workflow = LoadPsop.load(baseUrl, psopId, token, false);
+每个宿主/中心地址共享一个账号 provider，不要按请求创建；登录与资源查询复用同一 TLS 策略，凭据从秘密环境获取。首次先在网页完成改密。AgentCard 独立使用 `RegistryClient(registryUrl, registryAuth, registryTls)`，不将编排账号 Token 复用于注册中心或 Agent。
 
-    return Flux.create(sink -> {
-        ExecutePsop.builder()
-                .psop(workflow)
-                .agentCards(cards)
-                .controlPoint(cp)
-                .eventCallback(new EventCallback() {
-                    @Override
-                    public void onEvent(String type, Map<String, Object> data) {
-                        sink.next("data: " + toJson(type, data) + "\n\n");
-                    }
-                })
-                .onFinish((r, e) -> {
-                    sink.complete();
-                    return CompletableFuture.completedFuture(null);
-                })
-                .execute();
-    });
+```java
+// Host-owned fields, constructed once; imports are in dev.openan.workflow.engine.registry.
+private final TlsPolicy orchTls = TlsPolicy.strict();
+private final HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        baseUrl, System.getenv("ORCH_USERNAME"), System.getenv("ORCH_PASSWORD"), orchTls);
+```
+
+
+
+```java
+@GetMapping(value = "/execute/{psopId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<String> execute(@PathVariable String psopId) {
+    // LoadPsop is blocking; keep login/retrieval off the reactive event loop.
+    return Mono.fromCallable(() -> LoadPsop.load(baseUrl, psopId, orchAuth, orchTls))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapMany(workflow -> Flux.create(sink -> {
+                CompletableFuture<ExecutionResult> execution = ExecutePsop.builder()
+                        .psop(workflow)
+                        .agentCards(cards)
+                        .controlPoint(cp)
+                        .eventCallback(new EventCallback() {
+                            @Override
+                            public void onEvent(String type, Map<String, Object> data) {
+                                sink.next(toJson(type, data));
+                            }
+                        })
+                        .execute();
+                execution.whenComplete((result, error) -> {
+                    if (error != null) sink.error(error);
+                    else sink.complete();
+                });
+                sink.onCancel(() -> execution.cancel(true));
+            }));
 }
 ```
+
+响应式适配使用 `reactor.core.publisher.Mono/Flux`、`reactor.core.scheduler.Schedulers` 和 `org.springframework.http.MediaType`，由宿主设置 SSE 媒体类型及序列化，框架负责 SSE 帧格式。显式机器 Bearer 模式仍可用 `HttpAuthProvider.bearer(tokenSupplier)`，Token 生命周期由宿主负责。账号 PSOP 读取最多一次 401 续期/重试，不重放写请求。详见[账号接入](INTEGRATION_GUIDE.md)。
 
 ### 取消
 

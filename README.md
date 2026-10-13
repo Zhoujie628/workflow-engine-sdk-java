@@ -79,7 +79,7 @@ and need no setup.
 The complete, compiled example is [HostQuickStart.java](samples/src/main/java/dev/openan/workflow/engine/examples/demo/HostQuickStart.java).
 It converts registry JSON maps to typed AgentCards, runs a remote task and local aggregation, cancels timed-out work,
 and closes caller-owned transport resources. Run its main method in IDEA with three arguments: registry URL,
-target AgentCard name, and credentials JSON path. The registry and target agent must be reachable; TLS verification is enabled.
+target AgentCard name, and credentials JSON path. First set `REGISTRY_API_TOKEN` from the registry's configured identity provider; the example fails locally when it is missing. Registry credentials are independent from agent credentials and `ORCH_USERNAME` / `ORCH_PASSWORD`. The registry and target agent must be reachable; TLS verification is enabled.
 
 ```java
 // In the samples module; HostQuickStart is example source, not a class shipped in the SDK jar.

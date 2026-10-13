@@ -92,7 +92,47 @@ class LoadPsopHttpsTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void accountLoginAndBothPsopCallsShareExplicitConnectionLocalTls(boolean wrongSan)
+      throws Exception {
+    var defaults = HttpsURLConnection.getDefaultSSLSocketFactory();
+    var verifier = HttpsURLConnection.getDefaultHostnameVerifier();
+    try (var endpoint = endpoint(wrongSan, false, true)) {
+      var tls = TlsPolicy.insecure();
+      var auth =
+          new OrchestrationAccountAuth(endpoint.baseUrl(), "admin", "synthetic-password", tls);
+      assertEquals(
+          "tls-psop",
+          LoadPsop.search(endpoint.baseUrl(), "intent", 3, auth, tls).get(0).getWorkflowId());
+      assertEquals("tls-psop", LoadPsop.load(endpoint.baseUrl(), "tls-psop", auth, tls).getName());
+      var strict =
+          new OrchestrationAccountAuth(
+              endpoint.baseUrl(), "admin", "synthetic-password", TlsPolicy.strict());
+      var error =
+          assertThrows(
+              IllegalStateException.class,
+              () -> LoadPsop.load(endpoint.baseUrl(), "tls-psop", strict, TlsPolicy.strict()));
+      assertNull(error.getCause());
+      assertFalse(error.getMessage().contains("synthetic-password"));
+      // verify=False is not anonymous: TLS succeeds but the API still requires account Bearer.
+      assertEquals(
+          401,
+          assertThrows(
+                  HttpServiceException.class,
+                  () -> LoadPsop.load(endpoint.baseUrl(), "tls-psop", HttpAuthProvider.none(), tls))
+              .getStatusCode());
+    }
+    assertSame(defaults, HttpsURLConnection.getDefaultSSLSocketFactory());
+    assertSame(verifier, HttpsURLConnection.getDefaultHostnameVerifier());
+  }
+
   private Endpoint endpoint(boolean wrongSan, boolean clientAuth) throws Exception {
+    return endpoint(wrongSan, clientAuth, false);
+  }
+
+  private Endpoint endpoint(boolean wrongSan, boolean clientAuth, boolean accountAuth)
+      throws Exception {
     Path keyStoreFile = directory.resolve("server.p12");
     Path keytool =
         Path.of(
@@ -161,13 +201,23 @@ class LoadPsopHttpsTest {
         "/",
         exchange -> {
           exchange.getRequestBody().readAllBytes();
+          boolean login = exchange.getRequestURI().getPath().equals("/api/v1/auth/token");
+          int status =
+              accountAuth
+                      && !login
+                      && !"Bearer tls.session"
+                          .equals(exchange.getRequestHeaders().getFirst("Authorization"))
+                  ? 401
+                  : 200;
           String body =
-              exchange.getRequestURI().getPath().endsWith("/search")
-                  ? "{\"data\":[{\"workflow_id\":\"tls-psop\",\"name\":\"tls-psop\"}]}"
-                  : "{\"data\":{\"name\":\"tls-psop\",\"steps\":[]}}";
+              login
+                  ? "{\"access_token\":\"tls.session\",\"token_type\":\"Bearer\",\"expires_in\":60}"
+                  : exchange.getRequestURI().getPath().endsWith("/search")
+                      ? "{\"data\":[{\"workflow_id\":\"tls-psop\",\"name\":\"tls-psop\"}]}"
+                      : "{\"data\":{\"name\":\"tls-psop\",\"steps\":[]}}";
           byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().set("Content-Type", "application/json");
-          exchange.sendResponseHeaders(200, bytes.length);
+          exchange.sendResponseHeaders(status, bytes.length);
           try (var output = exchange.getResponseBody()) {
             output.write(bytes);
           } finally {

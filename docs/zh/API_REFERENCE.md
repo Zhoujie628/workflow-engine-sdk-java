@@ -363,6 +363,10 @@ static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify)
 static Workflow load(String baseUrl, String psopId,
                      String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls)
+static Workflow load(String baseUrl, String psopId,
+                     HttpAuthProvider auth, TlsPolicy tls, LoadPsop.Timeouts timeouts)
 
 static Workflow load(String baseUrl, String psopId)
 ```
@@ -378,6 +382,11 @@ static List<WorkflowSearchResult> search(
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent, int topN,
         String accessToken, boolean sslVerify, LoadPsop.Timeouts timeouts)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls)
+static List<WorkflowSearchResult> search(
+        String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls,
+        LoadPsop.Timeouts timeouts)
 
 static List<WorkflowSearchResult> search(
         String baseUrl, String intent)
@@ -391,7 +400,36 @@ LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验�
 生产环境必须保持验证并配置正确的服务端 SAN 与信任库；本设置不是引擎南向 HTTP/JSON-RPC 的 TLS 策略变更。 连接与读取超时默认均为
 30 秒；可通过 `new LoadPsop.Timeouts(connectTimeout, readTimeout)` 为单次调用设置正值。
 
+### OrchestrationAccountAuth
+
+```java
+new OrchestrationAccountAuth(baseUrl, username, password, tls)
+new OrchestrationAccountAuth(baseUrl, username, password, tls, loginTimeouts)
+```
+
+实现 PSOP 加载/搜索的 HttpAuthProvider，使用与网页相同的账号向
+POST /api/v1/auth/token 发送 username/password JSON。共享实例懒登录并以
+单调时钟缓存 opaque Bearer；到期重新登录，不是 OAuth2 refresh grant。
+响应要求非空 access_token、Bearer token_type 和正整数 expires_in。
+登录响应有大小上限；错误及畸形响应不保留原始正文或解析 cause。
+
+LoadPsop 仅在读/搜索返回 401 后调用一次
+HttpAuthProvider.onUnauthorized(uri, rejectedHeaders)。账号实现只使被拒绝
+的缓存会话失效；外部 Bearer/自定义提供器默认返回 false，不参与自动重试。
+403/服务错误不重试，不重放业务写入，不回退匿名或本地工作流。
+凭据限定在本中心 PSOP API，不跟随重定向。登录与 LoadPsop 传相同 TLS
+策略；HTTP 明文传输密码，部署应优先使用验证对端的 HTTPS。
+
 ### RegistryClient
+
+认证与 TLS 独立。HttpAuthProvider.bearer(tokenSupplier) 每次请求读取当前凭据；
+OAuth2 获取/刷新由应用负责。LoadPsop 的 accessToken 改用 Authorization: Bearer，不进入查询参数。
+HttpServiceException 提供 getStatusCode()、isAuthenticationFailure()，异常内容经过脱敏。
+成功 HTTP 状态的 JSON/模型转换失败抛 HttpResponseException，提供 getStatusCode()；
+不携带原始正文或解析 cause，避免异常链泄露凭据。
+TlsPolicy.strict()/trustedCa() 校验证书链与主机名，insecure() 对当前客户端关闭两项校验，
+mutualTls() 配置客户端身份。旧匿名 boolean 构造的 false 仍只关闭证书链校验；
+新集成优先使用显式认证/TLS 构造。
 
 双参数构造默认使用 30 秒完整响应截止时间。可通过
 `new RegistryClient(url, sslVerify, Duration.ofSeconds(15))` 设置正值预算，包含响应正文读取；线程中断会取消待处理请求。
@@ -401,7 +439,9 @@ LoadPsop 的简便重载默认 `sslVerify=true`，使用 JVM 信任库并校验�
 从注册中心获取和注册 AgentCard。
 
 ```java
-new RegistryClient("https://127.0.0.1:5000",false)
+new RegistryClient(url, HttpAuthProvider.bearer(tokenSupplier))
+new RegistryClient(url, auth, TlsPolicy.strict())
+new RegistryClient(url, auth, TlsPolicy.insecure(), Duration.ofSeconds(15))
 
 List<Map<String, Object>> fetchAgentCards()
 

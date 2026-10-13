@@ -20,6 +20,16 @@ a2at:
 
 a2a:
   orch-url: https://127.0.0.1:5001
+  # Center HTTP credentials/TLS are independent of agent credentials/TLS.
+  # Use the same account as the login page. Password comes from an external secret.
+  orch-username: ${ORCH_USERNAME:}
+  orch-password: ${ORCH_PASSWORD:}
+  # Alternative externally managed Bearer; do not combine with username/password.
+  orch-api-token: ${ORCH_API_TOKEN:}
+  orch-verify-server: ${ORCH_VERIFY_SERVER:true}
+  orch-ca-certs-path: ${ORCH_CA_CERTS_PATH:}
+  # Explicit offline demo only: do not contact the center or hide its authentication failures.
+  local-workflow-enabled: ${A2A_LOCAL_WORKFLOW_ENABLED:false}
   ssl-verify: ${A2A_SSL_VERIFY:false}
   task-cleanup-enabled: ${A2A_TASK_CLEANUP_ENABLED:true}
   task-cleanup-fail-fast: ${A2A_TASK_CLEANUP_FAIL_FAST:true}

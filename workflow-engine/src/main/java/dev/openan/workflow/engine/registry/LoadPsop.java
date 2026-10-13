@@ -20,20 +20,14 @@
 package dev.openan.workflow.engine.registry;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.openan.workflow.engine.client.SslContextFactory;
 import dev.openan.workflow.engine.model.Workflow;
 import dev.openan.workflow.engine.model.WorkflowSearchResult;
-import dev.openan.workflow.engine.util.SensitiveDataRedactor;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import javax.net.ssl.HttpsURLConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,27 +59,48 @@ public class LoadPsop {
   public static Workflow load(
       String baseUrl, String psopId, String accessToken, boolean sslVerify, Timeouts timeouts)
       throws Exception {
-    StringBuilder urlBuilder =
-        new StringBuilder(baseUrl).append("/api/v1/orchestrate/psop/").append(psopId);
-    if (accessToken != null && !accessToken.isEmpty()) {
-      urlBuilder
-          .append("?access_token=")
-          .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
+    return load(
+        baseUrl,
+        psopId,
+        tokenAuth(accessToken),
+        sslVerify ? TlsPolicy.strict() : TlsPolicy.insecure(),
+        timeouts);
+  }
+
+  /** Loads a workflow using independent HTTP authentication and TLS policy. */
+  public static Workflow load(String baseUrl, String psopId, HttpAuthProvider auth, TlsPolicy tls)
+      throws Exception {
+    return load(baseUrl, psopId, auth, tls, DEFAULT_TIMEOUTS);
+  }
+
+  /** Loads a workflow with per-request credentials and explicit deadlines. */
+  public static Workflow load(
+      String baseUrl, String psopId, HttpAuthProvider auth, TlsPolicy tls, Timeouts timeouts)
+      throws Exception {
+    java.util.Objects.requireNonNull(psopId, "psopId");
+    if (psopId.isBlank() || psopId.equals(".") || psopId.equals("..")) {
+      throw new IllegalArgumentException("psopId must identify a workflow");
     }
-    String url = urlBuilder.toString();
-    log.info(
-        "[Registry] Loading PSOP from {} (ssl_verify={})",
-        anonymousUrl(url, accessToken),
-        sslVerify);
-    HttpResult resp = execute("GET", url, null, sslVerify, timeouts);
+    String url =
+        HttpAuthentication.baseUrl(baseUrl)
+            + "/api/v1/orchestrate/psop/"
+            + URLEncoder.encode(psopId, StandardCharsets.UTF_8).replace("+", "%20");
+    log.info("[Registry] Loading PSOP from {}", url);
+    CenterHttpClient.Response resp = execute("GET", url, null, auth, tls, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
-    @SuppressWarnings("unchecked")
-    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-    @SuppressWarnings("unchecked")
-    Map<String, Object> psopData = (Map<String, Object>) data.getOrDefault("data", data);
-    Workflow wf = Workflow.fromMap(psopData);
+    Workflow wf =
+        HttpResponseParser.parse(
+            "Orchestration center",
+            "load workflow",
+            resp.statusCode(),
+            resp.body(),
+            data -> {
+              @SuppressWarnings("unchecked")
+              Map<String, Object> psopData = (Map<String, Object>) data.getOrDefault("data", data);
+              return Workflow.fromMap(psopData);
+            });
     log.info("[Registry] Loaded workflow: {}, {} steps", wf.getName(), wf.getSteps().size());
     return wf;
   }
@@ -109,97 +124,101 @@ public class LoadPsop {
       boolean sslVerify,
       Timeouts timeouts)
       throws Exception {
-    StringBuilder urlBuilder = new StringBuilder(baseUrl).append("/api/v1/orchestrate/search");
-    if (accessToken != null && !accessToken.isEmpty()) {
-      urlBuilder
-          .append("?access_token=")
-          .append(URLEncoder.encode(accessToken, StandardCharsets.UTF_8));
-    }
-    String url = urlBuilder.toString();
-    log.info("[Registry] Searching PSOP at {} (top_n={})", anonymousUrl(url, accessToken), topN);
+    return search(
+        baseUrl,
+        intent,
+        topN,
+        tokenAuth(accessToken),
+        sslVerify ? TlsPolicy.strict() : TlsPolicy.insecure(),
+        timeouts);
+  }
+
+  /** Searches using credentials evaluated before every request. */
+  public static List<WorkflowSearchResult> search(
+      String baseUrl, String intent, int topN, HttpAuthProvider auth, TlsPolicy tls)
+      throws Exception {
+    return search(baseUrl, intent, topN, auth, tls, DEFAULT_TIMEOUTS);
+  }
+
+  /** Searches with independent authentication, TLS policy and explicit deadlines. */
+  public static List<WorkflowSearchResult> search(
+      String baseUrl,
+      String intent,
+      int topN,
+      HttpAuthProvider auth,
+      TlsPolicy tls,
+      Timeouts timeouts)
+      throws Exception {
+    String url = HttpAuthentication.baseUrl(baseUrl) + "/api/v1/orchestrate/search";
+    log.info("[Registry] Searching PSOP at {} (top_n={})", url, topN);
     String jsonBody = mapper.writeValueAsString(Map.of("intent", intent, "top_n", topN));
-    HttpResult resp = execute("POST", url, jsonBody, sslVerify, timeouts);
+    CenterHttpClient.Response resp = execute("POST", url, jsonBody, auth, tls, timeouts);
     if (resp.statusCode() != 200) {
       throw requestFailure(resp);
     }
-    @SuppressWarnings("unchecked")
-    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-    @SuppressWarnings("unchecked")
-    List<Map<String, Object>> rawResults =
-        (List<Map<String, Object>>) data.getOrDefault("data", List.of());
-    List<WorkflowSearchResult> results = new java.util.ArrayList<>();
-    for (Map<String, Object> raw : rawResults) {
-      results.add(
-          WorkflowSearchResult.builder()
-              .workflowId((String) raw.getOrDefault("workflow_id", raw.getOrDefault("id", "")))
-              .workflowType((String) raw.getOrDefault("workflow_type", ""))
-              .name((String) raw.getOrDefault("name", ""))
-              .description((String) raw.getOrDefault("description", null))
-              .createdAt(raw.get("created_at") != null ? raw.get("created_at").toString() : "")
-              .score(raw.get("score") instanceof Number n ? n.doubleValue() : 1.0)
-              .userIntent((String) raw.getOrDefault("user_intent", null))
-              .relatedPreflow((String) raw.getOrDefault("related_preflow", null))
-              .tasksSummary((String) raw.getOrDefault("tasks_summary", null))
-              .build());
-    }
+    List<WorkflowSearchResult> results =
+        HttpResponseParser.parse(
+            "Orchestration center",
+            "search workflows",
+            resp.statusCode(),
+            resp.body(),
+            data -> {
+              @SuppressWarnings("unchecked")
+              List<Map<String, Object>> rawResults =
+                  (List<Map<String, Object>>) data.getOrDefault("data", List.of());
+              List<WorkflowSearchResult> parsed = new java.util.ArrayList<>();
+              for (Map<String, Object> raw : rawResults) {
+                parsed.add(
+                    WorkflowSearchResult.builder()
+                        .workflowId(
+                            (String) raw.getOrDefault("workflow_id", raw.getOrDefault("id", "")))
+                        .workflowType((String) raw.getOrDefault("workflow_type", ""))
+                        .name((String) raw.getOrDefault("name", ""))
+                        .description((String) raw.getOrDefault("description", null))
+                        .createdAt(
+                            raw.get("created_at") != null ? raw.get("created_at").toString() : "")
+                        .score(raw.get("score") instanceof Number n ? n.doubleValue() : 1.0)
+                        .userIntent((String) raw.getOrDefault("user_intent", null))
+                        .relatedPreflow((String) raw.getOrDefault("related_preflow", null))
+                        .tasksSummary((String) raw.getOrDefault("tasks_summary", null))
+                        .build());
+              }
+              return parsed;
+            });
     log.info("[Registry] Search returned {} workflow(s)", results.size());
     return results;
   }
 
-  /** Preserve token presence for diagnostics without exposing any token characters or length. */
-  static String anonymousUrl(String url, String token) {
+  private static HttpAuthProvider tokenAuth(String token) {
     return token == null || token.isEmpty()
-        ? url
-        : url.substring(0, url.indexOf("?access_token=")) + "?access_token=<anonymous>";
+        ? HttpAuthProvider.none()
+        : HttpAuthProvider.bearer(token);
   }
 
-  private static RuntimeException requestFailure(HttpResult response) {
-    String detail =
-        SensitiveDataRedactor.redact(response.body()).replace("\r", "\\r").replace("\n", "\\n");
-    if (detail.length() > 512) detail = detail.substring(0, 512) + "...";
-    return new RuntimeException(
-        "Orchestration center returned "
-            + response.statusCode()
-            + (detail.isBlank() ? "" : ": " + detail));
+  private static HttpServiceException requestFailure(CenterHttpClient.Response response) {
+    return new HttpServiceException(
+        "Orchestration center", response.statusCode(), response.body(), response.credentials());
   }
 
-  private static HttpResult execute(
-      String method, String url, String jsonBody, boolean sslVerify, Timeouts timeouts)
+  private static CenterHttpClient.Response execute(
+      String method,
+      String url,
+      String jsonBody,
+      HttpAuthProvider auth,
+      TlsPolicy tls,
+      Timeouts timeouts)
       throws Exception {
     java.util.Objects.requireNonNull(timeouts, "timeouts");
-    HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
-    if (!sslVerify && connection instanceof HttpsURLConnection https) {
-      // Development opt-out is connection-local: never replace JVM-wide TLS defaults.
-      https.setSSLSocketFactory(
-          SslContextFactory.create(false, null).orElseThrow().getSocketFactory());
-      https.setHostnameVerifier((hostname, session) -> true);
-      log.warn(
-          "[Registry] INSECURE_TLS host={}, port={}: certificate and hostname verification disabled; development only",
-          https.getURL().getHost(),
-          https.getURL().getPort());
+    java.util.Objects.requireNonNull(auth, "auth");
+    java.util.Objects.requireNonNull(tls, "tls");
+    URI uri = URI.create(url);
+    var response = CenterHttpClient.execute(method, uri, jsonBody, auth, tls, timeouts, 0);
+    // Both operations are read-only (search uses POST); no business execution/write is replayed.
+    if (response.statusCode() == 401
+        && HttpAuthentication.onUnauthorized(auth, uri, response.credentials())) {
+      return CenterHttpClient.execute(method, uri, jsonBody, auth, tls, timeouts, 0);
     }
-    try {
-      connection.setInstanceFollowRedirects(false);
-      connection.setConnectTimeout(timeouts.connectTimeoutMillis());
-      connection.setReadTimeout(timeouts.readTimeoutMillis());
-      connection.setRequestMethod(method);
-      if (jsonBody != null) {
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json");
-        try (OutputStream output = connection.getOutputStream()) {
-          output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-        }
-      }
-      int status = connection.getResponseCode();
-      InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-      String body = input == null ? "" : new String(input.readAllBytes(), StandardCharsets.UTF_8);
-      if (input != null) {
-        input.close();
-      }
-      return new HttpResult(status, body);
-    } finally {
-      connection.disconnect();
-    }
+    return response;
   }
 
   /** Convenience: search with defaults (top_n=5, no token, ssl_verify=true). */
@@ -240,6 +259,4 @@ public class LoadPsop {
       return Math.toIntExact(readTimeout.toMillis());
     }
   }
-
-  private record HttpResult(int statusCode, String body) {}
 }

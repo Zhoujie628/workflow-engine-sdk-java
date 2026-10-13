@@ -26,15 +26,59 @@ import org.junit.jupiter.api.Timeout;
 /** Runs the actual northbound Spring demo with local OMCs and the offline SDK provider. */
 class SpringSpnDemoE2ETest {
   private dev.openan.workflow.engine.examples.testsupport.CapturedLogs captured;
+  @org.junit.jupiter.api.io.TempDir java.nio.file.Path centerTestDirectory;
+  private String previousCardLocations;
+  private final int[] cityPorts = new int[2];
+  private java.nio.file.Path demoCredentials;
 
   @org.junit.jupiter.api.BeforeEach
-  void captureLogs() {
+  void captureLogs() throws Exception {
     captured = new dev.openan.workflow.engine.examples.testsupport.CapturedLogs();
+    previousCardLocations = System.getProperty("A2A_AGENT_CARD_LOCATIONS");
+    // Keep existing developer OMCs running: use isolated loopback ports and public demo materials.
+    try (var first = new java.net.ServerSocket(0); var second = new java.net.ServerSocket(0)) {
+      cityPorts[0] = first.getLocalPort();
+      cityPorts[1] = second.getLocalPort();
+    }
+    var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    var locations = new java.util.ArrayList<String>();
+    for (int city = 1; city <= 2; city++) {
+      try (var input = getClass().getClassLoader().getResourceAsStream(
+          "agentcard/spn_domain_agent_city" + city + ".json")) {
+        var card = mapper.readTree(input);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) card.path("supportedInterfaces").get(0))
+            .put("url", cityTarget(city) + "/a2a/json");
+        java.nio.file.Path path = centerTestDirectory.resolve("city" + city + ".json");
+        mapper.writeValue(path.toFile(), card);
+        locations.add(path.toUri().toString());
+      }
+    }
+    locations.add("classpath:agentcard/transport_workbench_agent.json");
+    System.setProperty("A2A_AGENT_CARD_LOCATIONS", String.join(",", locations));
+    String credentials;
+    try (var input = getClass().getClassLoader().getResourceAsStream("spn_agent_credentials.example.json")) {
+      credentials = new String(java.util.Objects.requireNonNull(input).readAllBytes(),
+          java.nio.charset.StandardCharsets.UTF_8);
+    }
+    credentials = credentials.replace(":26335/", ":" + cityPorts[0] + "/")
+        .replace(":26336/", ":" + cityPorts[1] + "/");
+    demoCredentials = centerTestDirectory.resolve("credentials.json");
+    java.nio.file.Files.writeString(demoCredentials, credentials);
   }
 
   @org.junit.jupiter.api.AfterEach
   void closeCapture() {
+    if (previousCardLocations == null) System.clearProperty("A2A_AGENT_CARD_LOCATIONS");
+    else System.setProperty("A2A_AGENT_CARD_LOCATIONS", previousCardLocations);
     captured.close();
+  }
+
+  protected String cityTarget(int city) {
+    return "https://127.0.0.1:" + cityPorts[city - 1];
+  }
+
+  protected String demoCredentialsPath() {
+    return demoCredentials.toString();
   }
 
   @Test
@@ -181,6 +225,8 @@ class SpringSpnDemoE2ETest {
     return new String[] {
       "--a2a.transport-mode=direct",
       "--a2a.orch-url=http://127.0.0.1:1",
+      "--a2a.local-workflow-enabled=true",
+      "--a2a.credentials-path=" + demoCredentialsPath(),
       "--a2a.a2at-env-path=" + OfflineA2ATLlmClient.envPath()
     };
   }
@@ -214,6 +260,53 @@ class SpringSpnDemoE2ETest {
       // run() propagates failure unless the northbound Task reaches COMPLETED.
       new SpringSpnDemo().run(arguments());
     } finally {
+      if (previous == null) System.clearProperty("a2at.env.path");
+      else System.setProperty("a2at.env.path", previous);
+    }
+  }
+
+  @Test
+  @Timeout(120)
+  void malformedCenterResponseCannotLeakTokenIntoNorthboundTaskOrLogs() throws Exception {
+    String token = "SyntheticNorthboundCenterCredential12345";
+    var requests = new java.util.concurrent.atomic.AtomicInteger();
+    var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext("/", exchange -> {
+      if (("Bearer " + token).equals(exchange.getRequestHeaders().getFirst("Authorization"))) requests.incrementAndGet();
+      exchange.getRequestBody().readAllBytes();
+      byte[] body = token.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      exchange.sendResponseHeaders(200, body.length);
+      try (var output = exchange.getResponseBody()) { output.write(body); }
+      finally { exchange.close(); }
+    });
+    server.start();
+    int offset = captured.length();
+    String previous = System.getProperty("a2at.env.path");
+    try {
+      OfflineA2ATLlmClient.install();
+      System.setProperty("a2at.env.path", OfflineA2ATLlmClient.envPath());
+      var onlineArguments = new java.util.ArrayList<>(java.util.Arrays.stream(arguments())
+          .filter(arg -> !arg.startsWith("--a2a.orch-url=") && !arg.startsWith("--a2a.local-workflow-enabled="))
+          .toList());
+      onlineArguments.add("--a2a.orch-url=http://127.0.0.1:" + server.getAddress().getPort());
+      onlineArguments.add("--a2a.local-workflow-enabled=false");
+      onlineArguments.add("--a2a.orch-api-token=" + token);
+      var error = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+          () -> new SpringSpnDemo().run(onlineArguments.toArray(String[]::new)));
+      var stack = new java.io.StringWriter();
+      error.printStackTrace(new java.io.PrintWriter(stack));
+      org.junit.jupiter.api.Assertions.assertFalse(stack.toString().contains(token));
+      org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("TASK_STATE_FAILED"));
+      org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("invalid response"));
+      String evidence = captured.since(offset);
+      org.junit.jupiter.api.Assertions.assertFalse(evidence.contains(token));
+      org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("HttpResponseException"));
+      org.junit.jupiter.api.Assertions.assertTrue(evidence.contains("SHUTDOWN_DONE success=false"));
+      org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("LOCAL_DEMO_WORKFLOW"));
+      org.junit.jupiter.api.Assertions.assertFalse(evidence.contains("stage=execute-workflow"));
+      org.junit.jupiter.api.Assertions.assertEquals(1, requests.get());
+    } finally {
+      server.stop(0);
       if (previous == null) System.clearProperty("a2at.env.path");
       else System.setProperty("a2at.env.path", previous);
     }

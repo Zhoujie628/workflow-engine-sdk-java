@@ -90,7 +90,8 @@ AgentCard card = mapper.readValue(
         new File("agentcard/my_agent.json"), AgentCard.class);
 
 // Option B: From Registry Center
-RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", false);
+HttpAuthProvider registryAuth = HttpAuthProvider.bearer(() -> System.getenv("REGISTRY_API_TOKEN"));
+RegistryClient registry = new RegistryClient("https://127.0.0.1:5000", registryAuth, TlsPolicy.strict());
 ObjectMapper cardMapper = new ObjectMapper().registerModule(new AgentCardJacksonModule());
 List<AgentCard> cards = registry.fetchAgentCards().stream()
         .map(raw -> cardMapper.convertValue(raw, AgentCard.class)).toList();
@@ -99,8 +100,9 @@ List<AgentCard> cards = registry.fetchAgentCards().stream()
 
 
 RegistryClient defaults to a 30-second deadline including response-body consumption. For another budget, use
-`new RegistryClient(url, true, Duration.ofSeconds(15))`; only positive durations are accepted. Query access tokens
-are logged as `<anonymous>`; do not log raw discovery URLs from host code.
+`new RegistryClient(url, registryAuth, TlsPolicy.strict(), Duration.ofSeconds(15))`; only positive
+durations are accepted. All discovery and registration requests apply credentials immediately before sending.
+Credentials are sent in headers, never in URL query parameters. Missing/invalid Bearer tokens fail locally.
 
 ### 4.3 Implement ControlPoint
 
@@ -547,13 +549,18 @@ Common event types: `START`, `STEP_START`, `TASK_REQUEST`,
 ## 11. Load Workflows from Orchestration Center
 
 ```java
+// Center credentials are independent of A2A AuthProvider and agent credentials.
+TlsPolicy orchTls = TlsPolicy.strict(); // Or trustedCa("/external/certs/ca.pem").
+HttpAuthProvider orchAuth = new OrchestrationAccountAuth(
+        "https://orchestration.example.com", System.getenv("ORCH_USERNAME"),
+        System.getenv("ORCH_PASSWORD"), orchTls);
 // Search by intent
 List<WorkflowSearchResult> results = LoadPsop.search(
-                "https://orchestration.example.com", "analyze service request", 5, null, true);
+                "https://orchestration.example.com", "analyze service request", 5, orchAuth, orchTls);
 
 // Load full workflow by ID
 Workflow workflow = LoadPsop.load(
-        "https://orchestration.example.com", results.get(0).getWorkflowId(), null, true);
+        "https://orchestration.example.com", results.get(0).getWorkflowId(), orchAuth, orchTls);
 ```
 
 ## 12. Custom Extensions
@@ -566,16 +573,55 @@ metadata and activation URIs. AgentCard declarations never cause implicit genera
 
 ### 13.1 Orchestration-center HTTPS development
 
-`LoadPsop.search/load` receives an explicit `sslVerify` argument. Keep it `true` in production. In a controlled
-development environment, `false` disables certificate-chain and hostname checks for that connection only and emits a
-`[Registry] INSECURE_TLS` warning. It does not modify JVM-wide TLS defaults.
+`TlsPolicy.strict()` verifies certificate trust and hostname. Use `TlsPolicy.trustedCa(caPemPath)`
+for a private/self-signed CA. `TlsPolicy.insecure()` explicitly skips both checks for the current
+management client only (Python `verify=False` equivalent) and emits an `INSECURE_TLS` warning.
+It does not modify JVM-wide TLS defaults or bypass Bearer authentication.
 
 The HTTPS server must still present a certificate, and client-certificate requirements (mTLS) still apply.
 This mode cannot authenticate the server and is vulnerable to interception; do not use it in production.
 Keep verification enabled in production, configure matching server SANs and trust its CA in the running JVM.
+For mTLS, use `TlsPolicy.mutualTls(ca, clientCert, pkcs8Key, password)`; the insecure overload
+`TlsPolicy.insecure(clientCert, pkcs8Key, password)` retains client identity.
 The dispatched-agent `caCertsPath` setting is not forwarded to LoadPsop.
 LoadPsop never changes JVM-wide SSLContext, SocketFactory or HostnameVerifier defaults.
 Dispatched-agent HTTP/JSON-RPC retains hostname checks when chain verification is disabled.
+
+Existing LoadPsop methods retain their arguments, but now send accessToken in the Bearer header,
+not the URL. Existing RegistryClient boolean constructors remain anonymous; their false setting
+still disables only certificate-chain checks. Prefer the explicit authentication/TLS constructors.
+
+`HttpAuthProvider.bearer(tokenSupplier)` reads the current token once per request. The application/IAM
+client owns OAuth2 acquisition, caching and refresh; the SDK does not retry business writes on 401.
+Custom authentication implements `headers(URI)` and returns business-defined header names/values.
+Duplicate case-insensitive or reserved transport headers are rejected. Use `HttpAuthProvider.none()`
+only when the service deliberately allows anonymous access or uses mTLS identity instead.
+
+SpringSpnDemo uses `ORCH_USERNAME` and `ORCH_PASSWORD` (the login-page account),
+`ORCH_VERIFY_SERVER` (default true), and optional `ORCH_CA_CERTS_PATH`, independently
+of `A2A_SSL_VERIFY` and agent/Order credentials. Supply the password through an external
+secret, never in committed YAML or command-line arguments. The shared account provider
+logs in lazily at `POST /api/v1/auth/token`, sends `{username, password}` as JSON, and
+caches `access_token` according to `expires_in`. Expiry is handled by logging in again;
+this first-party endpoint is not an OAuth2 password grant or refresh-token server.
+
+Only PSOP load/search may retry once after 401 with refreshed account credentials.
+403, 429, service errors, TLS/network failures and rejected logins are not retried.
+Credentials are scoped to the configured center's PSOP API, never query strings/cookies
+or another origin. Login and PSOP calls must use the same center TLS policy; skipping
+server verification does not skip account authentication. HTTP is supported for isolated
+development, but exposes the login password; prefer verified HTTPS in deployments.
+Share one `OrchestrationAccountAuth` instance across executions to reuse its thread-safe
+session cache. No center credentials affect Task-T or Notification-T streams.
+
+Alternatively set `ORCH_API_TOKEN` alone for an externally managed Bearer; do not combine
+it with account credentials. Static/supplier Bearer providers do not opt into retries.
+For dynamic/custom credentials, provide a bean named `orchestrationHttpAuthProvider`.
+For mTLS or an application-owned TLS policy, provide a `TlsPolicy` bean named `orchestrationTlsPolicy`.
+HostQuickStart requires `REGISTRY_API_TOKEN` for registry discovery.
+Center failures (including 401/403, TLS/network errors and empty search results) never select a
+different workflow. `--a2a.local-workflow-enabled=true` explicitly runs the offline sample workflow
+without contacting the center; it is disabled by default and is not a production fallback.
 
 ### 13.2 Dispatched-agent endpoints
 

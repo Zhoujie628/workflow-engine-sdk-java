@@ -22,7 +22,6 @@ package dev.openan.workflow.engine.registry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.openan.workflow.engine.client.AgentCardNormalizer;
 import dev.openan.workflow.engine.client.SslContextFactory;
-import dev.openan.workflow.engine.util.SensitiveDataRedactor;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -43,6 +42,7 @@ public class RegistryClient {
   private final String baseUrl;
   private final HttpClient httpClient;
   private final java.time.Duration requestTimeout;
+  private final HttpAuthProvider auth;
 
   public RegistryClient(String url, boolean sslVerify) {
     this(url, sslVerify, java.time.Duration.ofSeconds(30));
@@ -50,26 +50,56 @@ public class RegistryClient {
 
   /** Creates a discovery client with a positive deadline for each complete HTTP response. */
   public RegistryClient(String url, boolean sslVerify, java.time.Duration requestTimeout) {
+    // Preserve the old chain-only opt-out. Use TlsPolicy.insecure() explicitly to skip hostname
+    // checks.
+    this(
+        url,
+        HttpAuthProvider.none(),
+        sslVerify ? TlsPolicy.strict() : legacyTrustAll(),
+        requestTimeout);
+  }
+
+  /** Creates a client with per-request authentication, strict TLS by default. */
+  public RegistryClient(String url, HttpAuthProvider auth) {
+    this(url, auth, TlsPolicy.strict());
+  }
+
+  /** Creates a client with independent authentication and TLS policy. */
+  public RegistryClient(String url, HttpAuthProvider auth, TlsPolicy tls) {
+    this(url, auth, tls, java.time.Duration.ofSeconds(30));
+  }
+
+  /** Creates a client with authentication and a complete-response deadline. */
+  public RegistryClient(
+      String url, HttpAuthProvider auth, TlsPolicy tls, java.time.Duration requestTimeout) {
     if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
       throw new IllegalArgumentException("requestTimeout must be positive");
     }
     this.requestTimeout = requestTimeout;
-    this.baseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    this.baseUrl = HttpAuthentication.baseUrl(url);
+    this.auth = java.util.Objects.requireNonNull(auth, "auth");
+    java.util.Objects.requireNonNull(tls, "tls");
     HttpClient.Builder clientBuilder =
         HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(30))
             .followRedirects(HttpClient.Redirect.NEVER);
-    if (!sslVerify) {
-      clientBuilder.sslContext(SslContextFactory.createTrustAll());
-    }
+    tls.configure(clientBuilder);
     this.httpClient = clientBuilder.build();
   }
 
-  private static RuntimeException requestFailure(String service, int status, String body) {
-    String detail = SensitiveDataRedactor.redact(body).replace("\r", "\\r").replace("\n", "\\n");
-    if (detail.length() > 512) detail = detail.substring(0, 512) + "...";
-    return new RuntimeException(
-        service + " returned " + status + (detail.isBlank() ? "" : ": " + detail));
+  private static TlsPolicy legacyTrustAll() {
+    return TlsPolicy.verifiedHostname(SslContextFactory.createTrustAll());
+  }
+
+  private static HttpServiceException requestFailure(
+      String service, HttpResponse<String> response) {
+    Map<String, String> credentials = new java.util.LinkedHashMap<>();
+    response
+        .request()
+        .headers()
+        .map()
+        .forEach((name, values) -> credentials.put(name, String.join(", ", values)));
+    return new HttpServiceException(service, response.statusCode(), response.body(), credentials);
   }
 
   @SuppressWarnings("unchecked")
@@ -85,14 +115,9 @@ public class RegistryClient {
         HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
-      throw requestFailure("Registry", resp.statusCode(), resp.body());
+      throw requestFailure("Registry", resp);
     }
-    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-    List<Map<String, Object>> cards =
-        (List<Map<String, Object>>)
-            data.getOrDefault("agentCards", data.getOrDefault("data", List.of()));
-    // Normalize each card's security schemes to a compatible format
-    cards = cards.stream().map(AgentCardNormalizer::normalize).toList();
+    List<Map<String, Object>> cards = parseCards(resp);
     log.info("[Registry] Received {} agent card(s)", cards.size());
     return cards;
   }
@@ -121,18 +146,26 @@ public class RegistryClient {
         HttpRequest.newBuilder().uri(URI.create(url)).timeout(requestTimeout).GET().build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200) {
-      throw requestFailure("Registry", resp.statusCode(), resp.body());
+      throw requestFailure("Registry", resp);
     }
-    Map<String, Object> data = mapper.readValue(resp.body(), Map.class);
-    List<Map<String, Object>> cards =
-        (List<Map<String, Object>>)
-            data.getOrDefault("agentCards", data.getOrDefault("data", List.of()));
-    if (cards.isEmpty()) {
+    Map<String, Object> card =
+        HttpResponseParser.parse(
+            "Registry",
+            "fetch agent card",
+            resp.statusCode(),
+            resp.body(),
+            data -> {
+              List<Map<String, Object>> cards =
+                  (List<Map<String, Object>>)
+                      data.getOrDefault("agentCards", data.getOrDefault("data", List.of()));
+              return cards.isEmpty() ? null : AgentCardNormalizer.normalize(cards.get(0));
+            });
+    if (card == null) {
       log.warn("[Registry] Agent card not found: name={}", name);
       return null;
     }
     log.info("[Registry] Agent card found: name={}", name);
-    return AgentCardNormalizer.normalize(cards.get(0));
+    return card;
   }
 
   /**
@@ -156,14 +189,34 @@ public class RegistryClient {
             .build();
     HttpResponse<String> resp = send(request);
     if (resp.statusCode() != 200 && resp.statusCode() != 201) {
-      throw requestFailure("Registry registration", resp.statusCode(), resp.body());
+      throw requestFailure("Registry registration", resp);
     }
-    Map<String, Object> result = mapper.readValue(resp.body(), Map.class);
+    Map<String, Object> result =
+        HttpResponseParser.parse(
+            "Registry", "register agent card", resp.statusCode(), resp.body(), data -> data);
     log.info("[Registry] Agent card registered: name={}", agentCard.get("name"));
     return result;
   }
 
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> parseCards(HttpResponse<String> response) {
+    return HttpResponseParser.parse(
+        "Registry",
+        "fetch agent cards",
+        response.statusCode(),
+        response.body(),
+        data -> {
+          List<Map<String, Object>> cards =
+              (List<Map<String, Object>>)
+                  data.getOrDefault("agentCards", data.getOrDefault("data", List.of()));
+          return cards.stream().map(AgentCardNormalizer::normalize).toList();
+        });
+  }
+
   private HttpResponse<String> send(HttpRequest request) throws Exception {
+    HttpRequest.Builder authenticated = HttpRequest.newBuilder(request, (name, value) -> true);
+    HttpAuthentication.headers(auth, request.uri()).forEach(authenticated::setHeader);
+    request = authenticated.build();
     var response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
     try {
       // Also bound body consumption: a peer may send headers and then stall its body.

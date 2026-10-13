@@ -23,6 +23,8 @@ import dev.openan.workflow.engine.client.A2ATExtension;
 import dev.openan.workflow.engine.examples.agents.BaseAgentExecutor;
 import dev.openan.workflow.engine.examples.config.WorkbenchClientProperties;
 import dev.openan.workflow.engine.examples.util.EnvResolver;
+import dev.openan.workflow.engine.registry.HttpAuthProvider;
+import dev.openan.workflow.engine.registry.TlsPolicy;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,12 +50,26 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
   private static final Logger log = LoggerFactory.getLogger(SpringWorkbenchExecutor.class);
 
   private final WorkbenchClientProperties properties;
+  private final HttpAuthProvider centerAuth;
+  private final TlsPolicy centerTls;
   private volatile WorkbenchTaskInputParser taskInputParser;
   private final java.util.concurrent.ConcurrentMap<String, ExecutionCancellation> executions =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  public SpringWorkbenchExecutor(WorkbenchClientProperties properties) {
+  public SpringWorkbenchExecutor(
+      WorkbenchClientProperties properties,
+      @org.springframework.beans.factory.annotation.Qualifier("orchestrationHttpAuthProvider")
+      org.springframework.beans.factory.ObjectProvider<HttpAuthProvider> centerAuthProvider,
+      @org.springframework.beans.factory.annotation.Qualifier("orchestrationTlsPolicy")
+      org.springframework.beans.factory.ObjectProvider<TlsPolicy> centerTlsProvider) {
     this.properties = properties;
+    this.centerTls = centerTlsProvider.getIfAvailable(() ->
+        !properties.isOrchVerifyServer() ? TlsPolicy.insecure()
+        : properties.getOrchCaCertsPath() == null || properties.getOrchCaCertsPath().isBlank()
+            ? TlsPolicy.strict() : TlsPolicy.trustedCa(properties.getOrchCaCertsPath()));
+    this.centerAuth = centerAuthProvider.getIfAvailable(
+        () -> dev.openan.workflow.engine.examples.config.OrchestrationAccess.authentication(
+            properties, centerTls));
   }
 
   private static long elapsedMillis(long startedNanos) {
@@ -109,7 +125,11 @@ public class SpringWorkbenchExecutor extends BaseAgentExecutor {
                   properties.getOrchUrl(),
                   resolveCredentialsPath(),
                   properties.isSslVerify(),
-                  resolveEnvPath())
+                  resolveEnvPath(),
+                  null,
+                  null,
+                  new WorkbenchOrchestrator.CenterAccess(
+                      centerAuth, centerTls, properties.isLocalWorkflowEnabled()))
               .run(input, properties.isDemoNegotiationEnabled(), cancellation);
       cancellation.check();
       Map<String, Object> metadata = new LinkedHashMap<>();
