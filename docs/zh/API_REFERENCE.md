@@ -141,6 +141,7 @@ handle 再开始 I/O，监听器直接收到 handle 和完整 ReceivedMessage。
 | `sendExecutorCoreSize`          | `int`          | `4`    | 发送线程池核心线程数                                                                                      |
 | `sendExecutorMaxSize`           | `int`          | `16`   | 发送线程池最大线程数                                                                                      |
 | `sendExecutorQueueCapacity`     | `int`          | `256`  | 发送线程池有界队列容量                                                                                    |
+| `preferredProtocol` | `String` | null | 首选已声明的 AgentCard 协议，使用支持的传输标识，不是厂商名称。 |
 | `authProvider`                  | `AuthProvider` | null   | 自定义认证提供器                                                                                          |
 | `credentialsConfigPath`         | `String`       | null   | 凭证 JSON 文件路径；显式配置缺失或损坏时启动失败                                                          |
 | `credentialEncryptionKey`       | `String`       | null   | 宿主显式传入凭据解密密钥，不从 LLM .env 加载                                                              |
@@ -181,8 +182,7 @@ Header 生成不同值，引擎会抛出 `SecurityException`，不会静默覆�
 ### A2atMessages
 
 通过 MessageContent(parts, metadata, extensions) 提交自定义扩展内容，不注册引擎内容处理器。A2atMessages.from
-(MetadataContent, List<Part<?>>) 保留 SDK metadata 原位置并激活对应 URI；contextOf(ReceivedMessage) 或 contextOf(Map<
-String,Object>) 读取并检查规范协商上下文。只有 a2a-t-core 依赖，没有内容生成或语义校验。
+(MetadataContent, List<Part<?>>) 保留 SDK metadata 原位置并激活对应 URI；公开的 contextOf(ReceivedMessage) 读取并检查规范协商上下文，Map 重载为包内实现，宿主不能调用。只有 a2a-t-core 依赖，没有内容生成或语义校验。
 
 ### A2AJavaClientRuntime
 
@@ -196,6 +196,20 @@ public interface A2AJavaClientRuntime {
             Consumer<ClientEvent> eventSink,
             Consumer<String> logSink);
 
+    // Optional task operations; default implementations throw UnsupportedOperationException.
+    default Task getTask(AgentCard card, String taskId, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default ListTasksResult listTasks(AgentCard card, ListTasksParams params, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default Task cancelTask(AgentCard card, String taskId, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default CompletableFuture<SendMessageResult> subscribeToTask(
+            AgentCard card, String taskId, ClientCallContext context, Consumer<ClientEvent> sink) {
+        throw new UnsupportedOperationException();
+    }
     void close();
 }
 ```

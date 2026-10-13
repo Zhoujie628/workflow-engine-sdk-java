@@ -1,6 +1,6 @@
 # Business callback integration contract
 
-Release `0.1.0` API; A2A-T SDK `1.1.1`, A2A Java `1.2.0.Final`. The engine owns DAG scheduling, standard A2A envelopes,
+Current-source API baseline; A2A-T SDK `1.1.1`, A2A Java `1.2.0.Final`. The engine owns DAG scheduling, standard A2A envelopes,
 auth, transport and task waiting. The host owns content, schemas, templates, semantic validation and any LLM calls.
 The business contracts are independent of the transport runtime.
 
@@ -19,7 +19,7 @@ onTask returns final parts/metadata/extensions; the engine sends them without ge
 onSelfTask returns local TaskResult, onRoute independently allows or denies one conditional edge, and onNegotiation
 returns Send or Stop. Unconditional edges bypass onRoute and always run. Unimplemented callbacks fail explicitly. No
 echo-success, implicit route approval or automatic consent.
-See [Business callback contract](BUSINESS_CALLBACKS.md) for fields and working examples.
+See the callback fields and examples below.
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
@@ -220,7 +220,7 @@ sends; it does not automatically stop external business/LLM work. Hosts own canc
 callback entry points must return promptly; place blocking operations in an asynchronous executor.
 Missing/null/exceptional callbacks fail; uncertain sends are not blindly retried.
 
-### 6.1 Standalone task
+### 6.3 Standalone task
 
 Use `WorkflowEngineClient.sendTask(agentName, finalContent)` for a task outside the DAG. The overload with
 `NegotiationStrategy` supplies only that call's negotiation decisions. The host still owns content generation and
@@ -234,8 +234,8 @@ ExtensionSender.openNotification(agentName, finalContent, (handle, received) -> 
 Use host-generated Authorization-T or Notification-T content with the matching activated extension. The handle is
 registered before I/O; early callbacks can call handle.close() without capturing an unassigned variable.
 acknowledgement() reports actual ACK or failure; timeout is not a synthesized success. close() requests shutdown;
-completion() completes after the stream actually exits. Retain it until the host-defined terminal event, explicit
-cancellation, or host-agent shutdown, not just workflow completion.
+completion() completes after the stream actually exits. Retain it across task/result terminal statuses and workflow
+completion. Explicit cancellation, host-agent shutdown, stream exit/error, or the configured idle timeout ends it.
 
 Task, authorization and notification use separate transports/runtimes/contexts. Neither extension success nor failure is
 a prerequisite for workflow execution. Authorization controls only the host-defined action associated with that policy.
@@ -265,7 +265,7 @@ not the engine. Each role calls only the APIs needed for the message it owns.
 For natural-language inputs choose generateTaskPromptFromText(text, templateUri), generateAuthPromptFromText(text,
 templateUri), or generateNotificationPromptFromText(text, templateUri). Negotiation also offers phase-specific FromText
 and typed FromData alternatives. Structured generation may still call the SDK's configured LLM. Wrap the returned
-MetadataContent with A2atMessages.from(generated, List.of (new TextPart("business summary"))). Preserve full metadata,
+MetadataContent with A2atMessages.from(generated, List.of(new TextPart("business summary"))). Preserve full metadata,
 including templateUri and negotiationContext; provide nonempty parts. The parts summary is not the formal extension
 validation input.
 
@@ -276,6 +276,7 @@ host disclosure denial produces SDK Reject. Authorization policy is a separate c
 
 Authorization and Notification generation APIs create requests, not arbitrary business results. Authorization receipts
 and notification events are dispatched-agent business outputs and must follow the selected template and application
-contract. A subscription closes only on a host-defined terminal event, explicit cancellation, or shutdown; an ACK alone
-is not a terminal business event. SDK rejection should preserve its safe code, slot errors, and extracted parameter keys.
+contract. Task/result terminal statuses do not close a notification subscription; neither do ACKs. Explicit cancellation,
+shutdown, stream exit/error, or the configured idle timeout ends it. SDK rejection should preserve its safe code,
+slot errors, and extracted parameter keys.
 Authorization and subscription failures still do not block workflow execution.

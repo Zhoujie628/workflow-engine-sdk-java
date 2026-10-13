@@ -1,6 +1,6 @@
 # 业务回调集成契约
 
-`0.1.0` API，A2A-T SDK `1.1.1`，A2A Java `1.2.0.Final`。 引擎负责 DAG、标准 A2A 信封、认证、传输和任务等待；宿主负责消息内容、schema、模板、语义校验和
+当前源码 API，A2A-T SDK `1.1.1`，A2A Java `1.2.0.Final`。 引擎负责 DAG、标准 A2A 信封、认证、传输和任务等待；宿主负责消息内容、schema、模板、语义校验和
 LLM。业务契约独立于具体传输实现。
 
 ## 1. 回调接口
@@ -17,7 +17,7 @@ interface ControlPoint {
 onTask 返回最终 parts/metadata/extensions，引擎封装发送，不再生成或改写内容。onSelfTask 返回本地 TaskResult；onRoute
 对一条条件边独立返回放行或拒绝；onNegotiation 返回 Send 或 Stop。无条件边不调用 onRoute 并始终放行。未实现的回调明确失败，
 不回显成功、不默认放行条件边、不自动同意。
-字段与完整示例见 [业务回调集成契约](BUSINESS_CALLBACKS.md)。
+字段与完整示例见下文。
 
 ```java
 ControlPoint callbacks = ControlPoint.builder()
@@ -190,7 +190,7 @@ sendTimeoutSeconds=600；路由单独限制回调等待时间，任务交互／�
 但不等于自动取消宿主正在运行的 LLM 或业务操作，宿主负责清理其资源。 同步回调入口应迅速返回，阻塞任务应交给异步执行器。
 回调缺失、返回 null 或异常均明确失败；不确定发送失败不自动重发。
 
-### 6.1 独立任务
+### 6.3 独立任务
 
 DAG 外任务使用 `WorkflowEngineClient.sendTask(agentName, finalContent)`。带 `NegotiationStrategy` 的重载只提供本次调用的
 协商决策。内容生成和语义校验仍由宿主负责；引擎保持远端 task/context、等待终态，并在本地交互无法继续时清理已知的非终态任务。
@@ -201,7 +201,7 @@ ExtensionSender.sendAuthorization(agentName, finalContent) 返回 CompletableFut
 ExtensionSender.openNotification(agentName, finalContent, (handle, received) -> ...) 立即返回 handle。
 传入宿主生成的最终授权／订阅内容并激活对应扩展。 I/O 前注册 handle，早到事件可直接 handle.close()，不用捕获尚未赋值的外部变量。
 acknowledgement() 代表真实 ACK 或失败；超时不伪造成功。 close() 请求关闭，completion() 在流实际退出后完成。
-订阅保持到宿主定义的终态事件、显式取消或宿主退出，不随单次工作流结束自动关闭。
+任务或通知结果终态不关闭订阅，单次工作流结束也不关闭订阅。有传输活动时持续保持；显式取消、宿主退出、流退出或异常、配置的空闲超时才结束订阅。
 
 任务、授权、通知使用独立 transport/runtime/context。授权和订阅成功与否均不作为工作流执行前提；授权策略只控制与该策略关联的宿主自定义业务操作。
 
@@ -228,10 +228,10 @@ acknowledgement() 代表真实 ACK 或失败；超时不伪造成功。 close() 
 FromText 和强类型 FromData。 这些是输入方式的选择，不是每条消息必须全部执行的流水线。FromDataWithSchema 也可能调用 SDK 配置的
 LLM， 不能等同于完全不调用模型。
 
-无论选择哪一种生成入口，都保留返回 MetadataContent 的完整 metadata，再通过 A2atMessages.from(generated, List.of (new
+无论选择哪一种生成入口，都保留返回 MetadataContent 的完整 metadata，再通过 A2atMessages.from(generated, List.of(new
 TextPart("业务摘要"))) 转成引擎 MessageContent。 parts 必须有合法内容；摘要不是正式扩展正文，不能拿摘要替代校验输入。不要只复制
 promptText 而丢失 templateUri、negotiationContext 或扩展 URI。
 回复必须匹配 A2A taskId/contextId 及协商 id/round/maxRounds，正式正文从 Negotiation-T metadata 读取。
 一次有效回复只消费一次。正文错误、字段不完整、任务不匹配或跨协商的回复不得执行业务。无法核实权威信息时生成 SDK Abort，不编造数据；宿主披露策略拒绝时生成 SDK Reject。授权策略是独立关注点。
 
-Authorization-T 和 Notification-T 的生成接口用于生成请求，不用于包装任意业务结果。授权回执与通知事件是被调度智能体的业务输出，必须遵循选定模板和应用契约。订阅只在宿主定义的终态事件、显式取消或关闭时结束；ACK 本身不是终态业务事件。SDK 拒绝应保留安全的错误码、slot 错误与已提取参数键。授权或订阅失败仍不阻断工作流执行。
+Authorization-T 和 Notification-T 的生成接口用于生成请求，不用于包装任意业务结果。授权回执与通知事件是被调度智能体的业务输出，必须遵循选定模板和应用契约。任务或通知结果终态、ACK 均不关闭通知订阅；显式取消、关闭、流退出或异常、配置的空闲超时才结束订阅。SDK 拒绝应保留安全的错误码、slot 错误与已提取参数键。授权或订阅失败仍不阻断工作流执行。
