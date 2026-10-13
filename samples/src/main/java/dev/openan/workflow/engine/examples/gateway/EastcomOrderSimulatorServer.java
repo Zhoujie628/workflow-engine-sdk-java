@@ -89,8 +89,6 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       Pattern.compile(
           "\\\"state\\\"\\s*:\\s*\\\"TASK_STATE_(?:COMPLETED|FAILED|CANCELED|REJECTED|INPUT_REQUIRED|AUTH_REQUIRED)\\\"");
   private static final Pattern A2A_FINAL_EVENT = Pattern.compile("\\\"isFinal\\\"\\s*:\\s*true");
-  private static final Pattern RECOVERY_RESULT_ARTIFACT =
-      Pattern.compile("\\\"(?:name|artifactId)\\\"\\s*:\\s*\\\"recovery-result\\\"");
   private static final AtomicBoolean legacyRequestEncodingLogged = new AtomicBoolean();
 
   private final String host;
@@ -509,8 +507,7 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       while ((frameEnd = normalized.indexOf("\n\n", frameStart)) >= 0) {
         String completeFrame = normalized.substring(frameStart, frameEnd);
         if (A2A_TERMINAL_STATE.matcher(completeFrame).find()
-            || A2A_FINAL_EVENT.matcher(completeFrame).find()
-            || RECOVERY_RESULT_ARTIFACT.matcher(completeFrame).find()) {
+            || A2A_FINAL_EVENT.matcher(completeFrame).find()) {
           return true;
         }
         frameStart = frameEnd + 2;
@@ -823,6 +820,11 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
       long started = System.nanoTime();
       final String fMethod = httpMethod;
       final Map<String, String> fHeaders = httpHeaders;
+      final boolean notificationForward = httpHeaders.entrySet().stream()
+          .anyMatch(entry -> "A2A-Extensions".equalsIgnoreCase(entry.getKey())
+              && java.util.Arrays.stream(entry.getValue().split(","))
+                  .map(String::trim)
+                  .anyMatch(dev.openan.workflow.engine.client.A2ATExtension.NOTIFICATION_T.uri()::equals));
       final String fBody = body;
       final String fForwardUrl = forwardUrl;
       log.info(
@@ -859,9 +861,9 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
               connection.setConnectTimeout(connectTimeoutMillis);
               // Cover connection establishment and the first response headers from a
               // remote, LLM-backed OMC. Notification-T subscriptions are long-lived by
-              // design: the demo's cleanup (cancelNotificationStreams) closes them when
-              // the workflow exits, so the simulator must not idle-timeout the stream.
-              // A generous safety net (10 minutes) still releases abandoned connections.
+              // design: the subscription owner explicitly cancels them, or host shutdown
+              // releases them. A result is not a transport completion signal.
+              // This timeout covers initial response headers, not the established stream.
               connection.setReadTimeout(streaming ? 600_000 : Math.max(readTimeoutMillis, 65_000));
               copyHeaders(fHeaders, connection);
               if (hasRequestBody) {
@@ -902,8 +904,9 @@ public final class EastcomOrderSimulatorServer implements AutoCloseable {
                       chunks == 1
                           ? responseWithHeader(status, connection.getHeaderFields(), chunk)
                           : responseChunk(chunk));
-                  terminalScan.append(chunk);
-                  if (closeOnTerminalEvent && containsForwardingCompletionEvent(terminalScan)) {
+                  if (!notificationForward) terminalScan.append(chunk);
+                  if (!notificationForward && closeOnTerminalEvent
+                      && containsForwardingCompletionEvent(terminalScan)) {
                     terminal = true;
                     terminalRound = true;
                     log.info(

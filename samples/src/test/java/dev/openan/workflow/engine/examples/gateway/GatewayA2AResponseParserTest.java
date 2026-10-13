@@ -35,6 +35,20 @@ import org.junit.jupiter.api.Test;
 class GatewayA2AResponseParserTest {
   private final GatewayA2AResponseParser parser = new GatewayA2AResponseParser();
 
+  @Test
+  void notificationParserDeliversAllResultsWithoutTerminalOrUnboundedRetention() throws Exception {
+    var observed = new ArrayList<org.a2aproject.sdk.client.ClientEvent>();
+    var session = parser.newNotificationStreamingSession(observed::add, null);
+    for (int i = 0; i < 100; i++) {
+      org.junit.jupiter.api.Assertions.assertFalse(session.accept(
+          "data: " + taskJson("notice-" + i, "subscription") + "\n\n: heartbeat\n\n"));
+    }
+    assertEquals(100, observed.size());
+    var retained = session.complete();
+    assertEquals(1, retained.size());
+    assertEquals("notice-99", ((TaskEvent) retained.get(0)).getTask().id());
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(ints = {400, 429})
   void rejectsStandardA2AErrorFramesImmediately(int status) {

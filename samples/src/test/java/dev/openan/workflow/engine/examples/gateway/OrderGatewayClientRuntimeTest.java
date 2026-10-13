@@ -575,6 +575,84 @@ class OrderGatewayClientRuntimeTest {
   }
 
   @Test
+  void explicitNotificationChannelDoesNotDependOnBusinessMetadata() throws Exception {
+    String completed = GatewayA2AResponseParserTest.taskJson("notice", "subscription");
+    var closes = new AtomicInteger();
+    var emitted = new CopyOnWriteArrayList<ClientEvent>();
+    var runtime = runtime(route -> new OrderGatewayClientRuntime.OrderSession() {
+      @Override
+      public OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis) {
+        throw new AssertionError("Notification stream must use streaming");
+      }
+
+      @Override
+      public void executeStreaming(OrderHttpSessionStrRequest request, int timeoutMillis,
+          Predicate<OrderResponse> sink) {
+        assertFalse(sink.test(streamResponse("data: " + completed + "\n\n")));
+        assertFalse(sink.test(streamResponse(": heartbeat\n\n")));
+        assertFalse(sink.test(streamResponse("data: " + completed + "\n\n")));
+      }
+
+      @Override
+      public void close() { closes.incrementAndGet(); }
+    });
+    var context = new ClientCallContext(new HashMap<>(), new HashMap<>());
+    context.getState().put(A2AJavaClientRuntime.CHANNEL_STATE_KEY,
+        A2AJavaClientRuntime.NOTIFICATION_CHANNEL);
+    try {
+      assertEquals(1, count(runtime.sendMessage(card("city1", 26335, true),
+          params("subscription", "message"), context, emitted::add, null)));
+      assertEquals(2, emitted.size());
+      runtime.closeConversation(card("city1", 26335, true), "subscription");
+      assertEquals(1, closes.get(), "the notification lane closes on actual EOF, not on task conversation close");
+    } finally {
+      runtime.close();
+    }
+    assertEquals(1, closes.get());
+  }
+
+  @Test
+  void notificationSessionsAreReleasedOnNaturalEofWithoutAccumulatingUntilHostShutdown()
+      throws Exception {
+    String acknowledgement = GatewayA2AResponseParserTest.taskJson(
+        "ack", "subscription", TaskState.TASK_STATE_WORKING);
+    var opened = new AtomicInteger();
+    var closed = new AtomicInteger();
+    var runtime = runtime(route -> {
+      opened.incrementAndGet();
+      return new OrderGatewayClientRuntime.OrderSession() {
+        @Override
+        public OrderResponse execute(OrderHttpSessionStrRequest request, int timeoutMillis) {
+          throw new AssertionError("Streaming expected");
+        }
+
+        @Override
+        public void executeStreaming(OrderHttpSessionStrRequest request, int timeoutMillis,
+            Predicate<OrderResponse> sink) {
+          assertFalse(sink.test(streamResponse("data: " + acknowledgement + "\n\n")));
+          // The upstream closes naturally without a task terminal event.
+        }
+
+        @Override
+        public void close() { closed.incrementAndGet(); }
+      };
+    });
+    try {
+      for (int i = 0; i < 10; i++) {
+        assertEquals(1, count(runtime.sendMessage(card("city1", 26335, true),
+            params("subscription-" + i, "subscribe", Map.of(
+                dev.openan.workflow.engine.client.A2ATExtension.NOTIFICATION_T.uri(), "subscribe")),
+            null, null, null)));
+        assertEquals(i + 1, closed.get(), "EOF must evict and close this notification lane immediately");
+      }
+    } finally {
+      runtime.close();
+    }
+    assertEquals(10, opened.get());
+    assertEquals(10, closed.get(), "host shutdown must not close already released lanes twice");
+  }
+
+  @Test
   void taskQueryAndCancelUseGatewayRestRoutesAndParsePlainTask() throws Exception {
     var requests = new CopyOnWriteArrayList<OrderHttpSessionStrRequest>();
     var closeCount = new AtomicInteger();

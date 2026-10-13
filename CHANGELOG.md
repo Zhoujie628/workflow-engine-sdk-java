@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Keep the dev Order notification parser and simulator open across task/result terminal events,
+  while preserving Task-T completion and explicit cancellation; bound retained notification results
+  and release logical notification sessions on actual upstream EOF.
 - Keep the SPN workbench's notification subscription active across recovery results;
   business observers no longer trigger automatic result-based cancellation.
 - Keep Notification-T subscriptions open independently of task/result terminal states; maintain

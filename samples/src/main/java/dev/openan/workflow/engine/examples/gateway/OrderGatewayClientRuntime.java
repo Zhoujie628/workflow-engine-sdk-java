@@ -336,7 +336,13 @@ public final class OrderGatewayClientRuntime
     return agentCard.capabilities() != null && agentCard.capabilities().streaming();
   }
 
-  private static String sessionChannel(MessageSendParams params) {
+  private static String sessionChannel(MessageSendParams params, ClientCallContext callContext) {
+    // Honor the transport's channel marker, just like DefaultA2AJavaClientRuntime.
+    // Business metadata must not be required to recognize an explicitly opened subscription.
+    if (callContext != null && A2AJavaClientRuntime.NOTIFICATION_CHANNEL.equals(
+        callContext.getState().get(A2AJavaClientRuntime.CHANNEL_STATE_KEY))) {
+      return NOTIFICATION_CHANNEL;
+    }
     if (params.message() == null || params.message().metadata() == null) {
       return REQUEST_CHANNEL;
     }
@@ -423,7 +429,7 @@ public final class OrderGatewayClientRuntime
     }
 
     String contextId = params.message() != null ? params.message().contextId() : null;
-    String channel = sessionChannel(params);
+    String channel = sessionChannel(params, callContext);
     ConversationSessionHandle sessionHandle = null;
     try {
       long sessionStarted = System.nanoTime();
@@ -459,9 +465,16 @@ public final class OrderGatewayClientRuntime
                   eventSink,
                   requestId,
                   agentCard.name(),
-                  transportActivity(callContext))
+                  transportActivity(callContext),
+                  NOTIFICATION_CHANNEL.equals(channel))
               : executeBlocking(session, request, eventSink, requestId, agentCard.name());
-      sessionHandle.release();
+      if (streaming && NOTIFICATION_CHANNEL.equals(channel)) {
+        // Returning from a notification stream means real upstream EOF. Do not cache its
+        // lane for reuse: subsequent subscriptions own independent contexts and resources.
+        sessionHandle.invalidate();
+      } else {
+        sessionHandle.release();
+      }
       sessionHandle = null;
       log.info(
           "[OrderGateway] SEND_DONE requestId={}, agent={}, ne={}, mode={}, events={}, elapsedMs={}",
@@ -706,7 +719,8 @@ public final class OrderGatewayClientRuntime
               .build();
       logProtocolRequest(requestId, agentCard.name(), route.ne(), request);
       List<ClientEvent> events =
-          executeStreaming(handle.session(), request, eventSink, requestId, agentCard.name(), null);
+          executeStreaming(handle.session(), request, eventSink, requestId, agentCard.name(), null,
+              false);
       // A task subscription ends at the terminal event; do not retain its authenticated
       // vendor session. Notification-T has its own explicitly managed long-lived lane.
       handle.invalidate();
@@ -754,12 +768,15 @@ public final class OrderGatewayClientRuntime
       Consumer<ClientEvent> eventSink,
       String requestId,
       String agentName,
-      Runnable activityListener) {
+      Runnable activityListener,
+      boolean notificationStream) {
     AtomicInteger sseFrameCount = new AtomicInteger();
+    Consumer<String> frameSink =
+        frame -> logSseFrame(requestId, agentName, sseFrameCount.incrementAndGet(), frame);
     GatewayA2AResponseParser.StreamingSession parserSession =
-        responseParser.newStreamingSession(
-            eventSink,
-            frame -> logSseFrame(requestId, agentName, sseFrameCount.incrementAndGet(), frame));
+        notificationStream
+            ? responseParser.newNotificationStreamingSession(eventSink, frameSink)
+            : responseParser.newStreamingSession(eventSink, frameSink);
     AtomicInteger chunkCount = new AtomicInteger();
     AtomicInteger responseStatus = new AtomicInteger();
     AtomicReference<Map<String, List<String>>> responseHeaders =

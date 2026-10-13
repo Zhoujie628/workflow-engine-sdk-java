@@ -192,7 +192,7 @@ public final class GatewayA2AResponseParser {
 
   /** Opens a request-scoped parser that preserves task state across streamed response chunks. */
   public StreamingSession newStreamingSession(Consumer<ClientEvent> eventSink) {
-    return new StreamingSession(eventSink, null);
+    return new StreamingSession(eventSink, null, false);
   }
 
   /**
@@ -201,21 +201,35 @@ public final class GatewayA2AResponseParser {
    */
   public StreamingSession newStreamingSession(
       Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink) {
-    return new StreamingSession(eventSink, completeFrameSink);
+    return new StreamingSession(eventSink, completeFrameSink, false);
+  }
+
+  /**
+   * Opens a state-independent Notification-T stream. All events reach the observer, but only the
+   * latest is retained for the eventual return value: a long-lived subscription is not a task
+   * response archive. Task terminal states and {@code isFinal} do not end this stream.
+   */
+  public StreamingSession newNotificationStreamingSession(
+      Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink) {
+    return new StreamingSession(eventSink, completeFrameSink, true);
   }
 
   public static final class StreamingSession {
     private final Consumer<ClientEvent> eventSink;
     private final Consumer<String> completeFrameSink;
+    private final boolean notificationStream;
     private final ParseContext context = new ParseContext();
     private final List<ClientEvent> events = new ArrayList<>();
     private final StringBuilder pending = new StringBuilder();
     private boolean sse;
     private boolean completed;
 
-    private StreamingSession(Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink) {
+    private StreamingSession(
+        Consumer<ClientEvent> eventSink, Consumer<String> completeFrameSink,
+        boolean notificationStream) {
       this.eventSink = eventSink;
       this.completeFrameSink = completeFrameSink;
+      this.notificationStream = notificationStream;
     }
 
     /** Adds one response body chunk and emits every complete event immediately. */
@@ -301,6 +315,7 @@ public final class GatewayA2AResponseParser {
       if (event == null) {
         return;
       }
+      if (notificationStream) events.clear();
       events.add(event);
       emit(eventSink, event);
     }
@@ -312,6 +327,7 @@ public final class GatewayA2AResponseParser {
     }
 
     private boolean hasTerminalEvent(int fromIndex) {
+      if (notificationStream) return false;
       for (int i = fromIndex; i < events.size(); i++) {
         if (isTerminal(events.get(i))) {
           return true;
@@ -327,12 +343,11 @@ public final class GatewayA2AResponseParser {
     private String contextId;
 
     private void capture(String newTaskId, String newContextId) {
-      if (taskId == null) {
-        taskId = newTaskId;
-      }
-      if (contextId == null) {
-        contextId = newContextId;
-      }
+      // Independent notifications may refer to different tasks on the same stream.
+      // Never attach a later task's update to the previous notification's task snapshot.
+      if (task != null && !java.util.Objects.equals(task.id(), newTaskId)) task = null;
+      taskId = newTaskId;
+      contextId = newContextId;
     }
 
     private Task ensureTask() {

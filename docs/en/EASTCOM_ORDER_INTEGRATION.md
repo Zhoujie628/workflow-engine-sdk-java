@@ -54,10 +54,13 @@ such as `startNegotiation`.
 - Logical adapter sessions are isolated by `contextId + NE + channel` and serialized per key. `SESSION_OPEN`,
   `SESSION_REUSE`, and `SESSION_CLOSE` describe engine resources, not vendor login/logout sessions.
 - `WorkbenchExtensionLifecycle` owns independent operations. Authorization is one-shot; Notification keeps its own
-  transport; the bundled SPN sample explicitly cancels it after a validated `recovery-result` or on shutdown.
-  This is sample business policy, not SDK termination on result status. A continuously subscribed production host
-  must replace that callback and retain its handle across recovery results until explicit unsubscribe/shutdown. Neither result gates
-  the Task-T workflow.
+  transport across recovery results and heartbeats, until explicit unsubscribe, host shutdown or stream failure/exit.
+  Neither the sample callback nor the Order forwarding parser/simulator treats a result's terminal state as
+  cancellation. The notification parser delivers all events but retains only the latest event for its return
+  value; it is not a growing response archive. Task-T still completes at its terminal event. Neither independent
+  operation gates the Task-T workflow.
+  A natural notification-stream EOF evicts its logical forwarding session immediately; resubscriptions do not
+  accumulate completed notification lanes until host shutdown.
 
 The 1.1.19 jar exposes static `HttpClient.login(serverInfo, config)`, but the HTTP integration section of the Eastcom
 v1.8 document uses `HttpClient.create(serverInfo, config)` to obtain a device token and invoke device APIs. The adapter

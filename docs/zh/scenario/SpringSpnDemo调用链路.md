@@ -39,7 +39,7 @@ URL 与 AgentCard 的服务 URL 都不会被拿来绑定本机地址。 直连�
 
 `SpringWorkbenchExtensionLifecycle` 为 Authorization-T 和 Notification-T 分别调用
 `ClientRuntimeFactory.create()`，并拒绝两者复用同一 runtime 实例。Authorization transport 在操作结束后关闭（包括失败）；Notification
-transport 保留到订阅完成、取消或 Spring 容器关闭。
+transport 跨通知结果持续保留，直到显式取消、流退出/异常或 Spring 容器关闭；通知结果“已结束”不是订阅完成。
 
 ## 3. 北向 WAIMO 请求
 
@@ -123,10 +123,11 @@ metadata 校验并合并填充字段， 不再把 parts 摘要或原始回复拼
 3. OMC 诊断给出抢通方案后，只在 SDK 已验证的白名单精确命中业务场景/处置类型/ 操作名称/有效期时自动执行。没有白名单时
    fail-closed。
 4. 执行结果通过 Notification-T `recovery-result` artifact 上报。
-5. `WorkbenchExtensionLifecycle` 用 `RecoveryNotification` 检查正式 metadata 中完整的已结束抢通结果，
-   确认后从本地订阅表移除并关闭句柄，再通知外部 observer；仅名称或摘要不足以触发关闭。 observer 异常不影响流关闭。
-6. 本地 Order 模拟器识别完整 SSE frame 中的 `recovery-result` 后结束该转发，确保关流 也传递到
-   OMC；没有抢通结果的订阅继续保持到显式取消或工作台关闭。
+5. `WorkbenchExtensionLifecycle` 将结果交给业务 observer，不从订阅表移除或关闭句柄。observer 异常只记录告警，
+   后续结果仍可送达；`RecoveryNotification` 的完整结果判断仅用于业务结果等待，不作为取消策略。
+6. 本地 Order 模拟器依据请求的 `A2A-Extensions` 区分 Notification-T，通知转发不因 `recovery-result`、
+   Task 终态或 final 标记结束。Order 通知解析器同样持续交付后续事件；显式退订才取消对应转发并释放 OMC 连接。
+   Task-T 转发仍在任务终态完成。工作台关闭会释放剩余订阅。
 
 Demo 在 Spring 就绪时尝试授权和订阅只是前置时机选择，不是工作流前置条件。每个 Agent 的 Authorization-T 与 Notification-T
 分别执行、分别记录结果；任一操作失败都不会阻止另一操作， 也不会阻止后续投诉 Task-T 工作流。失败只意味着对应白名单未生效或对应通知通道未建立。
