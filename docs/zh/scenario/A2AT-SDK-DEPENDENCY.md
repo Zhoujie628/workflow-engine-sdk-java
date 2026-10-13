@@ -1,4 +1,6 @@
-# A2A-T SDK 正式版本依赖说明
+# A2A-T SDK 依赖与历史验证记录
+
+> 当前根 POM 的 A2A-T SDK 依赖为 **1.1.1**。下文 1.1.0 标签、线程告警与资源隔离描述是首发版本历史快照，不代表当前 1.1.1 仍存在同样缺口。升级后的生命周期与模板隔离需按当前源码和测试验证；接入使用当前开发者指南，不按历史坐标配置依赖。
 
 执行引擎首发版本只支持下列 A2A-T SDK 正式版本基线，不提供旧 SDK 兼容层：
 
@@ -32,7 +34,7 @@ SDK 内容接口由宿主通过 StandardTemplates.*.uri () 选择模板；业务
 
 ## Maven / IDEA 接入
 
-根 POM 的 `a2a.t.sdk.version` 是唯一依赖版本来源，当前为 `1.1.0`。 在执行引擎目录直接执行：
+根 POM 的 `a2a.t.sdk.version` 是唯一依赖版本来源，当前为 `1.1.1`；下列历史样例需以此版本为准。 在执行引擎目录直接执行：
 
 ```powershell
 mvn -B -U clean verify
@@ -48,7 +50,7 @@ SDK jar 的 SHA-1 与 Central 发布校验值一致。
 <dependency>
     <groupId>net.openan.a2a-t.sdk</groupId>
     <artifactId>a2a-t-client</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
 </dependency>
 ```
 
@@ -118,7 +120,7 @@ slot.json 修正。
 名称／摘要就关闭订阅。 这不是对任意外部通知的通用语义验证，也不在工作流引擎内实施。
 
 完整角色映射、字段规则、FromText／FromData 选择、宿主拒绝策略和可重复验证范围见
-[业务回调指南第 9 节](../BUSINESS_CALLBACKS.md#9-业务侧-a2a-t-110-调用参考)。 严格离线测试只处理明确样例输入，不从模板示例臆造参数；不能代替真实
+[业务回调指南第 9 节](../BUSINESS_CALLBACKS.md#9-业务侧-a2a-t-111-调用参考)。 严格离线测试只处理明确样例输入，不从模板示例臆造参数；不能代替真实
 LLM 和现网 OMC 联调。
 
 ## 发布验证入口

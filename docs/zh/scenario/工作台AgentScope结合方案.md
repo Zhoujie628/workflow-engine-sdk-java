@@ -30,7 +30,7 @@ flowchart LR
 |---------------|-------------------------------------------------------|----------------------------------------------------|
 | onTask        | TaskRequest：instruction、input、目标与 workflowInput | MessageContent：仅准备业务内容，不发送             |
 | onSelfTask    | 本地任务与分组上游输出                                | TaskResult：success、outputs 数组与可选错误        |
-| onRoute       | RouteRequest：前置信息、当前结果、候选分支            | RouteDecision：允许的 nextStep                     |
+| onRoute       | RouteRequest：前置信息、当前结果、当前条件边            | RouteDecision：allowed、reason（当前边允许/拒绝）                     |
 | onNegotiation | 当前任务、首次提交、完整收到内容及会话历史            | NegotiationReply：Send(最终内容) 或 Stop(本地终止) |
 
 onTask 返回之后由引擎发送，并按远端终态解包；业务不处理 SendMessageResult。 selfTask 输出可以多个对象或嵌套数组，可作为后续
@@ -70,7 +70,7 @@ id/round/maxRounds，宿主 SDK 负责内容规则及业务错误映射。
 stepName → taskResults[] → outputs[]，不是完整聊天历史。 contextFrom=[] 不收集上游，null 为直接前驱，["*"]
 为已有祖先结果，显式数组为指定已有结果。 contextFrom 不添加等待关系；DAG next 才控制调度。
 
-路由返回值必须属于 candidates，不能让服务输出任意步骤名称。 本地输出始终是数组，错误以 success=false 与
+路由按当前条件边返回 allowed/reason，不返回 nextStep 或 candidates；目标已由 DAG 声明，推理服务不能指定任意步骤。无条件边不调用该回调。 本地输出始终是数组，错误以 success=false 与
 error/errorCode/errorDetails 表达，不伪装成诊断输出。 HTTP 桥必须处理错误状态码、无效 JSON、空回复、超时和取消，不能将失败当作空白成功。
 超时不等于远端操作停止，动网类工具的重试必须考虑幂等及人工确认。
 
@@ -80,7 +80,7 @@ WAIMO 下发投诉后，工作台解析输入、加载 workflow；两个城市�
 用 LlmHelper， 离线模式保留实际来源而不补造结论。生产应替换工单数据与模型/工具，不把样例当作通用规则。
 
 Authorization-T 与 Notification-T 是独立预操作，不属于 workflow 因果链； 失败不阻断诊断。各自有独立
-channel/runtime/context，通知持续至抢通结果、取消或宿主关闭。 不同执行需隔离业务记忆、回调和 client/transport
+channel/runtime/context，通知不随通知结果或 Task-T 终态关闭，有心跳时持续保持；仅取消、流异常或宿主关闭结束。 不同执行需隔离业务记忆、回调和 client/transport
 生命周期，不能共用一个“当前城市”变量。 认证由宿主 AuthProvider 或所选凭据路径承担，不让模型获取/输出凭据。
 
 ## 6. 验收清单

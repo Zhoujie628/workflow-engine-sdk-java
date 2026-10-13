@@ -1,6 +1,6 @@
 # Eastcom Instruction-Platform Integration Guide
 
-> Applies to the `dev` branch with workflow engine `0.0.8`, A2A-T SDK `1.1.0`, A2A Java SDK
+> Applies to the `dev` branch with workflow engine current source, A2A-T SDK `1.1.1`, A2A Java SDK
 > `1.2.0.Final`, and Eastcom `order-shaded-client:1.1.19`. This guide describes the current
 > implementation only; it does not cover legacy A2A-T or Order APIs.
 
@@ -54,7 +54,9 @@ such as `startNegotiation`.
 - Logical adapter sessions are isolated by `contextId + NE + channel` and serialized per key. `SESSION_OPEN`,
   `SESSION_REUSE`, and `SESSION_CLOSE` describe engine resources, not vendor login/logout sessions.
 - `WorkbenchExtensionLifecycle` owns independent operations. Authorization is one-shot; Notification keeps its own
-  transport until the expected `recovery-result`, explicit cancellation, or workbench shutdown. Neither result gates
+  transport; the bundled SPN sample explicitly cancels it after a validated `recovery-result` or on shutdown.
+  This is sample business policy, not SDK termination on result status. A continuously subscribed production host
+  must replace that callback and retain its handle across recovery results until explicit unsubscribe/shutdown. Neither result gates
   the Task-T workflow.
 
 The 1.1.19 jar exposes static `HttpClient.login(serverInfo, config)`, but the HTTP integration section of the Eastcom
@@ -432,3 +434,5 @@ final `MessageContent`; the engine sends it. Negotiation returns `Send(content)`
 task/context/round association. Complete `ReceivedMessage` metadata and ordered multi-value content are retained. Vendor
 types remain confined to the dev adapter and never enter the public engine model/control API. See
 [Business Callback Contract](BUSINESS_CALLBACKS.md).
+
+The published workflow-engine 0.1.1 does not include later center-account/TLS and state-independent notification fixes. These dev integration instructions require the reviewed current source plus the vendor adapter. Record the exact source SHA and use a unique unpublished revision, not a modified release coordinate. Simulator tests do not replace live platform evidence.
