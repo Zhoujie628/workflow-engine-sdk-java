@@ -1,7 +1,7 @@
 # A2A-T 工作流执行引擎 - 架构设计
 
 > A2A-T 工作流执行引擎的架构设计与设计原理。
-> 本文档描述 v1.0 发布版本。面向集成或扩展 SDK 的工程师
+> 本文档描述当前源码实现（发布边界见 CHANGELOG），面向集成或扩展 SDK 的工程师。
 
 ---
 
@@ -324,14 +324,15 @@ sequenceDiagram
     ES->>A: Independent long-lived stream
     A-->>H: ACK via acknowledgement()
     A-->>H: listener(handle, ReceivedMessage)
-    H->>ES: 终态事件 / 取消 / 停机时 handle.close()
+    Note over H,ES: 任务或通知结果终态不关闭通知流
+    H->>ES: 显式取消订阅 / 停机时 handle.close()
     ES-->>H: completion() after stream exits
 ```
 
 ## 9. 依赖
 
 workflow-engine：A2A Java `1.2.0.Final`（REST/JSON-RPC/gRPC）、匹配的 gRPC runtime、
-`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`、Jackson、SLF4J。 纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或
+`net.openan.a2a-t.sdk:a2a-t-core:1.1.1`、Jackson、SLF4J。 纯引擎消费者不会传递引入 A2A-T client/server、LLM、prompt 或
 resources。宿主智能体显式依赖 a2a-t-client，校验接收内容的被调度智能体服务另依赖 a2a-t-server。注册中心和编排中心由宿主调用，可选择
 RegistryClient/LoadPsop 辅助接口或自己的实现。 模板和 slot schema 来自锁定 SDK jar，样例不覆盖同名资源。
 

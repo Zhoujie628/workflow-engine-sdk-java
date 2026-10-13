@@ -1,5 +1,7 @@
 # 开发者指南
 
+> **发布边界**：Maven Central 最新发布为 `0.1.1`（标签 v0.1.1，952cde2）。本文按当前源码说明；中心独立 HTTP 认证/TLS、PSOP 账号登录及通知结果状态无关处理是在该标签之后加入，尚未发布。使用这些能力需构建精确检视源码的独立版本，不能覆盖已发布坐标。源码 revision=0.1.0-SNAPSHOT 是开发坐标，不是更新的正式版本。
+
 本指南面向贡献者和希望理解内部架构、扩展 SDK 或提交补丁的高级用户。
 
 ## 1. 安装
@@ -10,11 +12,11 @@
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
-`0.1.0` 已发布到 Maven Central；当前仓库构建版本为 `0.1.0-SNAPSHOT`。
+`0.1.1` 已发布到 Maven Central；当前仓库构建版本为 `0.1.0-SNAPSHOT`。
 
 引擎会传递性引入 A2A 协议 SDK（`a2a-java-sdk-client`，含 REST、JSON-RPC、gRPC 传输） 和最小 A2A-T 核心（`a2a-t-core`）。生成 A2A-T 内容的宿主智能体显式依赖 a2a-t-client，校验接收内容的被调度智能体服务另引入 a2a-t-server。
 
@@ -108,14 +110,15 @@ ExecutionResult result = ExecutePsop.builder()
 ## 6. 中间层（Layer 1: WorkflowExecutor）
 
 ```java
-try (var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
-        WorkflowEngineClientConfig.builder()
-                .sslVerify(false)
-                .credentialsConfigPath("etc/conf/agent_credentials.json")
-                .build())) {
+WorkflowEngineClientConfig clientConfig = WorkflowEngineClientConfig.builder()
+        .sslVerify(true)
+        .credentialsConfigPath("etc/conf/agent_credentials.json")
+        .build();
+try (A2ATransport transport = new A2ATransport(agentCards, a2aRuntime, clientConfig);
+     DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport, clientConfig)) {
     WorkflowExecutor executor = new WorkflowExecutor(
             workflow,
-            new MyControlPoint(),
+            controlPoint,
             client,
             new EventCallback(),
             "分析请求",
@@ -124,6 +127,8 @@ try (var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
     ExecutionResult result = executor.run().join();
 }
 ```
+
+transport 接管传入 runtime（`a2aRuntime=null` 时创建默认 runtime）。使用专用 runtime，不传入其他组件拥有的共享实例；示例中的非 owning client 先关闭，再关闭 transport。AgentCards、workflow 和 controlPoint 由宿主提供，CA 与客户端证书按部署要求配置。
 
 ### 6.1 协商自动循环
 
@@ -148,7 +153,7 @@ COMPLETED 确认，也不能判为任务成功。
 
 | 字段                  | 位置                  | 含义                                                                                                                                                        |
 |-----------------------|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess`（默认）：所有子任务必须成功；`AnySuccess`：任一成功即可；`SelfLoop`：宿主智能体通过 `onSelfTask` 本地处理（不向命名智能体发送 A2A-T 消息）。 |
+| `steps[].stepType`    | `WorkflowStep`        | `ALL_SUCCESS`（默认）：所有子任务必须成功；`ANY_SUCCESS`：任一成功即可；`SELF_LOOP`：宿主智能体通过 `onSelfTask` 本地处理（不向命名智能体发送 A2A-T 消息）。 |
 | `steps[].subtasks[]`  | `Task`                | 每个含 `agent`、`skill`、`description`。每个子任务触发一次 `onTask`（或 SelfLoop 的 `onSelfTask`）调用。                                                    |
 | `steps[].next[]`      | `List<JumpCondition>` | 分支目标。`step` = 下一步名称；`condition` = 规则文本。                                                                                                     |
 | `steps[].layer`       | `WorkflowStep`        | 编排层级提示；实际就绪条件由 DAG 前驱关系决定。                                                                                                             |
@@ -308,3 +313,5 @@ SSE 数据区标记），不改实际发送字节、metadata、数值或扩展�
 字符串中的 `\\n` 保留转义，避免把业务字符串误写成非法 JSON；非 JSON／不完整正文保持原样。日志仍执行脱敏和容量限制。验证协商流量时，
 检查 `A2A-Extensions: .../Negotiation-T/v1`；不存在专用的 Negotiation-T HTTP 头。正文检查对应 URI 的 metadata 和
 `negotiationContext`，不要只检索大写 `NEGOTIATION-T`。
+
+Java 枚举常量为 ALL_SUCCESS/ANY_SUCCESS/SELF_LOOP；显示/协议值为 AllSuccess/AnySuccess/SelfLoop。StepType.fromValue 接受两种形式，不代表另有三类步骤。

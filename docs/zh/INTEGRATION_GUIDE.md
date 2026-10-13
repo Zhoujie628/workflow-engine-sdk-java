@@ -1,5 +1,7 @@
 # A2A-T 工作流执行引擎 - 二次开发集成指南
 
+> **发布边界**：Maven Central 最新发布为 `0.1.1`（标签 v0.1.1，952cde2）。本文按当前源码说明；中心独立 HTTP 认证/TLS、PSOP 账号登录及通知结果状态无关处理是在该标签之后加入，尚未发布。使用这些能力需构建精确检视源码的独立版本，不能覆盖已发布坐标。源码 revision=0.1.0-SNAPSHOT 是开发坐标，不是更新的正式版本。
+
 ## 1. 概述
 
 A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T 电信扩展编排多智能体工作流。
@@ -20,11 +22,11 @@ A2A-T 工作流执行引擎是一个 Java SDK，用于基于 A2A 协议和 A2A-T
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
-`0.1.0` 已发布到 Maven Central；当前仓库构建版本为 `0.1.0-SNAPSHOT`。
+`0.1.1` 已发布到 Maven Central；当前仓库构建版本为 `0.1.0-SNAPSHOT`。
 
 ## 4. 快速上手
 
@@ -258,7 +260,7 @@ public interface AuthProvider {
 }
 ```
 
-每次发消息前都会调用 `applyAuth`，实现方往 `headers` 里塞认证头即可。
+每次发消息前都会调用 `applyAuth`，实现方在 `headers` 中设置所需认证头。
 
 **场景 1：企业 SSO / 外部 Token 服务**
 
@@ -420,7 +422,7 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 ```
 
 宿主智能体生成最终 Authorization-T/Notification-T 内容。授权与通知分别使用独立于任务客户端且彼此隔离的
-transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage，在宿主定义的终态事件上关闭。
+transport/runtime/context。订阅监听器收到 handle 与完整 ReceivedMessage。任务或通知结果终态不关闭订阅；宿主取消订阅或退出时显式关闭 handle，流退出或异常、配置的空闲超时也会结束订阅。
 handle.acknowledgement() 和 completion() 分别表示 ACK 和真实流退出，两者都不是工作流前提。
 
 `heartbeat().lastEventAt()` 表示最后一次传输活动；标准 SSE comment 心跳（如 `: heartbeat`）会刷新该时间， 但不会增加只统计已解码

@@ -1,5 +1,7 @@
 # A2A-T Workflow Execution Engine (Java)
 
+> **Release boundary**: Maven Central currently publishes `0.1.1` (tag v0.1.1, 952cde2). This guide follows current source. Independent center HTTP authentication/TLS, PSOP account login and task-state-independent Notification-T handling were added after that tag and are unreleased. Build an exact reviewed source revision with a unique unpublished version for those capabilities; do not overwrite a released coordinate. Source revision=0.1.0-SNAPSHOT is a development coordinate, not a newer release.
+
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://adoptium.net/)
 [![Maven](https://img.shields.io/badge/Maven-3.6+-red.svg)](https://maven.apache.org/)
@@ -33,14 +35,15 @@ In `SpringSpnDemo`, WAIMO sends a Task-T complaint to the integrator. The integr
 city-specific OMC diagnoses in parallel, joins both branches exactly once, and returns the real merged result. Outbound
 OMC calls support both `direct` and Eastcom `order` modes (`order` is the production-oriented default). Task-T,
 Authorization-T, and Notification-T each use an independent transport/runtime/context. Authorization and Notification
-are independently triggered integrator operations rather than DAG nodes; Notification keeps an explicit long-lived
-subscription until the recovery result, cancellation, or shutdown.
+are independently triggered integrator operations rather than DAG nodes. A notification subscription is independent
+of task/result status and remains open while transport activity continues;
+explicit cancellation, host shutdown, stream exit/error, or the configured idle timeout ends it.
 
 ## Quick Start
 
 ### 1. Add Maven dependency
 
-The current engine release is `0.1.0` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
+The current engine release is `0.1.1` on [Maven Central](https://repo.maven.apache.org/maven2/net/openan/workflow/sdk/).
 
 A2A-T SDK `1.1.1` is published to Maven Central. Maven resolves it automatically; no SDK source checkout or local SDK
 build is required. The engine depends only on
@@ -53,7 +56,7 @@ upgrade guidance.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
@@ -63,7 +66,7 @@ For Spring Boot server-side integration:
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>spring-boot-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
@@ -136,6 +139,7 @@ graph TD
     root --> model
     root --> registry
     root --> runner
+    root --> util
 ```
 
 | Package    | Key Classes                                                                                                                                                                                              | Description                                                 |
@@ -145,6 +149,7 @@ graph TD
 | `core`     | `WorkflowExecutor`, `ContextBuilder`                                                                                                                                                                     | DAG traversal, context assembly                             |
 | `model`    | `Workflow`, `WorkflowStep`, `Task`, `TaskRequest`, `MessageContent`, `TaskResult`, `NegotiationRequest`, `NegotiationReply`, `ExecutionResult`                                                           | Data models                                                 |
 | `registry` | `LoadPsop`, `RegistryClient`                                                                                                                                                                             | PSOP loading and AgentCard registry                         |
+| `util` | `SensitiveDataRedactor` | Shared sensitive-data redaction |
 | `runner`   | `ExecutePsop`                                                                                                                                                                                            | Entry point for workflow execution                          |
 
 > **Note:** `LlmHelper` lives in the **samples** module (`dev.openan.workflow.engine.examples`), not in the `client`

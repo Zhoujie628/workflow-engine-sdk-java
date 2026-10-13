@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+- Keep Notification-T subscriptions open independently of task/result terminal states; maintain
+  stream activity tracking and explicit cancellation/resource ownership.
+- Add independent registry HTTP authentication/TLS policy and orchestration account login for PSOP
+  loading. These APIs are current-source capabilities, not part of the published 0.1.1 artifact.
+- Refresh bilingual examples, release boundaries and constructor/transport ownership guidance.
+
+## [0.1.1] — 2026-09-23
+
+Released from tag `v0.1.1` (`952cde2`). Compared with 0.1.0:
+
+- Harden workflow joins, cancellation, failure propagation and sensitive-data logging.
+- Keep active notification streams alive beyond the ordinary request deadline and release
+  streaming resources reliably. Later state-independent terminal-result handling is under Unreleased.
+- Correct build-analysis exclusions and remove development-only vendor references from main.
+
 ## [0.1.0] — 2026-09-18
 
 - Send SSE heartbeat comments on streaming endpoints (`message:stream`, `tasks/{id}:subscribe`) at a configurable
@@ -139,7 +156,7 @@
 - Keep documentation host-neutral; sample class and AgentCard identifiers remain unchanged.
 
 Published Maven artifacts use the version selected by the release tag. The default source-build
-`revision=0.0.9-SNAPSHOT` is not a Maven Central release version.
+`revision=0.1.0-SNAPSHOT` is not a Maven Central release version.
 
 ### Eastcom adapter (dev only)
 

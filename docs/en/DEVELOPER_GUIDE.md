@@ -1,5 +1,7 @@
 # Developer Guide
 
+> **Release boundary**: Maven Central currently publishes `0.1.1` (tag v0.1.1, 952cde2). This guide follows current source. Independent center HTTP authentication/TLS, PSOP account login and task-state-independent Notification-T handling were added after that tag and are unreleased. Build an exact reviewed source revision with a unique unpublished version for those capabilities; do not overwrite a released coordinate. Source revision=0.1.0-SNAPSHOT is a development coordinate, not a newer release.
+
 This guide is for contributors and advanced users who want to understand the internal architecture, extend the SDK, or
 contribute patches.
 
@@ -11,11 +13,11 @@ Add to your `pom.xml`:
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
-Version `0.1.0` is published to Maven Central. The repository currently builds `0.1.0-SNAPSHOT`.
+Version `0.1.1` is published to Maven Central. The repository currently builds `0.1.0-SNAPSHOT`.
 
 The engine pulls in A2A protocol transports and a2a-t-core only. Host agents generating A2A-T content explicitly add
 a2a-t-client; dispatched-agent services that validate received content also add a2a-t-server.
@@ -112,14 +114,15 @@ Events come from three layers: the runner (lifecycle bracket), the executor (ste
 ## 6. Mid-Level (Layer 1: WorkflowExecutor)
 
 ```java
-try(var client = new DefaultWorkflowEngineClient(agentCards, a2aRuntime,
-        WorkflowEngineClientConfig.builder()
-                .sslVerify(false)
-                .credentialsConfigPath("etc/conf/agent_credentials.json")
-                .build())){
+WorkflowEngineClientConfig clientConfig = WorkflowEngineClientConfig.builder()
+        .sslVerify(true)
+        .credentialsConfigPath("etc/conf/agent_credentials.json")
+        .build();
+try (A2ATransport transport = new A2ATransport(agentCards, a2aRuntime, clientConfig);
+     DefaultWorkflowEngineClient client = new DefaultWorkflowEngineClient(transport, clientConfig)) {
 WorkflowExecutor executor = new WorkflowExecutor(
         workflow,
-        new MyControlPoint(),
+        controlPoint,
         client,
         new EventCallback(),
         "Analyze request",
@@ -128,6 +131,8 @@ WorkflowExecutor executor = new WorkflowExecutor(
 ExecutionResult result = executor.run().join();
 }
 ```
+
+The transport owns the supplied runtime (or creates one when `a2aRuntime=null`). Use a dedicated runtime; do not pass a shared runtime owned elsewhere. The client facade here is non-owning and is closed before the transport. AgentCards, workflow and controlPoint are host inputs; supply a trusted CA/client identity as your deployment requires.
 
 ### 6.1 Negotiation Auto-Loop
 
@@ -157,7 +162,7 @@ task success, even if the dispatched agent acknowledges it with COMPLETED.
 
 | Field                 | Where                 | Meaning                                                                                                                                                                                                         |
 |-----------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `steps[].stepType`    | `WorkflowStep`        | `AllSuccess` (default): every subtask must succeed; `AnySuccess`: any subtask success suffices; `SelfLoop`: the host agent handles the step locally via `onSelfTask` (no A2A-T message to the named agent). |
+| `steps[].stepType`    | `WorkflowStep`        | `ALL_SUCCESS` (default): every subtask must succeed; `ANY_SUCCESS`: any subtask success suffices; `SELF_LOOP`: the host agent handles the step locally via `onSelfTask` (no A2A-T message to the named agent). |
 | `steps[].subtasks[]`  | `Task`                | Each has `agent`, `skill`, `description`. One `onTask` (or `onSelfTask` for SelfLoop) call per subtask.                                                                                                         |
 | `steps[].next[]`      | `List<JumpCondition>` | Branch targets. `step` = next step name; `condition` = rule text.                                                                                                                                               |
 | `steps[].layer`       | `WorkflowStep`        | Orchestration-level hint; actual readiness is derived from DAG predecessors.                                                                                                                                    |
@@ -326,3 +331,5 @@ Formatting changes presentation only (JSON whitespace and SSE display labels), n
  stays raw. Redaction and capacity limits still apply. To verify negotiation traffic, look for
  `A2A-Extensions: .../Negotiation-T/v1`, the matching metadata key and `negotiationContext`; there is no dedicated
  Negotiation-T HTTP header.
+
+Java enum constants are ALL_SUCCESS/ANY_SUCCESS/SELF_LOOP; their display/wire values are AllSuccess/AnySuccess/SelfLoop. StepType.fromValue accepts both forms. They are not extra step types.

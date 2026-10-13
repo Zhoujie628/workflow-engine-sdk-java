@@ -154,6 +154,7 @@ Builder-based configuration for the workflow engine client.
 | `sendExecutorCoreSize`          | `int`          | `4`     | Send executor core threads                                                                                                                              |
 | `sendExecutorMaxSize`           | `int`          | `16`    | Send executor maximum threads                                                                                                                           |
 | `sendExecutorQueueCapacity`     | `int`          | `256`   | Bounded send executor queue capacity                                                                                                                    |
+| `preferredProtocol` | `String` | null | Preferred declared AgentCard protocol; use supported transport identifiers, not a vendor name. |
 | `authProvider`                  | `AuthProvider` | null    | Custom auth provider                                                                                                                                    |
 | `credentialsConfigPath`         | `String`       | null    | Path to credentials JSON; explicit missing or malformed files fail startup                                                                              |
 | `credentialEncryptionKey`       | `String`       | null    | Host-supplied decryption key; never loaded from LLM .env                                                                                                |
@@ -197,7 +198,7 @@ the same header name throw `SecurityException` instead of silently overwriting e
 
 Submit custom extensions via MessageContent(parts, metadata, extensions); no engine content-handler registration.
 A2atMessages.from(MetadataContent, List<Part<?>>) preserves SDK metadata and activates the corresponding URI; contextOf
-(ReceivedMessage) or contextOf(Map<String,Object>) reads/checks canonical negotiation context. This adapter uses
+(ReceivedMessage) is the public context reader. The Map overload is package-private and cannot be called by host code. This adapter uses
 a2a-t-core only, never content generation or semantic validation.
 
 ### A2AJavaClientRuntime
@@ -213,6 +214,20 @@ public interface A2AJavaClientRuntime {
             Consumer<ClientEvent> eventSink,
             Consumer<String> logSink);
 
+    // Optional task operations; default implementations throw UnsupportedOperationException.
+    default Task getTask(AgentCard card, String taskId, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default ListTasksResult listTasks(AgentCard card, ListTasksParams params, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default Task cancelTask(AgentCard card, String taskId, ClientCallContext context) {
+        throw new UnsupportedOperationException();
+    }
+    default CompletableFuture<SendMessageResult> subscribeToTask(
+            AgentCard card, String taskId, ClientCallContext context, Consumer<ClientEvent> sink) {
+        throw new UnsupportedOperationException();
+    }
     void close();
 }
 ```

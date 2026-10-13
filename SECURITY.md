@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| Latest released 0.1.x | Report vulnerabilities against the latest release; fixes are evaluated on main |
+| Older releases | Upgrade; no separate backport guarantee is documented |
 
 ## Reporting a Vulnerability
 
