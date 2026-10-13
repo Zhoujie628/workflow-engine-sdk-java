@@ -237,10 +237,12 @@ acknowledgement() reports actual ACK or failure; timeout is not a synthesized su
 completion() completes after the stream actually exits. Retain it across task/result terminal statuses and workflow
 completion. Explicit cancellation, host-agent shutdown, stream exit/error, or the configured idle timeout ends it.
 
-The bundled SPN sample has a separate business policy: `WorkbenchExtensionLifecycle.handleNotification` explicitly
-closes its handle after a validated recovery result. This is sample-controlled cancellation, not SDK termination on
-Task-T/Notification-T result status. For a continuously subscribed production host, replace that sample callback and
-retain the handle across recovery results until an explicit unsubscribe or shutdown.
+The bundled SPN `WorkbenchExtensionLifecycle` also keeps the subscription across recovery results. Its injected
+notification callback is a business observer, not a result-driven close policy; an observer failure is logged without
+cancelling the stream. `SpringWorkbenchExtensionLifecycle.awaitFirstRecovery` only waits for the first recovery result;
+it does not unsubscribe. To explicitly unsubscribe one stream, call its handle's `close()` and await `completion()`;
+closing the lifecycle shuts down all of its notification resources. Do not close a handle merely because a Task-T or
+recovery result reports a terminal state.
 
 Task, authorization and notification use separate transports/runtimes/contexts. Neither extension success nor failure is
 a prerequisite for workflow execution. Authorization controls only the host-defined action associated with that policy.
