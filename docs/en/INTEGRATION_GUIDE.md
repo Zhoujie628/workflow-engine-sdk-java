@@ -1,5 +1,7 @@
 # A2A-T Workflow Execution Engine - Integration Guide
 
+> **Release boundary**: Maven Central currently publishes `0.1.1` (tag v0.1.1, 952cde2). This guide follows current source. Independent center HTTP authentication/TLS, PSOP account login and task-state-independent Notification-T handling were added after that tag and are unreleased. Build an exact reviewed source revision with a unique unpublished version for those capabilities; do not overwrite a released coordinate. Source revision=0.1.0-SNAPSHOT is a development coordinate, not a newer release.
+
 ## 1. Overview
 
 The A2A-T Workflow Execution Engine is a Java SDK for orchestrating multi-agent workflows using the A2A protocol with
@@ -22,11 +24,11 @@ callbacks own A2A-T generation, semantic validation, schemas and any LLM calls.
 <dependency>
     <groupId>net.openan.workflow.sdk</groupId>
     <artifactId>workflow-engine</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
-Version `0.1.0` is published to Maven Central. The repository currently builds `0.1.0-SNAPSHOT`.
+Version `0.1.1` is published to Maven Central. The repository currently builds `0.1.0-SNAPSHOT`.
 
 ## 4. Quick Start
 
@@ -447,7 +449,9 @@ NotificationSubscription openNotification(String agentName, MessageContent conte
 
 The host agent generates final Authorization-T/Notification-T content. Authorization and notification each use a
 transport/runtime/context independent of the task client and of one another. The listener receives the handle and
-complete ReceivedMessage, and closes on the host-defined terminal event. acknowledgement() and completion() separately
+complete ReceivedMessage. Task/result terminal statuses do not close the subscription; the host explicitly closes the
+handle when cancelling the subscription or shutting down. Stream exit/error and the configured idle timeout also end
+the subscription. acknowledgement() and completion() separately
 represent ACK and actual stream exit; neither is a workflow prerequisite.
 
 `heartbeat().lastEventAt()` is the last transport activity. A standard SSE comment heartbeat such as `: heartbeat`

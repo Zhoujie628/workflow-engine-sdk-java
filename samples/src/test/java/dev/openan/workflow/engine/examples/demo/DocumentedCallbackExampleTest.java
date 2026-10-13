@@ -36,6 +36,22 @@ class DocumentedCallbackExampleTest {
   }
 
   @Test
+  void publicNotificationGuidesDoNotCloseOnResultStatus() throws Exception {
+    Path root = Path.of("").toAbsolutePath();
+    if (!Files.isDirectory(root.resolve("docs"))) root = root.getParent();
+    for (String language : List.of("en", "zh")) {
+      for (String guide : List.of("BUSINESS_CALLBACKS", "INTEGRATION_GUIDE", "DESIGN")) {
+        String doc = Files.readString(root.resolve("docs/" + language + "/" + guide + ".md"));
+        assertFalse(doc.contains("host-defined terminal event"), guide);
+        assertFalse(doc.contains("宿主定义的终态事件"), guide);
+        assertTrue(
+            doc.contains(language.equals("en") ? "terminal statuses do not close" : "终态不关闭"),
+            guide);
+      }
+    }
+  }
+
+  @Test
   void bilingualCallbackAndSdkExamplesCompileAgainstCurrentPublicApi() throws Exception {
     Path root = Path.of("").toAbsolutePath();
     if (!Files.isDirectory(root.resolve("docs"))) root = root.getParent();
@@ -45,24 +61,29 @@ class DocumentedCallbackExampleTest {
       String generated = block(doc, "MetadataContent generated =");
       String callbackSource =
           """
-                import java.util.*;
-                import java.util.concurrent.*;
-                import dev.openan.workflow.engine.control.*;
-                import dev.openan.workflow.engine.model.*;
-                import dev.openan.workflow.engine.client.*;
-                import net.openan.a2at.sdk.client.A2ATClient;
-                import net.openan.a2at.sdk.core.model.*;
-                import org.a2aproject.sdk.spec.TextPart;
-                class DocumentedCallbacks {
-                    ControlPoint callbacks() {
-                """
+          import java.util.*;
+          import java.util.concurrent.*;
+          import dev.openan.workflow.engine.control.*;
+          import dev.openan.workflow.engine.model.*;
+          import dev.openan.workflow.engine.client.*;
+          import net.openan.a2at.sdk.client.A2ATClient;
+          import net.openan.a2at.sdk.core.model.*;
+          import org.a2aproject.sdk.spec.TextPart;
+          class DocumentedCallbacks {
+              ControlPoint callbacks() {
+          """
               + callbacks
-              + "\nreturn callbacks;\n}\n"
-              + "MessageContent generate(A2ATClient sdk, Map<String,Object> data, Map<String,Object> schema) {\n"
+              + "\n"
+              + "return callbacks;\n"
+              + "}\n"
+              + "MessageContent generate(A2ATClient sdk, Map<String,Object> data,"
+              + " Map<String,Object> schema) {\n"
               + generated
               + "\nreturn outgoing;\n}\n}";
-      String integration = Files.readString(root.resolve("docs/" + language + "/INTEGRATION_GUIDE.md"));
-      String quickStartSource = """
+      String integration =
+          Files.readString(root.resolve("docs/" + language + "/INTEGRATION_GUIDE.md"));
+      String quickStartSource =
+          """
           import java.util.*;
           import java.util.concurrent.*;
           import com.fasterxml.jackson.databind.ObjectMapper;
@@ -75,69 +96,97 @@ class DocumentedCallbackExampleTest {
           class DocumentedIntegration {
             void run() throws Exception {
           """
-          + block(integration, "Workflow workflow =") + "\n"
-          + block(integration, "HttpAuthProvider registryAuth =") + "\n"
-          + block(integration, "ControlPoint callbacks =") + "\n"
-          + block(integration, "CompletableFuture<ExecutionResult> execution =") + "\n}}";
-      String centerSource = """
+              + block(integration, "Workflow workflow =")
+              + "\n"
+              + block(integration, "HttpAuthProvider registryAuth =")
+              + "\n"
+              + block(integration, "ControlPoint callbacks =")
+              + "\n"
+              + block(integration, "CompletableFuture<ExecutionResult> execution =")
+              + "\n}}";
+      String centerSource =
+          """
           import java.util.*;
           import dev.openan.workflow.engine.registry.*;
           import dev.openan.workflow.engine.model.*;
           class DocumentedCenters {
             void run() throws Exception {
           """
-          + block(integration, "TlsPolicy orchTls =") + "\n}}";
-      String development = Files.readString(root.resolve("docs/" + language + "/DEVELOPER_GUIDE.md"));
+              + block(integration, "TlsPolicy orchTls =")
+              + "\n}}";
+      String development =
+          Files.readString(root.resolve("docs/" + language + "/DEVELOPER_GUIDE.md"));
       assertTrue(development.contains("orchAuth, orchTls"));
       assertFalse(development.contains("psopId, token, false"));
       assertTrue(development.contains("subscribeOn(Schedulers.boundedElastic())"));
       assertTrue(development.contains("produces = MediaType.TEXT_EVENT_STREAM_VALUE"));
       String developmentSource =
-          "import dev.openan.workflow.engine.registry.*; import dev.openan.workflow.engine.model.*; "
-              + "class DocumentedDevelopment { String baseUrl = \"https://orchestration.example\";\n"
-              + block(development, "private final TlsPolicy orchTls =") + "\n"
+          "import dev.openan.workflow.engine.registry.*; import dev.openan.workflow.engine.model.*;"
+              + " class DocumentedDevelopment { String baseUrl ="
+              + " \"https://orchestration.example\";\n"
+              + block(development, "private final TlsPolicy orchTls =")
+              + "\n"
               + "Workflow load(String psopId) throws Exception { "
               + "return LoadPsop.load(baseUrl, psopId, orchAuth, orchTls); }}";
-      for (String source : List.of(callbackSource, quickStartSource, centerSource, developmentSource)) {
-      JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-      assertNotNull(compiler, "Tests require a JDK, not a JRE");
-      DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-      JavaFileObject input =
-          new SimpleJavaFileObject(
-              URI.create("string:///DocumentedCallbacks.java"), JavaFileObject.Kind.SOURCE) {
-            @Override
-            public CharSequence getCharContent(boolean ignoreEncodingErrors) {
-              return source;
-            }
-          };
-      try (StandardJavaFileManager standard =
-              compiler.getStandardFileManager(diagnostics, null, null);
-          var output =
-              new ForwardingJavaFileManager<StandardJavaFileManager>(standard) {
-                @Override
-                public JavaFileObject getJavaFileForOutput(
-                    Location location, String name, JavaFileObject.Kind kind, FileObject sibling) {
-                  return new SimpleJavaFileObject(
-                      URI.create("bytes:///" + name + kind.extension), kind) {
-                    @Override
-                    public java.io.OutputStream openOutputStream() {
-                      return new java.io.ByteArrayOutputStream();
-                    }
-                  };
-                }
-              }) {
-        boolean ok =
-            compiler
-                .getTask(
-                    null,
-                    output,
-                    diagnostics,
-                    List.of("-proc:none", "-classpath", System.getProperty("java.class.path")),
-                    null,
-                    List.of(input))
-                .call();
-        assertTrue(ok, () -> language + ": " + diagnostics.getDiagnostics());
-      }
+      String midLevelSource =
+          """
+          import java.util.*;
+          import org.a2aproject.sdk.spec.AgentCard;
+          import dev.openan.workflow.engine.client.*;
+          import dev.openan.workflow.engine.control.*;
+          import dev.openan.workflow.engine.core.WorkflowExecutor;
+          import dev.openan.workflow.engine.model.*;
+          class DocumentedMidLevel {
+            void run(List<AgentCard> agentCards, A2AJavaClientRuntime a2aRuntime,
+                     Workflow workflow, ControlPoint controlPoint) {
+          """
+              + block(development, "WorkflowEngineClientConfig clientConfig =")
+              + "\n}}";
+      for (String source :
+          List.of(
+              callbackSource, quickStartSource, centerSource, developmentSource, midLevelSource)) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "Tests require a JDK, not a JRE");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        JavaFileObject input =
+            new SimpleJavaFileObject(
+                URI.create("string:///DocumentedCallbacks.java"), JavaFileObject.Kind.SOURCE) {
+              @Override
+              public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+                return source;
+              }
+            };
+        try (StandardJavaFileManager standard =
+                compiler.getStandardFileManager(diagnostics, null, null);
+            var output =
+                new ForwardingJavaFileManager<StandardJavaFileManager>(standard) {
+                  @Override
+                  public JavaFileObject getJavaFileForOutput(
+                      Location location,
+                      String name,
+                      JavaFileObject.Kind kind,
+                      FileObject sibling) {
+                    return new SimpleJavaFileObject(
+                        URI.create("bytes:///" + name + kind.extension), kind) {
+                      @Override
+                      public java.io.OutputStream openOutputStream() {
+                        return new java.io.ByteArrayOutputStream();
+                      }
+                    };
+                  }
+                }) {
+          boolean ok =
+              compiler
+                  .getTask(
+                      null,
+                      output,
+                      diagnostics,
+                      List.of("-proc:none", "-classpath", System.getProperty("java.class.path")),
+                      null,
+                      List.of(input))
+                  .call();
+          assertTrue(ok, () -> language + ": " + diagnostics.getDiagnostics());
+        }
       }
     }
   }

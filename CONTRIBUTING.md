@@ -24,9 +24,10 @@ workflow-engine-sdk-java/
 |   +-- src/main/java/dev/openan/workflow/engine/
 |       |-- client/       A2A transport, authentication, extensions, runtime APIs
 |       |-- control/      User-facing: ControlPoint, EventCallback, EventType
-|       |-- core/         Internal: WorkflowExecutor, ContextBuilder (package-private)
+|       |-- core/         WorkflowExecutor (public), ContextBuilder (package-private)
 |       |-- model/        Data models
 |       |-- registry/     LoadPsop, RegistryClient
+|       |-- util/        Shared redaction and utility support
 |       +-- runner/       ExecutePsop (entry point)
 |-- samples/              Demo applications
 |-- docs/                 Documentation

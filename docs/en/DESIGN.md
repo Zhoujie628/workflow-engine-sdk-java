@@ -1,7 +1,7 @@
 # A2A-T Engine SDK - Design
 
 > Architecture and design rationale for the A2A-T Workflow Execution Engine.
-> This document describes the system as shipped in v1.0. It is written for
+> This document describes the system as implemented by current source (see CHANGELOG for release boundaries). It is written for
 > engineers integrating or extending the SDK, not as a walkthrough of any
 > particular bug-fix history.
 
@@ -363,14 +363,15 @@ sequenceDiagram
     ES->>A: Independent long-lived stream
     A-->>H: ACK via acknowledgement()
     A-->>H: listener(handle, ReceivedMessage)
-    H->>ES: handle.close() on terminal event/cancel/shutdown
+    Note over H,ES: Task/result terminal statuses do not close the notification stream
+    H->>ES: handle.close() on explicit cancellation/shutdown
     ES-->>H: completion() after stream exits
 ```
 
 ## 9. Dependencies
 
 workflow-engine uses A2A Java `1.2.0.Final` (REST/JSON-RPC/gRPC), a matching gRPC runtime,
-`net.openan.a2a-t.sdk:a2a-t-core:1.1.0`, Jackson and SLF4J. Pure engine consumers do not transitively receive A2A-T
+`net.openan.a2a-t.sdk:a2a-t-core:1.1.1`, Jackson and SLF4J. Pure engine consumers do not transitively receive A2A-T
 client/server, LLM, prompt or resources. Host agents explicitly depend on a2a-t-client; dispatched-agent services that
 validate received content additionally use a2a-t-server. Registry/orchestration discovery is host-owned;
 RegistryClient/LoadPsop are optional helpers.
