@@ -45,14 +45,19 @@ public class A2AProperties {
    */
   private boolean slashActionAliasesEnabled = false;
 
-  /** Timeout for blocking agent execution. */
-  private int agentTimeoutSeconds = 30;
+  /**
+   * Timeout for blocking agent execution, in seconds. The a2a-java builder path hardcodes 5 seconds
+   * and ignores configuration providers; this starter applies the value directly after building the
+   * handler, so a blocking {@code message:send} waits for the terminal task state. Real agent tasks
+   * (LLM calls, multi-step workflows) routinely run for minutes. Default: 900.
+   */
+  private int agentTimeoutSeconds = 900;
 
-  /** Timeout for consuming and persisting events in blocking calls. */
-  private int consumptionTimeoutSeconds = 5;
+  /** Timeout for consuming and persisting events in blocking calls, in seconds. Default: 960. */
+  private int consumptionTimeoutSeconds = 960;
 
-  /** Timeout for TaskStore reconciliation polling in blocking calls. */
-  private int reconciliationTimeoutSeconds = 1;
+  /** Timeout for TaskStore reconciliation polling in blocking calls, in seconds. Default: 60. */
+  private int reconciliationTimeoutSeconds = 60;
 
   /** Core server executor thread count. */
   private int executorCoreSize = 8;
