@@ -303,15 +303,8 @@ public final class WorkbenchExtensionLifecycle implements AutoCloseable {
 
   private void handleNotification(
       NotificationSubscription handle, dev.openan.workflow.engine.model.ReceivedMessage received) {
-    if (dev.openan.workflow.engine.examples.extension.RecoveryNotification.hasCompletedResult(
-        received)) {
-      subscriptions.remove(handle.agentName(), handle);
-      log.info(
-          "[ExtensionLifecycle] NOTIFICATION_COMPLETE agent={}, contextId={}, action=close-stream",
-          handle.agentName(),
-          handle.contextId());
-      handle.close();
-    }
+    // Notification-T is workbench-scoped. A recovery result is business data,
+    // not cancellation of this subscription; keep it for subsequent results.
     if (notificationCallback != null) {
       try {
         notificationCallback.accept(handle, received);

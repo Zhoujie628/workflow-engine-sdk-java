@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Keep the SPN workbench's notification subscription active across recovery results;
+  business observers no longer trigger automatic result-based cancellation.
 - Keep Notification-T subscriptions open independently of task/result terminal states; maintain
   stream activity tracking and explicit cancellation/resource ownership.
 - Add independent registry HTTP authentication/TLS policy and orchestration account login for PSOP
