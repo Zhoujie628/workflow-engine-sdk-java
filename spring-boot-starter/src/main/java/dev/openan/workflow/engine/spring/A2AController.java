@@ -138,7 +138,7 @@ public class A2AController {
   public ResponseEntity<String> sendMessage(HttpServletRequest req, @RequestBody String body) {
     var ctx = buildContext(req);
     var resp = restHandler.sendMessage(ctx, "", body);
-    return toResponse(resp);
+    return toResponse(resp, ctx);
   }
 
   @PostMapping(
@@ -289,7 +289,7 @@ public class A2AController {
   public ResponseEntity<String> getTask(HttpServletRequest req, @PathVariable("id") String taskId) {
     var ctx = buildContext(req);
     var resp = restHandler.getTask(ctx, "", taskId, null);
-    return toResponse(resp);
+    return toResponse(resp, ctx);
   }
 
   @GetMapping("${a2at.server.path-prefix}/tasks")
@@ -302,9 +302,10 @@ public class A2AController {
       @RequestParam(required = false) Integer historyLength,
       @RequestParam(required = false) String statusTimestampAfter,
       @RequestParam(required = false) Boolean includeArtifacts) {
+    var ctx = buildContext(req);
     var resp =
         restHandler.listTasks(
-            buildContext(req),
+            ctx,
             "",
             contextId,
             status,
@@ -313,7 +314,7 @@ public class A2AController {
             historyLength,
             statusTimestampAfter,
             includeArtifacts);
-    return toResponse(resp);
+    return toResponse(resp, ctx);
   }
 
   @PostMapping("${a2at.server.path-prefix}/tasks/{id}:cancel")
@@ -323,7 +324,7 @@ public class A2AController {
       @RequestBody(required = false) String body) {
     var ctx = buildContext(req);
     var resp = restHandler.cancelTask(ctx, "", body != null ? body : "{}", taskId);
-    return toResponse(resp);
+    return toResponse(resp, ctx);
   }
 
   @PostMapping(
@@ -413,6 +414,39 @@ public class A2AController {
     return ResponseEntity.status(response.getStatusCode())
         .contentType(A2A_JSON)
         .body(response.getBody());
+  }
+
+  /**
+   * Success responses additionally echo the {@code A2A-Extensions} header with the requested
+   * extensions that this agent's card declares, so extension-aware clients can verify server
+   * participation (A2A extension mechanism). Requested extensions the card does not declare are not
+   * activated and stay out of the list.
+   */
+  private ResponseEntity<String> toResponse(
+      RestHandler.HTTPRestResponse response, ServerCallContext context) {
+    String activated = activatedExtensions(context);
+    ResponseEntity.BodyBuilder builder =
+        ResponseEntity.status(response.getStatusCode()).contentType(A2A_JSON);
+    if (!activated.isEmpty()) {
+      builder.header("A2A-Extensions", activated);
+    }
+    return builder.body(response.getBody());
+  }
+
+  private String activatedExtensions(ServerCallContext context) {
+    if (context == null
+        || context.getRequestedExtensions() == null
+        || context.getRequestedExtensions().isEmpty()
+        || agentCard.capabilities() == null
+        || agentCard.capabilities().extensions() == null) {
+      return "";
+    }
+    return context.getRequestedExtensions().stream()
+        .filter(
+            uri ->
+                agentCard.capabilities().extensions().stream()
+                    .anyMatch(extension -> uri.equals(extension.uri())))
+        .collect(java.util.stream.Collectors.joining(","));
   }
 
   private ServerCallContext buildContext(HttpServletRequest req) {

@@ -110,6 +110,9 @@ public class A2AAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean
   public A2AConfigProvider a2aConfigProvider(A2AProperties properties) {
+    // Kept for SDK components that resolve configuration through CDI; the builder-built
+    // DefaultRequestHandler never reads it, so requestHandler() applies the blocking timeouts
+    // directly (see applyBlockingTimeouts).
     return new A2AConfigProvider() {
       @Override
       public String getValue(String key) {
@@ -199,8 +202,9 @@ public class A2AAutoConfiguration {
       PushNotificationConfigStore pushStore,
       MainEventBusProcessor proc,
       ExecutorService pool,
+      A2AProperties properties,
       ObjectProvider<TaskAuthorizationProvider> authorizationProvider) {
-    RequestHandler delegate =
+    DefaultRequestHandler delegate =
         DefaultRequestHandler.builder()
             .agentExecutor(executor)
             .taskStore(store)
@@ -210,6 +214,7 @@ public class A2AAutoConfiguration {
             .executor(pool)
             .eventConsumerExecutor(pool)
             .build();
+    applyBlockingTimeouts(delegate, properties);
     RequestHandler handler = new SpringCompatibleRequestHandler(delegate);
     TaskAuthorizationProvider provider = authorizationProvider.getIfAvailable();
     if (provider != null) {
@@ -251,5 +256,42 @@ public class A2AAutoConfiguration {
   @ConditionalOnProperty(name = "a2at.server.slash-action-aliases-enabled", havingValue = "true")
   A2ASlashActionAliasController a2aSlashActionAliasController(A2AController delegate) {
     return new A2ASlashActionAliasController(delegate);
+  }
+
+  /**
+   * a2a-java's {@code DefaultRequestHandler.Builder.build()} hardcodes blocking-call timeouts
+   * (agent=5s, consumption=2s, reconciliation=1s) and never consults {@link A2AConfigProvider};
+   * only the CDI {@code @PostConstruct} path reads the provider. A builder-assembled handler
+   * therefore returns a WORKING task snapshot after 5 seconds even though the agent keeps running,
+   * which silently breaks blocking {@code message:send} for every real agent task (LLM calls,
+   * multi-step workflows). Apply the configured values directly after the build.
+   */
+  static void applyBlockingTimeouts(DefaultRequestHandler handler, A2AProperties properties) {
+    try {
+      setBlockingTimeout(
+          handler, "agentCompletionTimeoutSeconds", properties.getAgentTimeoutSeconds());
+      setBlockingTimeout(
+          handler,
+          "consumptionCompletionTimeoutSeconds",
+          properties.getConsumptionTimeoutSeconds());
+      setBlockingTimeout(
+          handler, "reconciliationTimeoutSeconds", properties.getReconciliationTimeoutSeconds());
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(
+          "Failed to apply a2a blocking timeouts; the a2a-java SDK field layout changed?", e);
+    }
+    log.info(
+        "[A2A] Blocking timeouts applied: agent={}s, consumption={}s, reconciliation={}s",
+        properties.getAgentTimeoutSeconds(),
+        properties.getConsumptionTimeoutSeconds(),
+        properties.getReconciliationTimeoutSeconds());
+  }
+
+  private static void setBlockingTimeout(
+      DefaultRequestHandler handler, String fieldName, int seconds)
+      throws ReflectiveOperationException {
+    java.lang.reflect.Field field = DefaultRequestHandler.class.getDeclaredField(fieldName);
+    field.setAccessible(true);
+    field.setInt(handler, seconds);
   }
 }

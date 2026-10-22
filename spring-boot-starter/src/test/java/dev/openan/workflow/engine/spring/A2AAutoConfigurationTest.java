@@ -34,6 +34,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -125,6 +126,60 @@ class A2AAutoConfigurationTest {
     // Spring's emitter handler and the stream response degrades to a converter error.
     assertEquals(SseEmitter.class, streamMethod.getReturnType());
     assertEquals("text/event-stream", streamMethod.getAnnotation(PostMapping.class).produces()[0]);
+  }
+
+  @Test
+  void sendResponseEchoesRequestedSupportedExtensions() throws Exception {
+    RestHandler restHandler = mock(RestHandler.class);
+    RequestHandler requestHandler = mock(RequestHandler.class);
+    AgentCard agentCard = mock(AgentCard.class);
+    when(agentCard.capabilities())
+        .thenReturn(
+            AgentCapabilities.builder()
+                .streaming(true)
+                .extensions(
+                    List.of(
+                        org.a2aproject.sdk.spec.AgentExtension.builder()
+                            .uri("https://example.org/extensions/demo/v1")
+                            .build()))
+                .build());
+    when(restHandler.sendMessage(any(), any(), any()))
+        .thenReturn(new RestHandler.HTTPRestResponse(200, "application/a2a+json", "{\"ok\":true}"));
+    var controller = new A2AController(restHandler, requestHandler, agentCard);
+    MockMvc mockMvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+            .build();
+
+    // Requested + supported -> echoed; requested but unsupported -> not activated.
+    mockMvc
+        .perform(
+            post("/a2a/json/message:send")
+                .header(
+                    "A2A-Extensions",
+                    "https://example.org/extensions/demo/v1,"
+                        + "https://example.org/extensions/unknown/v1")
+                .contentType("application/json")
+                .content("{}"))
+        .andExpect(status().isOk())
+        .andExpect(header().string("A2A-Extensions", "https://example.org/extensions/demo/v1"));
+
+    // A card without extension declarations activates nothing.
+    AgentCard plainCard = mock(AgentCard.class);
+    when(plainCard.capabilities()).thenReturn(AgentCapabilities.builder().streaming(true).build());
+    var plainController = new A2AController(restHandler, requestHandler, plainCard);
+    MockMvc plainMockMvc =
+        MockMvcBuilders.standaloneSetup(plainController)
+            .addPlaceholderValue("a2at.server.path-prefix", "/a2a/json")
+            .build();
+    plainMockMvc
+        .perform(
+            post("/a2a/json/message:send")
+                .header("A2A-Extensions", "https://example.org/extensions/demo/v1")
+                .contentType("application/json")
+                .content("{}"))
+        .andExpect(status().isOk())
+        .andExpect(header().doesNotExist("A2A-Extensions"));
   }
 
   @Test
@@ -468,6 +523,54 @@ class A2AAutoConfigurationTest {
     assertEquals("90", provider.getValue("a2a.blocking.agent.timeout.seconds"));
     assertEquals("12", provider.getValue("a2a.blocking.consumption.timeout.seconds"));
     assertEquals("3", provider.getValue("a2a.blocking.reconciliation.timeout.seconds"));
+  }
+
+  /**
+   * The builder-built {@code DefaultRequestHandler} never consults {@code A2AConfigProvider} (only
+   * the CDI {@code @PostConstruct} path does), so the starter must apply the configured timeouts
+   * directly after {@code build()}. This test exercises that real path: build a handler exactly
+   * like the autoconfiguration does, apply, then read back the handler fields.
+   */
+  @Test
+  void blockingTimeoutsAreAppliedToTheBuiltHandler() throws Exception {
+    var builder =
+        org.a2aproject.sdk.server.requesthandlers.DefaultRequestHandler.builder()
+            .agentExecutor(mock(org.a2aproject.sdk.server.agentexecution.AgentExecutor.class))
+            .taskStore(new org.a2aproject.sdk.server.tasks.InMemoryTaskStore())
+            .queueManager(mock(org.a2aproject.sdk.server.events.QueueManager.class))
+            .mainEventBusProcessor(
+                mock(org.a2aproject.sdk.server.events.MainEventBusProcessor.class))
+            .executor(java.util.concurrent.Executors.newSingleThreadExecutor())
+            .eventConsumerExecutor(java.util.concurrent.Executors.newSingleThreadExecutor());
+    var handler = builder.build();
+    // a2a-java hardcodes these on the builder path; assert the broken baseline first.
+    assertEquals(5, readBlockingTimeout(handler, "agentCompletionTimeoutSeconds"));
+
+    A2AProperties properties = new A2AProperties();
+    A2AAutoConfiguration.applyBlockingTimeouts(handler, properties);
+    assertEquals(
+        properties.getAgentTimeoutSeconds(),
+        readBlockingTimeout(handler, "agentCompletionTimeoutSeconds"));
+    assertEquals(
+        properties.getConsumptionTimeoutSeconds(),
+        readBlockingTimeout(handler, "consumptionCompletionTimeoutSeconds"));
+    assertEquals(
+        properties.getReconciliationTimeoutSeconds(),
+        readBlockingTimeout(handler, "reconciliationTimeoutSeconds"));
+  }
+
+  private static int readBlockingTimeout(Object handler, String fieldName) throws Exception {
+    var field = handler.getClass().getDeclaredField(fieldName);
+    field.setAccessible(true);
+    return field.getInt(handler);
+  }
+
+  @Test
+  void blockingTimeoutDefaultsSupportLongRunningAgents() {
+    A2AProperties properties = new A2AProperties();
+    assertEquals(900, properties.getAgentTimeoutSeconds());
+    assertEquals(960, properties.getConsumptionTimeoutSeconds());
+    assertEquals(60, properties.getReconciliationTimeoutSeconds());
   }
 
   @Test
